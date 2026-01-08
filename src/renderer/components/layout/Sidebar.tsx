@@ -1,20 +1,45 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { useAuthStore } from '../../stores/auth.store';
 import { useUIStore } from '../../stores/ui.store';
 import SessionList from '../session/SessionList';
 import NewSessionDialog from '../session/NewSessionDialog';
-import { Plus, LogOut } from 'lucide-react';
+import { Plus, LogOut, GripVertical } from 'lucide-react';
 
 export default function Sidebar() {
   const { logout } = useAuthStore();
-  const { sidebarWidth } = useUIStore();
+  const { sidebarWidth, setSidebarWidth } = useUIStore();
   const [isNewSessionOpen, setIsNewSessionOpen] = useState(false);
+  const [isResizing, setIsResizing] = useState(false);
+
+  const handleResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+
+    const startX = e.clientX;
+    const startWidth = sidebarWidth;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const delta = e.clientX - startX;
+      const newWidth = Math.max(200, Math.min(500, startWidth + delta));
+      setSidebarWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsResizing(false);
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [sidebarWidth, setSidebarWidth]);
 
   return (
-    <div
-      className="flex flex-col font-mono bg-claude-surface border-r border-claude-border"
-      style={{ width: sidebarWidth }}
-    >
+    <div className="flex">
+      <div
+        className="flex flex-col font-mono bg-claude-surface"
+        style={{ width: sidebarWidth }}
+      >
       {/* Sessions Header */}
       <div className="px-3 py-2 flex items-center justify-between border-b border-claude-border">
         <h3
@@ -55,6 +80,19 @@ export default function Sidebar() {
         isOpen={isNewSessionOpen}
         onClose={() => setIsNewSessionOpen(false)}
       />
+      </div>
+
+      {/* Resize handle */}
+      <div
+        onMouseDown={handleResizeMouseDown}
+        className={`w-1 hover:w-1.5 bg-claude-border hover:bg-claude-accent cursor-col-resize transition-all ${
+          isResizing ? 'w-1.5 bg-claude-accent' : ''
+        }`}
+      >
+        <div className="h-full flex items-center justify-center">
+          <GripVertical size={12} className="text-claude-text-secondary opacity-0 hover:opacity-100" />
+        </div>
+      </div>
     </div>
   );
 }

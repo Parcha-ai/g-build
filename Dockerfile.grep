@@ -1,0 +1,23 @@
+FROM node:20-slim
+
+# Install essential tools
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    wget \
+    vim \
+    nano \
+    htop \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd -ms /bin/bash claude
+USER claude
+WORKDIR /workspace
+
+# Set up nice prompt
+ENV PS1='\[\033[01;32m\]grep\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+
+# Default command - keep container running
+CMD ["sleep", "infinity"]

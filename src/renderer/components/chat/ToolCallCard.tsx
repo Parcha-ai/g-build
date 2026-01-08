@@ -1,11 +1,14 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Terminal, FileText, Search, FolderOpen, Play, Edit2, Globe, Code, HelpCircle, ListTodo, Loader2, ChevronRight, ChevronDown, CheckCircle2, Circle, Clock, ExternalLink } from 'lucide-react';
+import { Terminal, FileText, Search, FolderOpen, Play, Edit2, Globe, Code, HelpCircle, ListTodo, Loader2, ChevronRight, ChevronDown, CheckCircle2, Circle, Clock, ExternalLink, Copy } from 'lucide-react';
+import Editor from '@monaco-editor/react';
 import type { ToolCall } from '../../../shared/types';
 import { useEditorStore } from '../../stores/editor.store';
 
 interface ToolCallCardProps {
   toolCall: ToolCall;
   isLatest?: boolean; // If true, expand by default
+  isLatestToolCall?: boolean; // Alias for isLatest
+  isStreaming?: boolean; // If currently streaming
 }
 
 interface TodoItem {
@@ -89,9 +92,20 @@ function ClickableFilePath({ filePath, label, lineNumber }: { filePath: string; 
   );
 }
 
-// Render a file write view - shows file content being written with line numbers
+// Helper to detect language from file path
+function getLanguageFromPath(filePath: string): string {
+  const ext = filePath.split('.').pop()?.toLowerCase() || '';
+  const langMap: Record<string, string> = {
+    ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
+    py: 'python', json: 'json', md: 'markdown', html: 'html', css: 'css',
+    scss: 'scss', yaml: 'yaml', yml: 'yaml', sh: 'shell', bash: 'shell',
+  };
+  return langMap[ext] || 'plaintext';
+}
+
+// Render a file write view - shows file content being written with Monaco Editor
 function WriteView({ content, filePath }: { content: string; filePath: string }) {
-  const lines = content.split('\n');
+  const language = getLanguageFromPath(filePath);
 
   return (
     <div className="space-y-2 text-xs">
@@ -100,36 +114,41 @@ function WriteView({ content, filePath }: { content: string; filePath: string })
         <ClickableFilePath filePath={filePath} label={`Writing: ${filePath.split('/').pop() || filePath}`} />
       </div>
 
-      {/* File content display */}
-      <div className="border border-claude-border overflow-hidden" style={{ borderRadius: 0 }}>
-        {/* New file content - green */}
-        <div className="bg-green-950/30">
-          <div className="px-2 py-1 bg-green-900/40 text-green-400 text-xs font-bold uppercase" style={{ letterSpacing: '0.05em' }}>
-            NEW FILE
-          </div>
-          <div className="overflow-x-auto max-h-64 overflow-y-auto">
-            {lines.map((line, idx) => (
-              <div key={`line-${idx}`} className="flex hover:bg-green-900/20">
-                <span className="w-10 flex-shrink-0 px-2 text-green-500/60 bg-green-900/20 select-none text-right border-r border-green-900/30">
-                  {idx + 1}
-                </span>
-                <span className="flex-1 px-2 text-green-300 whitespace-pre">
-                  <span className="text-green-500 mr-1">+</span>
-                  {line || ' '}
-                </span>
-              </div>
-            ))}
-          </div>
+      {/* Monaco Editor for file content */}
+      <div className="border border-green-500/50 overflow-hidden" style={{ borderRadius: 0 }}>
+        <div className="px-2 py-1 bg-green-900/40 text-green-400 text-xs font-bold uppercase" style={{ letterSpacing: '0.05em' }}>
+          NEW FILE
         </div>
+        <Editor
+          height="300px"
+          language={language}
+          value={content}
+          theme="vs-dark"
+          loading={<div className="p-4 text-claude-text-secondary">Loading editor...</div>}
+          options={{
+            readOnly: true,
+            minimap: { enabled: false },
+            scrollBeyondLastLine: false,
+            fontSize: 13,
+            lineNumbers: 'on',
+            folding: false,
+            renderLineHighlight: 'none',
+            contextmenu: false,
+            automaticLayout: true,
+          }}
+          onMount={(editor, monaco) => {
+            // Monaco loaded successfully
+            monaco.editor.setTheme('vs-dark');
+          }}
+        />
       </div>
     </div>
   );
 }
 
-// Render a diff view for Edit tool - shows old and new with line numbers
+// Render a diff view for Edit tool using Monaco diff editor
 function DiffView({ oldString, newString, filePath }: { oldString: string; newString: string; filePath: string }) {
-  const oldLines = oldString.split('\n');
-  const newLines = newString.split('\n');
+  const language = getLanguageFromPath(filePath);
 
   return (
     <div className="space-y-2 text-xs">
@@ -138,47 +157,28 @@ function DiffView({ oldString, newString, filePath }: { oldString: string; newSt
         <ClickableFilePath filePath={filePath} />
       </div>
 
-      {/* Diff display */}
+      {/* Monaco Diff Editor */}
       <div className="border border-claude-border overflow-hidden" style={{ borderRadius: 0 }}>
-        {/* Old content - red */}
-        <div className="bg-red-950/30 border-b border-claude-border">
-          <div className="px-2 py-1 bg-red-900/40 text-red-400 text-xs font-bold uppercase" style={{ letterSpacing: '0.05em' }}>
-            REMOVED
-          </div>
-          <div className="overflow-x-auto max-h-32 overflow-y-auto">
-            {oldLines.map((line, idx) => (
-              <div key={`old-${idx}`} className="flex hover:bg-red-900/20">
-                <span className="w-10 flex-shrink-0 px-2 text-red-500/60 bg-red-900/20 select-none text-right border-r border-red-900/30">
-                  {idx + 1}
-                </span>
-                <span className="flex-1 px-2 text-red-300 whitespace-pre">
-                  <span className="text-red-500 mr-1">-</span>
-                  {line || ' '}
-                </span>
-              </div>
-            ))}
-          </div>
+        <div className="px-2 py-1 bg-claude-surface text-claude-text-secondary text-xs font-bold uppercase border-b border-claude-border" style={{ letterSpacing: '0.05em' }}>
+          DIFF
         </div>
-
-        {/* New content - green */}
-        <div className="bg-green-950/30">
-          <div className="px-2 py-1 bg-green-900/40 text-green-400 text-xs font-bold uppercase" style={{ letterSpacing: '0.05em' }}>
-            ADDED
-          </div>
-          <div className="overflow-x-auto max-h-32 overflow-y-auto">
-            {newLines.map((line, idx) => (
-              <div key={`new-${idx}`} className="flex hover:bg-green-900/20">
-                <span className="w-10 flex-shrink-0 px-2 text-green-500/60 bg-green-900/20 select-none text-right border-r border-green-900/30">
-                  {idx + 1}
-                </span>
-                <span className="flex-1 px-2 text-green-300 whitespace-pre">
-                  <span className="text-green-500 mr-1">+</span>
-                  {line || ' '}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
+        <Editor
+          height="400px"
+          language={language}
+          value={newString}
+          theme="vs-dark"
+          loading={<div className="p-4 text-claude-text-secondary">Loading...</div>}
+          options={{
+            readOnly: true,
+            minimap: { enabled: false },
+            scrollBeyondLastLine: false,
+            fontSize: 13,
+            lineNumbers: 'on',
+            contextmenu: false,
+            renderLineHighlight: 'all',
+            automaticLayout: true,
+          }}
+        />
       </div>
     </div>
   );
@@ -188,10 +188,11 @@ function DiffView({ oldString, newString, filePath }: { oldString: string; newSt
 function ExpandedContent({ toolCall }: { toolCall: ToolCall }) {
   const { name, input, result } = toolCall;
 
-  // Special rendering for Read tool - show clickable file path
+  // Special rendering for Read tool - show clickable file path with Monaco preview
   if (name === 'Read') {
     const filePath = (input.file_path as string) || '';
     const lineNumber = (input.offset as number) || undefined;
+    const language = getLanguageFromPath(filePath);
 
     return (
       <div className="space-y-2 text-xs">
@@ -200,14 +201,36 @@ function ExpandedContent({ toolCall }: { toolCall: ToolCall }) {
           <ClickableFilePath filePath={filePath} lineNumber={lineNumber} />
         </div>
 
-        {/* Result preview if available */}
+        {/* Result preview with Monaco if available */}
         {result !== undefined && (
           <div>
             <div className="text-claude-text-secondary mb-1 font-semibold">Content Preview:</div>
-            <pre className="whitespace-pre-wrap text-claude-text bg-claude-bg/50 p-2 overflow-x-auto max-h-60 overflow-y-auto font-mono text-sm">
-              {typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result).slice(0, 2000)}
-              {typeof result === 'string' && result.length > 2000 && '...'}
-            </pre>
+            {typeof result === 'string' && result.length > 10 ? (
+              <div className="border border-claude-border overflow-hidden" style={{ borderRadius: 0 }}>
+                <Editor
+                  height="300px"
+                  language={language}
+                  value={result.slice(0, 5000)}
+                  theme="vs-dark"
+                  loading={<div className="p-4 text-claude-text-secondary">Loading...</div>}
+                  options={{
+                    readOnly: true,
+                    minimap: { enabled: false },
+                    scrollBeyondLastLine: false,
+                    fontSize: 13,
+                    lineNumbers: 'on',
+                    folding: true,
+                    renderLineHighlight: 'none',
+                    contextmenu: false,
+                    automaticLayout: true,
+                  }}
+                />
+              </div>
+            ) : (
+              <pre className="whitespace-pre-wrap text-claude-text bg-claude-bg/50 p-2 overflow-x-auto max-h-60 overflow-y-auto font-mono text-sm">
+                {typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result)}
+              </pre>
+            )}
           </div>
         )}
       </div>
@@ -290,14 +313,15 @@ function ExpandedContent({ toolCall }: { toolCall: ToolCall }) {
   );
 }
 
-export default function ToolCallCard({ toolCall, isLatest = false }: ToolCallCardProps) {
+export default function ToolCallCard({ toolCall, isLatest = false, isLatestToolCall = false }: ToolCallCardProps) {
   // Expand by default if this is the latest tool call
-  const [isExpanded, setIsExpanded] = useState(isLatest);
+  const shouldExpand = isLatest || isLatestToolCall;
+  const [isExpanded, setIsExpanded] = useState(shouldExpand);
 
   // Auto-collapse when this is no longer the latest, auto-expand when it becomes latest
   useEffect(() => {
-    setIsExpanded(isLatest);
-  }, [isLatest]);
+    setIsExpanded(shouldExpand);
+  }, [shouldExpand]);
 
   const config = TOOL_CONFIG[toolCall.name] || DEFAULT_CONFIG;
   const Icon = config.icon;

@@ -1,3 +1,6 @@
+// Configure Monaco FIRST before any other imports
+import './monaco-config';
+
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';

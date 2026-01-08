@@ -7,6 +7,7 @@ import TerminalContainer from '../terminal/TerminalContainer';
 import BrowserPreview from '../preview/BrowserPreview';
 import GitExplorer from '../git/GitExplorer';
 import EditorPanel from '../editor/EditorPanel';
+import ExtensionsExplorer from '../extensions/ExtensionsExplorer';
 import EmptyState from './EmptyState';
 import { X, GripVertical, PanelLeftClose, PanelRightClose, Columns2 } from 'lucide-react';
 
@@ -16,15 +17,19 @@ export default function MainContent() {
     isTerminalPanelOpen,
     isBrowserPanelOpen,
     isGitPanelOpen,
+    isExtensionsPanelOpen,
     terminalHeight,
     toggleBrowserPanel,
     toggleGitPanel,
+    toggleExtensionsPanel,
     setTerminalHeight,
     splitRatio,
     cycleSplitRatio,
   } = useUIStore();
   const { isEditorOpen, closeEditor } = useEditorStore();
   const [isTerminalResizing, setIsTerminalResizing] = useState(false);
+  const [isPanelResizing, setIsPanelResizing] = useState(false);
+  const [customSplitRatio, setCustomSplitRatio] = useState<number | null>(null);
 
   // Set default terminal height when panel opens
   useEffect(() => {
@@ -37,6 +42,11 @@ export default function MainContent() {
 
   // Calculate flex basis percentages based on split ratio
   const getFlexBasis = () => {
+    // Use custom ratio if set (from dragging)
+    if (customSplitRatio !== null) {
+      return { main: `${customSplitRatio}%`, side: `${100 - customSplitRatio}%` };
+    }
+
     switch (splitRatio) {
       case 'main-focus':
         return { main: '66.67%', side: '33.33%' };
@@ -76,6 +86,32 @@ export default function MainContent() {
     }
   };
 
+  // Handle panel horizontal resize
+  const handlePanelResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsPanelResizing(true);
+
+    const containerRect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
+    const containerWidth = containerRect.width;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const mouseX = e.clientX - containerRect.left;
+      const ratio = (mouseX / containerWidth) * 100;
+      // Constrain between 20% and 80%
+      const newRatio = Math.max(20, Math.min(80, ratio));
+      setCustomSplitRatio(newRatio);
+    };
+
+    const handleMouseUp = () => {
+      setIsPanelResizing(false);
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, []);
+
   // Handle terminal vertical resize
   const handleTerminalResizeMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -104,7 +140,7 @@ export default function MainContent() {
     return <EmptyState />;
   }
 
-  const hasSidePanel = isBrowserPanelOpen || isGitPanelOpen || isEditorOpen;
+  const hasSidePanel = isBrowserPanelOpen || isGitPanelOpen || isEditorOpen || isExtensionsPanelOpen;
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -122,19 +158,28 @@ export default function MainContent() {
         {hasSidePanel && (
           <>
             {/* Resize handle with split toggle button */}
-            <div className="flex flex-col items-center bg-claude-border">
-              {/* Split toggle button */}
+            <div
+              className={`w-1 flex flex-col items-center bg-claude-border hover:w-4 transition-all group cursor-col-resize ${
+                isPanelResizing ? 'w-4 bg-claude-accent' : ''
+              }`}
+              onMouseDown={handlePanelResizeMouseDown}
+            >
+              {/* Split toggle button - appears on hover */}
               <button
-                onClick={cycleSplitRatio}
-                className="p-1.5 my-1 rounded hover:bg-claude-surface-hover text-claude-text-secondary hover:text-claude-accent transition-colors"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCustomSplitRatio(null); // Reset custom ratio
+                  cycleSplitRatio();
+                }}
+                className="p-0.5 my-1 rounded hover:bg-claude-surface-hover text-claude-text-secondary hover:text-claude-accent transition-colors opacity-0 group-hover:opacity-100"
                 title={getSplitTooltip()}
               >
                 {getSplitIcon()}
               </button>
 
               {/* Drag handle visual */}
-              <div className="flex-1 flex items-center justify-center">
-                <GripVertical size={12} className="text-claude-text-secondary opacity-50" />
+              <div className="flex-1 flex items-center justify-center opacity-0 group-hover:opacity-100">
+                <GripVertical size={8} className="text-claude-text-secondary" />
               </div>
             </div>
 
@@ -191,8 +236,31 @@ export default function MainContent() {
 
               {/* Editor panel */}
               {isEditorOpen && (
-                <div className={`flex flex-col overflow-hidden ${(isBrowserPanelOpen || isGitPanelOpen) ? 'flex-1' : 'h-full'}`}>
+                <div className={`flex flex-col overflow-hidden ${(isBrowserPanelOpen || isGitPanelOpen || isExtensionsPanelOpen) ? 'flex-1' : 'h-full'}`}>
                   <EditorPanel onClose={closeEditor} />
+                </div>
+              )}
+
+              {/* Horizontal divider when extensions panel is with other panels */}
+              {isExtensionsPanelOpen && (isBrowserPanelOpen || isGitPanelOpen || isEditorOpen) && (
+                <div className="h-px bg-claude-border" />
+              )}
+
+              {/* Extensions panel */}
+              {isExtensionsPanelOpen && (
+                <div className={`flex flex-col overflow-hidden ${(isBrowserPanelOpen || isGitPanelOpen || isEditorOpen) ? 'flex-1' : 'h-full'}`}>
+                  <div className="h-10 flex items-center justify-between px-3 border-b border-claude-border bg-claude-surface">
+                    <span className="text-sm font-medium">Extensions</span>
+                    <button
+                      onClick={toggleExtensionsPanel}
+                      className="p-1 rounded hover:bg-claude-bg text-claude-text-secondary hover:text-claude-text"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                  <div className="flex-1 overflow-hidden">
+                    <ExtensionsExplorer sessionId={activeSession.id} projectPath={activeSession.worktreePath} />
+                  </div>
                 </div>
               )}
             </div>

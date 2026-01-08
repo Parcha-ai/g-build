@@ -51,7 +51,7 @@ export class RealtimeService extends EventEmitter {
 
   constructor() {
     super();
-    this.store = new Store({ name: 'grep-settings' });
+    this.store = new Store({ name: 'claudette-settings' });
   }
 
   private getOpenAiApiKey(): string | undefined {

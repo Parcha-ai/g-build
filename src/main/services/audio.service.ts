@@ -13,7 +13,7 @@ export class AudioService {
   private activeStreams: Map<string, AbortController> = new Map();
 
   constructor() {
-    this.store = new Store({ name: 'grep-settings' });
+    this.store = new Store({ name: 'claudette-settings' });
     this.initializeClients();
   }
 

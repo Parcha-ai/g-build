@@ -1,5 +1,6 @@
-import { app, BrowserWindow, ipcMain, protocol, session } from 'electron';
+import { app, BrowserWindow, ipcMain, protocol, session, net } from 'electron';
 import * as path from 'path';
+import { pathToFileURL } from 'url';
 import { registerAuthHandlers } from './ipc/auth.ipc';
 import { registerSessionHandlers } from './ipc/session.ipc';
 import { registerGitHandlers } from './ipc/git.ipc';
@@ -10,11 +11,25 @@ import { registerDevHandlers } from './ipc/dev.ipc';
 import { registerFsHandlers } from './ipc/fs.ipc';
 import { registerAudioHandlers } from './ipc/audio.ipc';
 import { registerRealtimeHandlers } from './ipc/realtime.ipc';
+import { registerExtensionHandlers } from './ipc/extension.ipc';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (require('electron-squirrel-startup')) {
   app.quit();
 }
+
+// Register custom protocol for Monaco assets - MUST be before app.ready
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'monaco-asset',
+    privileges: {
+      standard: true,
+      supportFetchAPI: true,
+      bypassCSP: true,
+      secure: true,
+    },
+  },
+]);
 
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
 declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
@@ -49,12 +64,13 @@ const createWindow = (): void => {
       responseHeaders: {
         ...details.responseHeaders,
         'Content-Security-Policy': [
-          "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:",
-          "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-          "style-src 'self' 'unsafe-inline'",
-          "connect-src 'self' https://api.anthropic.com https://api.github.com https://api.elevenlabs.io https://api.openai.com ws://localhost:* http://localhost:*",
+          "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: monaco-asset:",
+          "script-src 'self' 'unsafe-inline' 'unsafe-eval' monaco-asset:",
+          "style-src 'self' 'unsafe-inline' monaco-asset:",
+          "connect-src 'self' https://api.anthropic.com https://api.github.com https://api.elevenlabs.io https://api.openai.com ws://localhost:* http://localhost:* monaco-asset:",
           "img-src 'self' data: https: blob:",
-          "font-src 'self' data:",
+          "font-src 'self' data: monaco-asset:",
+          "worker-src 'self' blob: data: monaco-asset:",
         ].join('; ')
       }
     });
@@ -70,10 +86,10 @@ const createWindow = (): void => {
   });
 };
 
-// Register custom protocol for OAuth callback
+// Register custom protocols
 app.whenReady().then(() => {
+  // OAuth callback protocol
   protocol.registerHttpProtocol('grep', (request) => {
-    // Handle OAuth callback
     const url = new URL(request.url);
     if (url.pathname === '/oauth/callback') {
       const code = url.searchParams.get('code');
@@ -81,6 +97,28 @@ app.whenReady().then(() => {
         mainWindow.webContents.send('auth:oauth-callback', { code });
       }
     }
+  });
+
+  // Monaco assets protocol - serves files from node_modules
+  protocol.handle('monaco-asset', (request) => {
+    const url = new URL(request.url);
+    // URL format: monaco-asset://app/node_modules/monaco-editor/min/vs/...
+    // Extract the path after /node_modules/
+    const relativePath = url.pathname.replace(/^\/node_modules\//, '');
+
+    // Get the project root directory (where node_modules lives)
+    // __dirname in webpack main is: /Users/aj/dev/parcha/claudette/.webpack/main
+    // We need to go up 2 levels to get to project root
+    const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+    const baseDir = isDev
+      ? path.join(__dirname, '..', '..') // .webpack/main -> project root
+      : app.getAppPath();
+
+    const filePath = path.join(baseDir, 'node_modules', relativePath);
+    const fileUrl = pathToFileURL(filePath).toString();
+
+    console.log('[Monaco Protocol] Serving:', filePath);
+    return net.fetch(fileUrl, { bypassCustomProtocolHandlers: true });
   });
 });
 
@@ -96,6 +134,7 @@ function registerIPCHandlers(): void {
   registerFsHandlers(ipcMain);
   registerAudioHandlers(ipcMain);
   registerRealtimeHandlers(ipcMain);
+  registerExtensionHandlers(ipcMain);
 }
 
 // This method will be called when Electron has finished initialization

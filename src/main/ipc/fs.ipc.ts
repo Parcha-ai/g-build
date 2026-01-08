@@ -5,7 +5,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const sessionStore: any = new Store({ name: 'grep-sessions' });
+const sessionStore: any = new Store({ name: 'claudette-sessions' });
 
 export interface FileEntry {
   name: string;

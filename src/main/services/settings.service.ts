@@ -30,7 +30,7 @@ export class SettingsService {
 
   constructor() {
     this.store = new Store({
-      name: 'grep-settings',
+      name: 'claudette-settings',
       defaults: { settings: DEFAULT_SETTINGS },
     });
   }

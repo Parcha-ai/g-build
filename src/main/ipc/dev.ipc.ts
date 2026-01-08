@@ -6,9 +6,9 @@ import simpleGit from 'simple-git';
 import type { Session } from '../../shared/types';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const store: any = new Store({ name: 'grep-sessions' });
+const store: any = new Store({ name: 'claudette-sessions' });
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const settingsStore: any = new Store({ name: 'grep-settings' });
+const settingsStore: any = new Store({ name: 'claudette-settings' });
 
 export function registerDevHandlers(ipcMain: IpcMain): void {
   // Open folder picker and check if it's a git repo

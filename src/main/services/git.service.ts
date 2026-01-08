@@ -8,7 +8,7 @@ export class GitService {
   private store: any;
 
   constructor() {
-    this.store = new Store({ name: 'grep-sessions' });
+    this.store = new Store({ name: 'claudette-sessions' });
   }
 
   private getWorktreePath(sessionId: string): string {

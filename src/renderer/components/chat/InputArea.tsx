@@ -4,6 +4,7 @@ import { useSessionStore, type PermissionMode, type ThinkingMode } from '../../s
 import { useUIStore } from '../../stores/ui.store';
 import { useAudioStore } from '../../stores/audio.store';
 import MentionAutocomplete, { type Mention } from './MentionAutocomplete';
+import CommandAutocomplete from './CommandAutocomplete';
 import { MicrophoneButton } from './MicrophoneButton';
 
 interface TodoItem {
@@ -121,9 +122,19 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
   const [showTodoList, setShowTodoList] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const { sendMessage, isStreaming, permissionMode, cyclePermissionMode, thinkingMode, cycleThinkingMode, currentToolCalls, messages } = useSessionStore();
+  const { sendMessage, isStreaming, permissionMode, cyclePermissionMode, thinkingMode, cycleThinkingMode, currentToolCalls, messages, sessions } = useSessionStore();
   const { selectedElement, setSelectedElement, setInspectorActive, toggleBrowserPanel } = useUIStore();
   const { settings: audioSettings, setAudioMode } = useAudioStore();
+
+  // Command/Skill/Agent autocomplete state
+  const [showCommands, setShowCommands] = useState(false);
+  const [commandQuery, setCommandQuery] = useState('');
+  const [commandType, setCommandType] = useState<'command' | 'skill' | 'agent'>('command');
+  const [commandPosition, setCommandPosition] = useState({ top: 0, left: 0 });
+  const [commandStartIndex, setCommandStartIndex] = useState(-1);
+  const [commands, setCommands] = useState<any[]>([]);
+  const [skills, setSkills] = useState<any[]>([]);
+  const [agents, setAgents] = useState<any[]>([]);
 
   // Get the configurable trigger word (default: "please")
   const triggerWord = audioSettings?.voiceTriggerWord || 'please';
@@ -193,43 +204,86 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
     }
   }, [selectedElement, setSelectedElement]);
 
-  // Detect @ mentions in text
+  // Load commands, skills, and agents when session changes
+  useEffect(() => {
+    const currentSession = sessions.find(s => s.id === sessionId);
+    if (!currentSession) return;
+
+    const projectPath = currentSession.worktreePath;
+
+    // Load all extensions
+    Promise.all([
+      window.electronAPI.extensions.scanCommands(projectPath),
+      window.electronAPI.extensions.scanSkills(projectPath),
+      window.electronAPI.extensions.scanAgents(projectPath),
+    ]).then(([cmds, skls, agts]) => {
+      setCommands(cmds);
+      setSkills(skls);
+      setAgents(agts);
+    }).catch(err => {
+      console.error('[InputArea] Error loading extensions:', err);
+    });
+  }, [sessionId, sessions]);
+
+  // Detect @ mentions, slash commands, and @agent mentions in text
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value;
     const cursorPos = e.target.selectionStart;
     setMessage(value);
 
-    // Find @ mention at cursor position
     const textBeforeCursor = value.slice(0, cursorPos);
-    const lastAtIndex = textBeforeCursor.lastIndexOf('@');
 
+    // Check for slash commands at the start of input
+    if (value.startsWith('/') && cursorPos > 0) {
+      const commandText = textBeforeCursor.slice(1);
+      if (!/\s/.test(commandText)) {
+        setShowCommands(true);
+        setCommandType('command');
+        setCommandQuery(commandText);
+        setCommandStartIndex(0);
+        setCommandPosition({ top: -310, left: 0 });
+        setShowMentions(false);
+        return;
+      }
+    }
+
+    // Check for @agent- mentions
+    const lastAtIndex = textBeforeCursor.lastIndexOf('@');
     if (lastAtIndex !== -1) {
       const textAfterAt = textBeforeCursor.slice(lastAtIndex + 1);
-      // Only trigger if @ is at start or after whitespace, and no spaces in query
       const charBeforeAt = value[lastAtIndex - 1];
       const isValidStart = lastAtIndex === 0 || /\s/.test(charBeforeAt);
       const hasNoSpaces = !/\s/.test(textAfterAt);
 
       if (isValidStart && hasNoSpaces) {
+        // Check if it's @agent- pattern (for subagents)
+        if (textAfterAt.startsWith('agent-')) {
+          setShowCommands(true);
+          setCommandType('agent');
+          setCommandQuery(textAfterAt.replace('agent-', ''));
+          setCommandStartIndex(lastAtIndex);
+          setCommandPosition({ top: -310, left: 0 });
+          setShowMentions(false);
+          return;
+        }
+
+        // Regular file @mention
         setShowMentions(true);
         setMentionQuery(textAfterAt);
         setMentionStartIndex(lastAtIndex);
-
-        // Calculate position for autocomplete
-        if (textareaRef.current && containerRef.current) {
-          // Position above the input
-          setMentionPosition({
-            top: -310, // Position above
-            left: 0,
-          });
-        }
+        setMentionPosition({ top: -310, left: 0 });
+        setShowCommands(false);
         return;
       }
     }
 
+    // No autocomplete triggers found
     setShowMentions(false);
     setMentionQuery('');
     setMentionStartIndex(-1);
+    setShowCommands(false);
+    setCommandQuery('');
+    setCommandStartIndex(-1);
   }, []);
 
   // Handle mention selection
@@ -261,6 +315,43 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
       textareaRef.current?.focus();
     },
     [message, mentionStartIndex]
+  );
+
+  // Handle command/skill/agent selection
+  const handleCommandSelect = useCallback(
+    async (item: any) => {
+      const currentSession = sessions.find(s => s.id === sessionId);
+      const projectPath = currentSession?.worktreePath;
+
+      if (commandType === 'command') {
+        // Load command content and replace the /command with it
+        try {
+          const content = await window.electronAPI.extensions.getCommand(item.name, projectPath);
+          if (content) {
+            // Remove leading comment if present
+            const lines = content.split('\n');
+            const cleanContent = lines.filter((l: string) => !l.trim().startsWith('<!--')).join('\n').trim();
+
+            // Replace /command with the command content
+            const afterCommand = message.slice(commandStartIndex + item.name.length + 1);
+            setMessage(cleanContent + (afterCommand ? ' ' + afterCommand : ''));
+          }
+        } catch (err) {
+          console.error('[InputArea] Error loading command:', err);
+        }
+      } else if (commandType === 'agent') {
+        // Replace @agent-name with just the agent mention
+        const before = message.slice(0, commandStartIndex);
+        const after = message.slice(textareaRef.current?.selectionStart || commandStartIndex);
+        setMessage(before + `@agent-${item.name}` + after);
+      }
+
+      setShowCommands(false);
+      setCommandQuery('');
+      setCommandStartIndex(-1);
+      textareaRef.current?.focus();
+    },
+    [message, commandStartIndex, commandType, sessionId, sessions]
   );
 
   const handleSubmit = async () => {
@@ -295,9 +386,9 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Don't submit if mention autocomplete is open
-    if (showMentions && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter')) {
-      return; // Let MentionAutocomplete handle these
+    // Don't submit if any autocomplete is open
+    if ((showMentions || showCommands) && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter')) {
+      return; // Let autocomplete components handle these
     }
 
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -305,8 +396,13 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
       handleSubmit();
     }
 
-    if (e.key === 'Escape' && showMentions) {
-      setShowMentions(false);
+    if (e.key === 'Escape') {
+      if (showMentions) {
+        setShowMentions(false);
+      }
+      if (showCommands) {
+        setShowCommands(false);
+      }
     }
   };
 
@@ -382,6 +478,20 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
           position={mentionPosition}
           onSelect={handleMentionSelect}
           onClose={() => setShowMentions(false)}
+        />
+      )}
+
+      {/* Command/Skill/Agent Autocomplete */}
+      {showCommands && (
+        <CommandAutocomplete
+          query={commandQuery}
+          type={commandType}
+          commands={commands}
+          skills={skills}
+          agents={agents}
+          position={commandPosition}
+          onSelect={handleCommandSelect}
+          onClose={() => setShowCommands(false)}
         />
       )}
 

@@ -10,6 +10,7 @@ interface UIState {
   isTerminalPanelOpen: boolean;
   isBrowserPanelOpen: boolean;
   isGitPanelOpen: boolean;
+  isExtensionsPanelOpen: boolean;
   isInspectorActive: boolean;
   isSettingsOpen: boolean;
   selectedElement: unknown | null;
@@ -21,6 +22,7 @@ interface UIState {
   toggleTerminalPanel: () => void;
   toggleBrowserPanel: () => void;
   toggleGitPanel: () => void;
+  toggleExtensionsPanel: () => void;
   setInspectorActive: (active: boolean) => void;
   setSelectedElement: (element: unknown | null) => void;
   cycleSplitRatio: () => void;
@@ -36,6 +38,7 @@ export const useUIStore = create<UIState>((set) => ({
   isTerminalPanelOpen: false,
   isBrowserPanelOpen: false,
   isGitPanelOpen: false,
+  isExtensionsPanelOpen: false,
   isInspectorActive: false,
   isSettingsOpen: false,
   selectedElement: null,
@@ -47,6 +50,7 @@ export const useUIStore = create<UIState>((set) => ({
   toggleTerminalPanel: () => set((state) => ({ isTerminalPanelOpen: !state.isTerminalPanelOpen })),
   toggleBrowserPanel: () => set((state) => ({ isBrowserPanelOpen: !state.isBrowserPanelOpen })),
   toggleGitPanel: () => set((state) => ({ isGitPanelOpen: !state.isGitPanelOpen })),
+  toggleExtensionsPanel: () => set((state) => ({ isExtensionsPanelOpen: !state.isExtensionsPanelOpen })),
   setInspectorActive: (active) => set({ isInspectorActive: active }),
   setSelectedElement: (element) => set({ selectedElement: element }),
   cycleSplitRatio: () => set((state) => {

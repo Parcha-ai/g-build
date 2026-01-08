@@ -124,5 +124,70 @@ export interface AppSettings {
   autoStartContainer: boolean;
 }
 
+// Permission request from Agent SDK
+export interface PermissionRequest {
+  sessionId: string;
+  requestId: string;
+  toolName: string;
+  toolInput: Record<string, unknown>;
+  message?: string;
+}
+
+// Permission response to Agent SDK
+export interface PermissionResponse {
+  requestId: string;
+  approved: boolean;
+  modifiedInput?: Record<string, unknown>;
+}
+
+// Question types for AskUserQuestion tool
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface Question {
+  question: string;
+  header: string;
+  options: QuestionOption[];
+  multiSelect: boolean;
+}
+
+export interface QuestionRequest {
+  sessionId: string;
+  requestId: string;
+  questions: Question[];
+}
+
+export interface QuestionResponse {
+  requestId: string;
+  answers: Record<string, string>;
+}
+
+// Extension types (commands, skills, agents)
+export interface Command {
+  name: string;
+  path: string;
+  content: string;
+  description?: string;
+  scope: 'user' | 'project';
+}
+
+export interface Skill {
+  name: string;
+  path: string;
+  description?: string;
+  scope: 'user' | 'project';
+}
+
+export interface AgentDefinition {
+  name: string;
+  description: string;
+  systemPrompt: string;
+  disallowedTools?: string[];
+  model?: string;
+  scope: 'user' | 'project';
+}
+
 // Export audio types
 export * from './audio';

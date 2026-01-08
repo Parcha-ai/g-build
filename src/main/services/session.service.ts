@@ -4,6 +4,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { v4 as uuid } from 'uuid';
 import { app } from 'electron';
+import simpleGit from 'simple-git';
 import { DockerService } from './docker.service';
 import { GitService } from './git.service';
 import type { Session, SessionStatus } from '../../shared/types';
@@ -41,7 +42,7 @@ export class SessionService extends EventEmitter {
 
   constructor() {
     super();
-    this.store = new Store({ name: 'grep-sessions' });
+    this.store = new Store({ name: 'claudette-sessions' });
     this.dockerService = new DockerService();
     this.gitService = new GitService();
     this.sessionsPath = path.join(app.getPath('userData'), 'sessions');
@@ -119,33 +120,16 @@ export class SessionService extends EventEmitter {
     const session = await this.getSession(sessionId);
     if (!session) throw new Error(`Session ${sessionId} not found`);
 
-    this.updateSessionStatus(session, 'starting');
-
-    try {
-      const containerId = await this.dockerService.startContainer(session);
-      session.containerId = containerId;
-      this.updateSessionStatus(session, 'running');
-    } catch (error) {
-      this.updateSessionStatus(session, 'error');
-      throw error;
-    }
+    // Simply activate the session - no Docker needed
+    this.updateSessionStatus(session, 'running');
   }
 
   async stopSession(sessionId: string): Promise<void> {
     const session = await this.getSession(sessionId);
     if (!session) throw new Error(`Session ${sessionId} not found`);
 
-    this.updateSessionStatus(session, 'stopping');
-
-    try {
-      if (session.containerId) {
-        await this.dockerService.stopContainer(session.containerId);
-      }
-      this.updateSessionStatus(session, 'stopped');
-    } catch (error) {
-      this.updateSessionStatus(session, 'error');
-      throw error;
-    }
+    // Simply deactivate the session
+    this.updateSessionStatus(session, 'stopped');
   }
 
   async deleteSession(sessionId: string): Promise<void> {
@@ -174,14 +158,144 @@ export class SessionService extends EventEmitter {
     return session || null;
   }
 
-  listSessions(): Session[] {
-    return this.getSessions();
+  async listSessions(): Promise<Session[]> {
+    // Discover sessions from ~/.claude/projects/ directory
+    const claudeSessions = await this.discoverClaudeSessions();
+
+    // Merge with any sessions in our store (shouldn't be many since we discover from Claude)
+    const storedSessions = this.getSessions();
+
+    // Deduplicate by SESSION ID (not path - multiple sessions per path is valid!)
+    const sessionMap = new Map<string, Session>();
+
+    storedSessions.forEach(s => sessionMap.set(s.id, s));
+    claudeSessions.forEach(s => sessionMap.set(s.id, s));  // Override with discovered sessions
+
+    // Sort by updatedAt (most recent first)
+    const allSessions = Array.from(sessionMap.values());
+    allSessions.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
+    return allSessions;
   }
 
   private getSessions(): Session[] {
     const sessions = this.store.get('sessions') as Record<string, Session> | undefined;
     if (!sessions) return [];
     return Object.values(sessions);
+  }
+
+  private async discoverClaudeSessions(): Promise<Session[]> {
+    const sessions: Session[] = [];
+    const homeDir = require('os').homedir();
+    const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
+
+    console.log('[Session Discovery] Scanning:', claudeProjectsDir);
+
+    try {
+      const entries = await fs.readdir(claudeProjectsDir, { withFileTypes: true });
+      console.log('[Session Discovery] Found', entries.length, 'entries');
+
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+
+        const projectDir = path.join(claudeProjectsDir, entry.name);
+        console.log('[Session Discovery] Scanning project directory:', entry.name);
+
+        // Read actual path from session transcript
+        let projectPath: string | null = null;
+        try {
+          // Find .jsonl files (skip agent files and summary files)
+          const files = await fs.readdir(projectDir);
+          const jsonlFiles = files.filter(f =>
+            f.endsWith('.jsonl') &&
+            !f.startsWith('agent-') &&
+            f.length > 20  // Skip short summary files
+          );
+
+          // Create a session for EACH .jsonl transcript file
+          for (const jsonlFile of jsonlFiles) {
+            try {
+              const transcriptPath = path.join(projectDir, jsonlFile);
+              const stats = await fs.stat(transcriptPath);
+              const content = await fs.readFile(transcriptPath, 'utf-8');
+              const lines = content.split('\n').filter(l => l.trim());
+
+              // Parse lines to find cwd and sessionId
+              let sessionCwd: string | null = null;
+              let transcriptSessionId: string | null = null;
+
+              for (const line of lines.slice(0, 50)) {
+                try {
+                  const parsed = JSON.parse(line);
+                  if (parsed.cwd) sessionCwd = parsed.cwd;
+                  if (parsed.sessionId) transcriptSessionId = parsed.sessionId;
+                  if (sessionCwd && transcriptSessionId) break;
+                } catch {
+                  // Not valid JSON, skip
+                }
+              }
+
+              if (!sessionCwd) continue;  // Skip if no cwd found
+
+              // Verify path exists
+              await fs.access(sessionCwd);
+
+              // Get git branch
+              let branch = 'main';
+              try {
+                const git = simpleGit(sessionCwd);
+                const status = await git.status();
+                branch = status.current || 'main';
+              } catch {
+                // Not a git repo or can't get branch
+              }
+
+              // Use transcript session ID if available, otherwise hash the transcript file name
+              const sessionId = transcriptSessionId || jsonlFile.replace('.jsonl', '');
+
+              // Check if this session already exists in store
+              let existingSession = this.store.get(`sessions.${sessionId}`) as Session | undefined;
+
+              if (existingSession) {
+                existingSession.branch = branch;
+                existingSession.updatedAt = stats.mtime;  // Use file modification time
+                sessions.push(existingSession);
+              } else {
+                // Create new session from transcript
+                const session: Session = {
+                  id: sessionId,
+                  name: `${path.basename(sessionCwd)} - ${new Date(stats.mtime).toLocaleDateString()}`,
+                  repoPath: sessionCwd,
+                  worktreePath: sessionCwd,
+                  branch,
+                  status: 'running',
+                  ports: { web: 3000, api: 8080, debug: 9229 },
+                  setupScript: DEFAULT_SETUP_SCRIPT,
+                  isDevMode: true,
+                  createdAt: stats.birthtime,
+                  updatedAt: stats.mtime,  // Use file modification time for sorting
+                };
+
+                this.store.set(`sessions.${sessionId}`, session);
+                sessions.push(session);
+                console.log('[Session Discovery] Created session:', session.name);
+              }
+            } catch (fileError) {
+              // Error reading this transcript file, skip it
+              console.log('[Session Discovery] Error reading transcript:', jsonlFile, fileError);
+            }
+          }
+        } catch (dirError) {
+          console.log('[Session Discovery] Error reading project directory:', entry.name, dirError);
+        }
+      }
+
+      console.log('[Session Discovery] Total discovered:', sessions.length, 'sessions');
+    } catch (error) {
+      console.error('[Session Discovery] Failed to scan projects directory:', error);
+    }
+
+    return sessions;
   }
 
   async updateSession(sessionId: string, updates: Partial<Session>): Promise<Session> {

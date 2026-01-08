@@ -65,106 +65,147 @@ export default function BrowserPreview({ session }: BrowserPreviewProps) {
     const webview = webviewRef.current;
     if (!webview) return;
 
-    // Inject inspector script
-    await webview.executeJavaScript(`
-      (function() {
-        // Remove existing inspector
-        const existing = document.getElementById('grep-inspector');
-        if (existing) existing.remove();
-
-        // Create overlay
-        const overlay = document.createElement('div');
-        overlay.id = 'grep-inspector';
-        overlay.style.cssText = 'position:fixed;pointer-events:none;background:rgba(59,130,246,0.3);border:2px solid #3b82f6;z-index:999999;transition:all 0.1s ease;';
-        document.body.appendChild(overlay);
-
-        // Create info tooltip
-        const tooltip = document.createElement('div');
-        tooltip.id = 'grep-inspector-tooltip';
-        tooltip.style.cssText = 'position:fixed;background:#1a1a1a;color:#fff;padding:4px 8px;font-size:12px;font-family:monospace;border-radius:4px;z-index:1000000;pointer-events:none;max-width:300px;word-break:break-all;';
-        document.body.appendChild(tooltip);
-
-        document.body.style.cursor = 'crosshair';
-
-        function getSelector(el) {
-          const parts = [];
-          while (el && el !== document.body) {
-            let selector = el.tagName.toLowerCase();
-            if (el.id) selector += '#' + el.id;
-            else if (el.className) selector += '.' + el.className.split(' ').filter(Boolean).join('.');
-            parts.unshift(selector);
-            el = el.parentElement;
-          }
-          return parts.join(' > ');
+    // Listen for console messages (our communication channel)
+    const handleConsoleMessage = (event: Electron.ConsoleMessageEvent) => {
+      if (event.message.startsWith('GREP_INSPECTOR:')) {
+        try {
+          const data = JSON.parse(event.message.replace('GREP_INSPECTOR:', ''));
+          setSelectedElement(data);
+          setInspectorActive(false);
+        } catch (e) {
+          console.error('Failed to parse inspector data:', e);
         }
-
-        function handleMove(e) {
-          const el = e.target;
-          const rect = el.getBoundingClientRect();
-          overlay.style.top = rect.top + 'px';
-          overlay.style.left = rect.left + 'px';
-          overlay.style.width = rect.width + 'px';
-          overlay.style.height = rect.height + 'px';
-
-          const selector = getSelector(el);
-          tooltip.textContent = selector;
-          tooltip.style.top = Math.min(rect.top - 30, window.innerHeight - 40) + 'px';
-          tooltip.style.left = Math.min(rect.left, window.innerWidth - 310) + 'px';
-        }
-
-        function handleClick(e) {
-          e.preventDefault();
-          e.stopPropagation();
-
-          const el = e.target;
-          const selector = getSelector(el);
-
-          const context = {
-            tagName: el.tagName.toLowerCase(),
-            id: el.id,
-            className: el.className,
-            selector: selector,
-            innerHTML: el.innerHTML.slice(0, 500),
-            outerHTML: el.outerHTML.slice(0, 1000),
-            textContent: el.textContent?.slice(0, 500),
-            attributes: Array.from(el.attributes).map(a => ({ name: a.name, value: a.value })),
-          };
-
-          window.postMessage({ type: 'grep-element-selected', context }, '*');
-
-          // Cleanup
-          document.body.style.cursor = '';
-          overlay.remove();
-          tooltip.remove();
-          document.removeEventListener('mouseover', handleMove);
-          document.removeEventListener('click', handleClick, true);
-        }
-
-        document.addEventListener('mouseover', handleMove);
-        document.addEventListener('click', handleClick, true);
-      })();
-    `);
-
-    // Listen for selection
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'grep-element-selected') {
-        setSelectedElement(event.data.context);
-        setInspectorActive(false);
       }
     };
 
-    webview.addEventListener('ipc-message', (event: Electron.IpcMessageEvent) => {
-      if (event.channel === 'element-selected') {
-        setSelectedElement(event.args[0]);
-        setInspectorActive(false);
-      }
-    });
+    webview.addEventListener('console-message', handleConsoleMessage as any);
+
+    // Store cleanup function
+    (webview as any)._inspectorCleanup = () => {
+      webview.removeEventListener('console-message', handleConsoleMessage as any);
+    };
+
+    // Inject inspector script
+    try {
+      await webview.executeJavaScript(`
+        (function() {
+          console.log('[GREP] Starting inspector injection...');
+
+          // Remove existing inspector
+          const existing = document.getElementById('grep-inspector');
+          if (existing) {
+            console.log('[GREP] Removing existing inspector');
+            existing.remove();
+          }
+
+          // Create overlay
+          const overlay = document.createElement('div');
+          overlay.id = 'grep-inspector';
+          overlay.style.cssText = 'position:fixed !important;pointer-events:none !important;background:rgba(59,130,246,0.3) !important;border:2px solid #3b82f6 !important;z-index:2147483647 !important;transition:all 0.1s ease !important;display:block !important;visibility:visible !important;';
+          document.body.appendChild(overlay);
+          console.log('[GREP] Overlay created:', overlay);
+
+          // Create info tooltip
+          const tooltip = document.createElement('div');
+          tooltip.id = 'grep-inspector-tooltip';
+          tooltip.style.cssText = 'position:fixed !important;background:#1a1a1a !important;color:#fff !important;padding:4px 8px !important;font-size:12px !important;font-family:monospace !important;border-radius:4px !important;z-index:2147483647 !important;pointer-events:none !important;max-width:300px !important;word-break:break-all !important;display:block !important;visibility:visible !important;';
+          document.body.appendChild(tooltip);
+          console.log('[GREP] Tooltip created:', tooltip);
+
+          document.body.style.cursor = 'crosshair';
+          console.log('[GREP] Cursor set to crosshair');
+
+          function getSelector(el) {
+            const parts = [];
+            let current = el;
+            while (current && current !== document.body) {
+              let selector = current.tagName.toLowerCase();
+              if (current.id) selector += '#' + current.id;
+              else if (current.className && typeof current.className === 'string') {
+                selector += '.' + current.className.split(' ').filter(Boolean).join('.');
+              }
+              parts.unshift(selector);
+              current = current.parentElement;
+            }
+            return parts.join(' > ');
+          }
+
+          function handleMove(e) {
+            if (!e.target) return;
+
+            const el = e.target;
+            const rect = el.getBoundingClientRect();
+
+            overlay.style.display = 'block';
+            overlay.style.top = rect.top + window.scrollY + 'px';
+            overlay.style.left = rect.left + window.scrollX + 'px';
+            overlay.style.width = rect.width + 'px';
+            overlay.style.height = rect.height + 'px';
+
+            const selector = getSelector(el);
+            tooltip.style.display = 'block';
+            tooltip.textContent = selector;
+            tooltip.style.top = Math.max(10, rect.top + window.scrollY - 30) + 'px';
+            tooltip.style.left = Math.max(10, Math.min(rect.left + window.scrollX, window.innerWidth - 310)) + 'px';
+          }
+
+          function handleClick(e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const el = e.target;
+            const selector = getSelector(el);
+
+            console.log('[GREP] Element clicked:', selector);
+
+            const context = {
+              tagName: el.tagName.toLowerCase(),
+              id: el.id || '',
+              className: (typeof el.className === 'string' ? el.className : ''),
+              selector: selector,
+              innerHTML: (el.innerHTML || '').slice(0, 500),
+              outerHTML: (el.outerHTML || '').slice(0, 1000),
+              textContent: (el.textContent || '').slice(0, 500),
+              attributes: Array.from(el.attributes || []).map(a => ({ name: a.name, value: a.value })),
+            };
+
+            // Send via console.log which will be caught by console-message event
+            console.log('GREP_INSPECTOR:' + JSON.stringify(context));
+
+            // Cleanup
+            document.body.style.cursor = '';
+            overlay.remove();
+            tooltip.remove();
+            document.removeEventListener('mouseover', handleMove);
+            document.removeEventListener('click', handleClick, true);
+
+            console.log('[GREP] Inspector cleaned up');
+          }
+
+          document.addEventListener('mouseover', handleMove);
+          document.addEventListener('click', handleClick, true);
+
+          console.log('[GREP] Inspector initialized successfully');
+        })();
+      `);
+      console.log('[BrowserPreview] Inspector injected successfully');
+    } catch (error) {
+      console.error('[BrowserPreview] Failed to inject inspector:', error);
+    }
   };
 
   const cancelInspector = async () => {
     setInspectorActive(false);
-    if (webviewRef.current) {
-      await webviewRef.current.executeJavaScript(`
+    const webview = webviewRef.current;
+    if (webview) {
+      // Cleanup event listeners
+      if ((webview as any)._inspectorCleanup) {
+        (webview as any)._inspectorCleanup();
+        delete (webview as any)._inspectorCleanup;
+      }
+
+      // Remove inspector elements from page
+      await webview.executeJavaScript(`
         document.body.style.cursor = '';
         document.getElementById('grep-inspector')?.remove();
         document.getElementById('grep-inspector-tooltip')?.remove();
@@ -277,7 +318,9 @@ export default function BrowserPreview({ session }: BrowserPreviewProps) {
           ref={webviewRef}
           src={url}
           className="absolute inset-0 w-full h-full"
-          webpreferences="contextIsolation=yes"
+          partition={`persist:session-${session.id}`}
+          allowpopups={true}
+          webpreferences="contextIsolation=yes,nodeIntegration=no,sandbox=no,enableRemoteModule=no"
         />
       </div>
     </div>

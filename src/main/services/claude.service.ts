@@ -4,10 +4,12 @@ import Store from 'electron-store';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import type { ChatMessage, ToolCall, Session } from '../../shared/types';
+import type { ChatMessage, ToolCall, Session, QuestionRequest, QuestionResponse } from '../../shared/types';
+import { BrowserWindow } from 'electron';
+import { IPC_CHANNELS } from '../../shared/constants/channels';
 
 interface StreamEvent {
-  type: 'text_delta' | 'thinking_delta' | 'tool_use' | 'tool_result' | 'message_complete' | 'error' | 'system';
+  type: 'text_delta' | 'thinking_delta' | 'tool_use' | 'tool_result' | 'message_complete' | 'error' | 'system' | 'permission_request';
   content?: string;
   toolCall?: ToolCall;
   result?: unknown;
@@ -17,6 +19,17 @@ interface StreamEvent {
     tools: string[];
     model: string;
   };
+  // Permission request fields
+  sessionId?: string;
+  requestId?: string;
+  toolName?: string;
+  toolInput?: Record<string, unknown>;
+  approvalMessage?: string; // Message about why approval is needed
+}
+
+interface PendingQuestion {
+  resolve: (answers: Record<string, string>) => void;
+  reject: (error: Error) => void;
 }
 
 export class ClaudeService {
@@ -25,10 +38,16 @@ export class ClaudeService {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private sessionStore: any;
   private activeQueries: Map<string, AbortController> = new Map();
+  private pendingQuestions: Map<string, PendingQuestion> = new Map();
+  private mainWindow: BrowserWindow | null = null;
 
   constructor() {
-    this.store = new Store({ name: 'grep-settings' });
-    this.sessionStore = new Store({ name: 'grep-sessions' });
+    this.store = new Store({ name: 'claudette-settings' });
+    this.sessionStore = new Store({ name: 'claudette-sessions' });
+  }
+
+  setMainWindow(window: BrowserWindow | null): void {
+    this.mainWindow = window;
   }
 
   getApiKey(): string | undefined {
@@ -37,6 +56,45 @@ export class ClaudeService {
 
   setApiKey(apiKey: string): void {
     this.store.set('anthropicApiKey', apiKey);
+  }
+
+  // Handle question responses from the renderer
+  handleQuestionResponse(response: QuestionResponse): void {
+    const pending = this.pendingQuestions.get(response.requestId);
+    if (pending) {
+      pending.resolve(response.answers);
+      this.pendingQuestions.delete(response.requestId);
+    }
+  }
+
+  // Ask user a question via the renderer
+  private async askUserQuestion(sessionId: string, questions: unknown[]): Promise<Record<string, string>> {
+    const requestId = `question-${Date.now()}-${Math.random()}`;
+
+    return new Promise((resolve, reject) => {
+      // Store the promise resolve/reject functions
+      this.pendingQuestions.set(requestId, { resolve, reject });
+
+      // Send question request to renderer
+      if (this.mainWindow) {
+        const request: QuestionRequest = {
+          sessionId,
+          requestId,
+          questions: questions as any, // SDK types match our Question type
+        };
+        this.mainWindow.webContents.send(IPC_CHANNELS.CLAUDE_QUESTION_REQUEST, request);
+      } else {
+        reject(new Error('Main window not available'));
+      }
+
+      // Set a timeout in case the user never responds
+      setTimeout(() => {
+        if (this.pendingQuestions.has(requestId)) {
+          this.pendingQuestions.delete(requestId);
+          reject(new Error('Question response timeout'));
+        }
+      }, 5 * 60 * 1000); // 5 minute timeout
+    });
   }
 
   async *streamMessage(
@@ -111,11 +169,57 @@ export class ClaudeService {
           },
           // Resume previous conversation if we have an SDK session ID
           ...(sdkSessionId ? { resume: sdkSessionId } : {}),
+          // Handle tool permission requests
+          canUseTool: async (toolName: string, input: any) => {
+            // Handle AskUserQuestion tool
+            if (toolName === 'AskUserQuestion' && input.questions) {
+              try {
+                const answers = await this.askUserQuestion(sessionId, input.questions);
+                return {
+                  behavior: 'allow',
+                  updatedInput: {
+                    ...input,
+                    answers,
+                  },
+                };
+              } catch (error) {
+                console.error('[Claude Service] Error asking user question:', error);
+                return {
+                  behavior: 'deny',
+                  message: error instanceof Error ? error.message : 'Failed to get user response',
+                };
+              }
+            }
+
+            // For other tools, use default behavior
+            return { behavior: 'allow', updatedInput: input };
+          },
         },
       });
 
       let fullContent = '';
       const toolCalls: ToolCall[] = [];
+
+      // Batching for stream events to reduce render overhead
+      let textBuffer = '';
+      let thinkingBuffer = '';
+      let lastFlush = Date.now();
+      const FLUSH_INTERVAL_MS = 100; // Batch updates every 100ms for smoother rendering
+
+      const flushBuffers = () => {
+        if (textBuffer) {
+          fullContent += textBuffer;
+          const content = textBuffer;
+          textBuffer = '';
+          return { text: content };
+        }
+        if (thinkingBuffer) {
+          const content = thinkingBuffer;
+          thinkingBuffer = '';
+          return { thinking: content };
+        }
+        return null;
+      };
 
       for await (const msg of messages) {
         if (abortController.signal.aborted) {
@@ -205,11 +309,31 @@ export class ClaudeService {
 
               if (event.type === 'content_block_delta' && event.delta) {
                 if (event.delta.type === 'text_delta' && event.delta.text) {
-                  fullContent += event.delta.text;
-                  yield { type: 'text_delta', content: event.delta.text };
+                  // Buffer text deltas for batching
+                  textBuffer += event.delta.text;
+
+                  // Flush if enough time has passed or buffer is large
+                  const now = Date.now();
+                  if (now - lastFlush >= FLUSH_INTERVAL_MS || textBuffer.length >= 100) {
+                    const flushed = flushBuffers();
+                    if (flushed?.text) {
+                      yield { type: 'text_delta', content: flushed.text };
+                    }
+                    lastFlush = now;
+                  }
                 } else if (event.delta.type === 'thinking_delta' && event.delta.thinking) {
-                  // Emit thinking updates as separate event type
-                  yield { type: 'thinking_delta', content: event.delta.thinking };
+                  // Buffer thinking deltas for batching
+                  thinkingBuffer += event.delta.thinking;
+
+                  // Flush if enough time has passed or buffer is large
+                  const now = Date.now();
+                  if (now - lastFlush >= FLUSH_INTERVAL_MS || thinkingBuffer.length >= 100) {
+                    const flushed = flushBuffers();
+                    if (flushed?.thinking) {
+                      yield { type: 'thinking_delta', content: flushed.thinking };
+                    }
+                    lastFlush = now;
+                  }
                 }
                 // Silently ignore input_json_delta - handled via full tool_use block
               } else if (event.type === 'content_block_start' && event.content_block) {
@@ -266,13 +390,32 @@ export class ClaudeService {
             if (userMsg.message?.content) {
               for (const block of userMsg.message.content) {
                 if (block.type === 'tool_result') {
+                  const content = block.content || '';
+
+                  // Check if tool requires approval
+                  if (typeof content === 'string' && content.includes('requires approval')) {
+                    const toolCall = toolCalls.find(tc => tc.id === block.tool_use_id);
+                    if (toolCall) {
+                      // Emit permission request to renderer
+                      yield {
+                        type: 'permission_request',
+                        sessionId,
+                        requestId: block.tool_use_id || '',
+                        toolName: toolCall.name,
+                        toolInput: toolCall.input,
+                        approvalMessage: content,
+                      };
+                      continue;
+                    }
+                  }
+
                   // Find and update the corresponding tool call
                   const toolCall = toolCalls.find(tc => tc.id === block.tool_use_id);
                   if (toolCall) {
                     toolCall.status = 'completed';
-                    toolCall.result = block.content;
+                    toolCall.result = content;
                     toolCall.completedAt = new Date();
-                    yield { type: 'tool_result', toolCall, result: block.content };
+                    yield { type: 'tool_result', toolCall, result: content };
                   }
                 }
               }
@@ -282,12 +425,29 @@ export class ClaudeService {
 
           case 'result':
             // Final result message with cost info - no action needed
+            // Flush any remaining buffered content
+            const finalFlushed = flushBuffers();
+            if (finalFlushed?.text) {
+              yield { type: 'text_delta', content: finalFlushed.text };
+            }
+            if (finalFlushed?.thinking) {
+              yield { type: 'thinking_delta', content: finalFlushed.thinking };
+            }
             break;
 
           default:
             // Silently ignore unhandled message types
             break;
         }
+      }
+
+      // Final flush before creating message
+      const endFlushed = flushBuffers();
+      if (endFlushed?.text) {
+        yield { type: 'text_delta', content: endFlushed.text };
+      }
+      if (endFlushed?.thinking) {
+        yield { type: 'thinking_delta', content: endFlushed.thinking };
       }
 
       // Create final message

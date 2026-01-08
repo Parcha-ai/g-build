@@ -142,6 +142,24 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.CLAUDE_SYSTEM_INFO, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.CLAUDE_SYSTEM_INFO, handler);
     },
+    // Permission request listener
+    onPermissionRequest: (callback: (request: any) => void) => {
+      const handler = (_: IpcRendererEvent, request: any) => callback(request);
+      ipcRenderer.on(IPC_CHANNELS.CLAUDE_PERMISSION_REQUEST, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.CLAUDE_PERMISSION_REQUEST, handler);
+    },
+    // Send permission response
+    respondToPermission: (response: { requestId: string; approved: boolean; modifiedInput?: Record<string, unknown> }): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CLAUDE_PERMISSION_RESPONSE, response),
+    // Question request listener
+    onQuestionRequest: (callback: (request: any) => void) => {
+      const handler = (_: IpcRendererEvent, request: any) => callback(request);
+      ipcRenderer.on(IPC_CHANNELS.CLAUDE_QUESTION_REQUEST, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.CLAUDE_QUESTION_REQUEST, handler);
+    },
+    // Send question response
+    respondToQuestion: (response: { requestId: string; answers: Record<string, string> }): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CLAUDE_QUESTION_RESPONSE, response),
   },
 
   // Browser Preview
@@ -334,6 +352,18 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.REALTIME_ERROR, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.REALTIME_ERROR, handler);
     },
+  },
+
+  // Extensions (commands, skills, agents)
+  extensions: {
+    scanCommands: (projectPath?: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.EXTENSION_SCAN_COMMANDS, projectPath),
+    scanSkills: (projectPath?: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.EXTENSION_SCAN_SKILLS, projectPath),
+    scanAgents: (projectPath?: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.EXTENSION_SCAN_AGENTS, projectPath),
+    getCommand: (commandName: string, projectPath?: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.EXTENSION_GET_COMMAND, commandName, projectPath),
   },
 };
 

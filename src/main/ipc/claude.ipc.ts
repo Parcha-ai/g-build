@@ -2,6 +2,7 @@ import { IpcMain } from 'electron';
 import { IPC_CHANNELS } from '../../shared/constants/channels';
 import { ClaudeService } from '../services/claude.service';
 import { getMainWindow } from '../index';
+import type { QuestionResponse } from '../../shared/types';
 
 const claudeService = new ClaudeService();
 
@@ -11,7 +12,7 @@ class ChunkBatcher {
   private thinkingBuffer = '';
   private textTimer: NodeJS.Timeout | null = null;
   private thinkingTimer: NodeJS.Timeout | null = null;
-  private readonly BATCH_DELAY = 16; // ~60fps, balances responsiveness with efficiency
+  private readonly BATCH_DELAY = 100; // 10 updates/sec - much smoother for markdown parsing
 
   constructor(
     private sessionId: string,
@@ -62,6 +63,12 @@ class ChunkBatcher {
 }
 
 export function registerClaudeHandlers(ipcMain: IpcMain): void {
+  // Set the main window reference for the Claude service
+  const mainWindow = getMainWindow();
+  if (mainWindow) {
+    claudeService.setMainWindow(mainWindow);
+  }
+
   ipcMain.handle(
     IPC_CHANNELS.CLAUDE_SEND_MESSAGE,
     async (_, sessionId: string, message: string, attachments?: unknown[], permissionMode?: string, thinkingMode?: string) => {
@@ -108,6 +115,10 @@ export function registerClaudeHandlers(ipcMain: IpcMain): void {
               });
               break;
 
+            case 'permission_request':
+              mainWindow.webContents.send(IPC_CHANNELS.CLAUDE_PERMISSION_REQUEST, event);
+              break;
+
             case 'message_complete':
               // Flush any remaining batched content before completing
               batcher.flush();
@@ -145,4 +156,20 @@ export function registerClaudeHandlers(ipcMain: IpcMain): void {
   ipcMain.handle(IPC_CHANNELS.CLAUDE_GET_MESSAGES, async (_, sessionId: string) => {
     return claudeService.getMessages(sessionId);
   });
+
+  // Handle permission responses from user
+  ipcMain.handle(IPC_CHANNELS.CLAUDE_PERMISSION_RESPONSE, async (_, response: { requestId: string; approved: boolean; modifiedInput?: Record<string, unknown> }) => {
+    // For now, just log it - full implementation would need to continue the query
+    console.log('[Claude IPC] Permission response:', response);
+    // TODO: Implement permission approval flow - may need to store pending queries and resume them
+  });
+
+  // Handle question responses from user
+  ipcMain.handle(IPC_CHANNELS.CLAUDE_QUESTION_RESPONSE, async (_, response: QuestionResponse) => {
+    console.log('[Claude IPC] Question response:', response);
+    claudeService.handleQuestionResponse(response);
+  });
 }
+
+// Export the claude service instance so it can be updated with mainWindow reference
+export { claudeService };

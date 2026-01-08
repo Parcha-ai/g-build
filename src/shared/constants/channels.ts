@@ -52,6 +52,10 @@ export const IPC_CHANNELS = {
   CLAUDE_TOOL_RESULT: 'claude:tool-result',
   CLAUDE_SYSTEM_INFO: 'claude:system-info',
   CLAUDE_CANCEL: 'claude:cancel',
+  CLAUDE_PERMISSION_REQUEST: 'claude:permission-request',
+  CLAUDE_PERMISSION_RESPONSE: 'claude:permission-response',
+  CLAUDE_QUESTION_REQUEST: 'claude:question-request',
+  CLAUDE_QUESTION_RESPONSE: 'claude:question-response',
 
   // Browser preview channels
   BROWSER_NAVIGATE: 'browser:navigate',
@@ -110,6 +114,12 @@ export const IPC_CHANNELS = {
   REALTIME_ERROR: 'realtime:error',
   REALTIME_CONNECTED: 'realtime:connected',
   REALTIME_DISCONNECTED: 'realtime:disconnected',
+
+  // Extension channels (commands, skills, agents)
+  EXTENSION_SCAN_COMMANDS: 'extension:scan-commands',
+  EXTENSION_SCAN_SKILLS: 'extension:scan-skills',
+  EXTENSION_SCAN_AGENTS: 'extension:scan-agents',
+  EXTENSION_GET_COMMAND: 'extension:get-command',
 } as const;
 
 export type IPCChannel = typeof IPC_CHANNELS[keyof typeof IPC_CHANNELS];

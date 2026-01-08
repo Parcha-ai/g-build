@@ -3,6 +3,9 @@ import { useSessionStore } from '../../stores/session.store';
 import { useAudioStore } from '../../stores/audio.store';
 import MessageList from './MessageList';
 import InputArea from './InputArea';
+import PermissionDialog from './PermissionDialog';
+import QuestionDialog from './QuestionDialog';
+import ThinkingBlock from './ThinkingBlock';
 import { SoundVisualization } from './SoundVisualization';
 import type { Session } from '../../../shared/types';
 
@@ -11,18 +14,34 @@ interface ChatContainerProps {
 }
 
 export default function ChatContainer({ session }: ChatContainerProps) {
-  const { messages, isStreaming, currentStreamContent, currentThinkingContent, currentToolCalls, currentSystemInfo, subscribeToClaude } =
-    useSessionStore();
+  const {
+    messages,
+    isStreaming,
+    streamEvents,
+    currentStreamContent,
+    currentThinkingContent,
+    currentToolCalls,
+    currentSystemInfo,
+    pendingPermission,
+    approvePermission,
+    denyPermission,
+    pendingQuestion,
+    answerQuestion,
+    subscribeToClaude,
+  } = useSessionStore();
   const { audioModeActive, ttsStates } = useAudioStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const sessionMessages = messages[session.id] || [];
   const isSessionStreaming = isStreaming[session.id] || false;
+  const sessionStreamEvents = streamEvents[session.id] || [];
   const streamContent = currentStreamContent[session.id] || '';
   const thinkingContent = currentThinkingContent[session.id] || '';
   const streamingToolCalls = currentToolCalls[session.id] || [];
   const systemInfo = currentSystemInfo[session.id] || null;
   const isAudioMode = audioModeActive[session.id] || false;
+  const currentPermissionRequest = pendingPermission[session.id] || null;
+  const currentQuestionRequest = pendingQuestion[session.id] || null;
 
   // Check if any TTS is actively playing for messages in this session
   const isTTSPlaying = sessionMessages.some(msg => ttsStates[msg.id]?.isPlaying);
@@ -74,12 +93,41 @@ export default function ChatContainer({ session }: ChatContainerProps) {
         <MessageList
           messages={sessionMessages}
           isStreaming={isSessionStreaming}
+          streamEvents={sessionStreamEvents}
           streamContent={streamContent}
-          thinkingContent={thinkingContent}
           streamingToolCalls={streamingToolCalls}
         />
+
+        {/* Permission request - inline at end of chat */}
+        {currentPermissionRequest && (
+          <div className="px-4 py-2">
+            <PermissionDialog
+              request={currentPermissionRequest}
+              onApprove={(modifiedInput) => approvePermission(session.id, modifiedInput)}
+              onDeny={() => denyPermission(session.id)}
+            />
+          </div>
+        )}
+
+        {/* Question request - inline at end of chat */}
+        {currentQuestionRequest && (
+          <div className="px-4 py-2">
+            <QuestionDialog
+              request={currentQuestionRequest}
+              onAnswer={(answers) => answerQuestion(session.id, answers)}
+            />
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Active thinking section - separate from message history */}
+      {isSessionStreaming && thinkingContent && (
+        <div className="border-t border-claude-border bg-claude-surface/30 px-4 py-2">
+          <ThinkingBlock content={thinkingContent} isStreaming={true} />
+        </div>
+      )}
 
       {/* Input */}
       <InputArea

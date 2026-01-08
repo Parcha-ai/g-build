@@ -10,7 +10,7 @@ import StatusBar from './components/layout/StatusBar';
 import LoginScreen from './components/auth/LoginScreen';
 import SettingsDialog from './components/settings/SettingsDialog';
 import QuickSearch from './components/editor/QuickSearch';
-import { Terminal, Globe, PanelRight, Settings, PanelLeftClose, Monitor, AlertTriangle } from 'lucide-react';
+import { Terminal, Globe, PanelRight, Settings, PanelLeftClose, Monitor, AlertTriangle, Package } from 'lucide-react';
 
 // Check if we're running in Electron (has electronAPI) or browser preview mode
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
@@ -122,9 +122,11 @@ function ElectronApp() {
     isSidebarOpen,
     isTerminalPanelOpen,
     isBrowserPanelOpen,
+    isExtensionsPanelOpen,
     toggleSidebar,
     toggleTerminalPanel,
     toggleBrowserPanel,
+    toggleExtensionsPanel,
     cycleSplitRatio,
     openSettings,
   } = useUIStore();
@@ -183,10 +185,16 @@ function ElectronApp() {
   return (
     <div className="h-screen w-screen flex flex-col bg-claude-bg overflow-hidden">
       {/* Title bar with drag region and controls */}
-      <div className="h-8 bg-claude-surface border-b border-claude-border flex items-center justify-between">
-        {/* Left: sidebar toggle + drag region */}
+      <div
+        className="h-8 bg-claude-surface border-b border-claude-border flex items-center justify-between"
+        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+      >
+        {/* Left: sidebar toggle + spacer for traffic lights */}
         <div className="flex items-center h-full">
-          <div className="pl-20 pr-2 flex items-center">
+          <div
+            className="pl-20 pr-2 flex items-center"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+          >
             <button
               onClick={toggleSidebar}
               className={`p-1 transition-colors hover:text-claude-text ${
@@ -197,11 +205,13 @@ function ElectronApp() {
               <PanelLeftClose size={14} />
             </button>
           </div>
-          <div className="flex-1 titlebar-drag-region h-full" />
         </div>
 
         {/* Right: panel toggle buttons */}
-        <div className="flex items-center gap-0.5 px-2">
+        <div
+          className="flex items-center gap-0.5 px-2"
+          style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        >
           <button
             onClick={toggleTerminalPanel}
             className={`p-1 transition-colors hover:text-claude-text ${
@@ -219,6 +229,15 @@ function ElectronApp() {
             title="Toggle Browser"
           >
             <Globe size={14} />
+          </button>
+          <button
+            onClick={toggleExtensionsPanel}
+            className={`p-1 transition-colors hover:text-claude-text ${
+              isExtensionsPanelOpen ? 'text-claude-text' : 'text-claude-text-secondary'
+            }`}
+            title="Toggle Extensions"
+          >
+            <Package size={14} />
           </button>
           <button
             onClick={cycleSplitRatio}

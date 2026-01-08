@@ -1,7 +1,6 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import ToolCallCard from './ToolCallCard';
-import ThinkingBlock from './ThinkingBlock';
 import { SpeakerButton } from './SpeakerButton';
 import { useEditorStore } from '../../stores/editor.store';
 import type { ChatMessage, ToolCall } from '../../../shared/types';
@@ -14,19 +13,15 @@ interface MessageBubbleProps {
   message: ChatMessage;
   isStreaming?: boolean;
   streamingToolCalls?: ToolCall[];
-  thinkingContent?: string;
   isLatestMessage?: boolean; // True only for the most recent message in the conversation
 }
 
-export default function MessageBubble({ message, isStreaming, streamingToolCalls, thinkingContent, isLatestMessage = false }: MessageBubbleProps) {
+function MessageBubble({ message, isStreaming, streamingToolCalls, isLatestMessage = false }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const openFile = useEditorStore((state) => state.openFile);
 
   // Use streaming tool calls if provided, otherwise use message.toolCalls
   const toolCalls = streamingToolCalls || message.toolCalls || [];
-
-  // Show thinking block if we have thinking content
-  const hasThinking = thinkingContent && thinkingContent.length > 0;
 
   // Check if this is a tool-only message (no text content)
   const isToolOnlyMessage = !message.content && toolCalls.length > 0;
@@ -43,14 +38,19 @@ export default function MessageBubble({ message, isStreaming, streamingToolCalls
             </p>
           </div>
         ) : (
-          // Assistant messages - thinking first, then markdown content, then tool calls
+          // Assistant messages - tools → content
           <div className="space-y-2">
-            {/* Render thinking block FIRST if present (appears while Claude thinks) */}
-            {hasThinking && (
-              <ThinkingBlock content={thinkingContent} isStreaming={isStreaming} />
-            )}
+            {/* Tool calls execute (during action) */}
+            {toolCalls.map((toolCall, index) => (
+              <ToolCallCard
+                key={toolCall.id}
+                toolCall={toolCall}
+                isLatestToolCall={isLatestMessage && index === toolCalls.length - 1}
+                isStreaming={isStreaming}
+              />
+            ))}
 
-            {/* Render markdown content */}
+            {/* Final content streams last (summary/response) */}
             {message.content && (
               <div className="relative group">
                 {/* Speaker button - top right, brutalist style */}
@@ -132,13 +132,13 @@ export default function MessageBubble({ message, isStreaming, streamingToolCalls
                     },
                     // Style lists
                     ul({ children }) {
-                      return <ul className="my-1 ml-4 list-disc">{children}</ul>;
+                      return <ul className="my-1 ml-6 pl-0 list-disc list-outside">{children}</ul>;
                     },
                     ol({ children }) {
-                      return <ol className="my-1 ml-4 list-decimal">{children}</ol>;
+                      return <ol className="my-1 ml-6 pl-0 list-decimal list-outside">{children}</ol>;
                     },
                     li({ children }) {
-                      return <li className="my-0.5">{children}</li>;
+                      return <li className="my-0.5 ml-0 pl-1">{children}</li>;
                     },
                     // Style headings
                     h1({ children }) {
@@ -181,15 +181,6 @@ export default function MessageBubble({ message, isStreaming, streamingToolCalls
                 </div>
               </div>
             )}
-
-            {/* Render tool calls from the structured array */}
-            {toolCalls.map((toolCall, index) => (
-              <ToolCallCard
-                key={toolCall.id}
-                toolCall={toolCall}
-                isLatest={isLatestMessage && index === toolCalls.length - 1}
-              />
-            ))}
           </div>
         )}
 
@@ -222,3 +213,6 @@ function formatTime(date: Date): string {
     minute: '2-digit',
   });
 }
+
+// Memoize to prevent unnecessary re-renders when props haven't changed
+export default React.memo(MessageBubble);

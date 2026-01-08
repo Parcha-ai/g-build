@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Session, ChatMessage, ToolCall } from '../../shared/types';
+import type { Session, ChatMessage, ToolCall, PermissionRequest, PermissionResponse, QuestionRequest, QuestionResponse } from '../../shared/types';
 
 // Check if running in Electron environment
 const hasElectronAPI = typeof window !== 'undefined' && !!window.electronAPI;
@@ -15,17 +15,29 @@ export type PermissionMode = 'default' | 'acceptEdits' | 'plan';
 // Thinking modes: off (0), thinking (10k tokens), ultrathink (100k tokens)
 export type ThinkingMode = 'off' | 'thinking' | 'ultrathink';
 
+// Chronological event for rendering in order
+export interface StreamEvent {
+  id: string;
+  type: 'thinking' | 'tool' | 'text';
+  timestamp: number;
+  content?: string;
+  toolCall?: ToolCall;
+}
+
 interface SessionState {
   sessions: Session[];
   activeSessionId: string | null;
   messages: Record<string, ChatMessage[]>;
   isStreaming: Record<string, boolean>;
+  streamEvents: Record<string, StreamEvent[]>; // Chronological events
   currentStreamContent: Record<string, string>;
   currentThinkingContent: Record<string, string>;
   currentToolCalls: Record<string, ToolCall[]>;
   currentSystemInfo: Record<string, SystemInfo | null>;
   permissionMode: Record<string, PermissionMode>;
   thinkingMode: Record<string, ThinkingMode>;
+  pendingPermission: Record<string, PermissionRequest | null>;
+  pendingQuestion: Record<string, QuestionRequest | null>;
 
   setActiveSession: (sessionId: string | null) => void;
   addSession: (session: Session) => void;
@@ -57,6 +69,13 @@ interface SessionState {
   sendMessage: (sessionId: string, message: string, attachments?: unknown[]) => Promise<void>;
   loadMessages: (sessionId: string) => Promise<void>;
   subscribeToClaude: () => () => void;
+  // Permission handling
+  setPendingPermission: (sessionId: string, request: PermissionRequest | null) => void;
+  approvePermission: (sessionId: string, modifiedInput?: Record<string, unknown>) => Promise<void>;
+  denyPermission: (sessionId: string) => Promise<void>;
+  // Question handling
+  setPendingQuestion: (sessionId: string, request: QuestionRequest | null) => void;
+  answerQuestion: (sessionId: string, answers: Record<string, string>) => Promise<void>;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -64,15 +83,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   activeSessionId: null,
   messages: {},
   isStreaming: {},
+  streamEvents: {}, // Chronological event stream
   currentStreamContent: {},
   currentThinkingContent: {},
   currentToolCalls: {},
   currentSystemInfo: {},
   permissionMode: {},
   thinkingMode: {},
+  pendingPermission: {},
+  pendingQuestion: {},
 
-  setActiveSession: (sessionId) => {
-    const { loadMessages } = get();
+  setActiveSession: async (sessionId) => {
+    const { loadMessages, startSession } = get();
 
     set((state) => {
       // Update the session's updatedAt timestamp when it becomes active
@@ -91,14 +113,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     });
 
     // Persist active session and update timestamp in backend (only in Electron)
-    if (hasElectronAPI) {
+    if (hasElectronAPI && sessionId) {
       window.electronAPI.dev.setActiveSession(sessionId);
-      if (sessionId) {
-        window.electronAPI.sessions.update(sessionId, { updatedAt: new Date() });
+      window.electronAPI.sessions.update(sessionId, { updatedAt: new Date() });
+
+      // Auto-start the session if it's stopped
+      const session = get().sessions.find(s => s.id === sessionId);
+      if (session && session.status === 'stopped') {
+        await startSession(sessionId);
       }
-    }
-    // Load messages for this session from SDK transcripts
-    if (sessionId) {
+
+      // Load messages for this session from SDK transcripts
       loadMessages(sessionId);
     }
   },
@@ -188,15 +213,49 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   updateStreamContent: (sessionId, content) => {
-    set((state) => ({
-      currentStreamContent: {
-        ...state.currentStreamContent,
-        [sessionId]: (state.currentStreamContent[sessionId] || '') + content,
-      },
-    }));
+    set((state) => {
+      const existingEvents = state.streamEvents[sessionId] || [];
+      const lastEvent = existingEvents[existingEvents.length - 1];
+
+      // If the last event is already a text event, update it instead of creating a new one
+      if (lastEvent && lastEvent.type === 'text') {
+        const updatedEvents = [...existingEvents];
+        updatedEvents[updatedEvents.length - 1] = {
+          ...lastEvent,
+          content: (lastEvent.content || '') + content,
+        };
+
+        return {
+          currentStreamContent: {
+            ...state.currentStreamContent,
+            [sessionId]: (state.currentStreamContent[sessionId] || '') + content,
+          },
+          streamEvents: {
+            ...state.streamEvents,
+            [sessionId]: updatedEvents,
+          },
+        };
+      }
+
+      // Otherwise, create a new text event
+      return {
+        currentStreamContent: {
+          ...state.currentStreamContent,
+          [sessionId]: (state.currentStreamContent[sessionId] || '') + content,
+        },
+        streamEvents: {
+          ...state.streamEvents,
+          [sessionId]: [
+            ...existingEvents,
+            { id: `text-${Date.now()}`, type: 'text', timestamp: Date.now(), content },
+          ],
+        },
+      };
+    });
   },
 
   updateThinkingContent: (sessionId, content) => {
+    // Thinking is now displayed separately, not in the chronological stream
     set((state) => ({
       currentThinkingContent: {
         ...state.currentThinkingContent,
@@ -210,6 +269,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       currentToolCalls: {
         ...state.currentToolCalls,
         [sessionId]: [...(state.currentToolCalls[sessionId] || []), toolCall],
+      },
+      // Add to chronological stream
+      streamEvents: {
+        ...state.streamEvents,
+        [sessionId]: [
+          ...(state.streamEvents[sessionId] || []),
+          { id: toolCall.id, type: 'tool', timestamp: Date.now(), toolCall },
+        ],
       },
     }));
   },
@@ -228,6 +295,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   setStreaming: (sessionId, isStreaming) => {
     set((state) => ({
       isStreaming: { ...state.isStreaming, [sessionId]: isStreaming },
+      streamEvents: isStreaming
+        ? { ...state.streamEvents, [sessionId]: [] }
+        : state.streamEvents,
       currentStreamContent: isStreaming
         ? { ...state.currentStreamContent, [sessionId]: '' }
         : state.currentStreamContent,
@@ -408,6 +478,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       addMessage(sessionId, errorMessage);
     });
 
+    // Subscribe to permission requests
+    const unsubPermission = window.electronAPI.claude.onPermissionRequest((request) => {
+      console.log('[Session Store] Permission request received:', request.toolName);
+      const { setPendingPermission } = get();
+      setPendingPermission(request.sessionId, request);
+    });
+
+    // Subscribe to question requests
+    const unsubQuestion = window.electronAPI.claude.onQuestionRequest((request) => {
+      console.log('[Session Store] Question request received:', request.questions.length, 'question(s)');
+      const { setPendingQuestion } = get();
+      setPendingQuestion(request.sessionId, request);
+    });
+
     return () => {
       unsubChunk();
       unsubThinking();
@@ -416,6 +500,89 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       unsubSystemInfo();
       unsubEnd();
       unsubError();
+      unsubPermission();
+      unsubQuestion();
     };
+  },
+
+  // Permission handling methods
+  setPendingPermission: (sessionId, request) => {
+    set((state) => ({
+      pendingPermission: {
+        ...state.pendingPermission,
+        [sessionId]: request,
+      },
+    }));
+  },
+
+  approvePermission: async (sessionId, modifiedInput) => {
+    if (!hasElectronAPI) return;
+    const { pendingPermission, setPendingPermission } = get();
+    const request = pendingPermission[sessionId];
+
+    if (!request) {
+      console.warn('[Session Store] No pending permission to approve');
+      return;
+    }
+
+    const response: PermissionResponse = {
+      requestId: request.requestId,
+      approved: true,
+      modifiedInput,
+    };
+
+    console.log('[Session Store] Approving permission:', request.requestId);
+    await window.electronAPI.claude.respondToPermission(response);
+    setPendingPermission(sessionId, null);
+  },
+
+  denyPermission: async (sessionId) => {
+    if (!hasElectronAPI) return;
+    const { pendingPermission, setPendingPermission } = get();
+    const request = pendingPermission[sessionId];
+
+    if (!request) {
+      console.warn('[Session Store] No pending permission to deny');
+      return;
+    }
+
+    const response: PermissionResponse = {
+      requestId: request.requestId,
+      approved: false,
+    };
+
+    console.log('[Session Store] Denying permission:', request.requestId);
+    await window.electronAPI.claude.respondToPermission(response);
+    setPendingPermission(sessionId, null);
+  },
+
+  // Question handling methods
+  setPendingQuestion: (sessionId, request) => {
+    set((state) => ({
+      pendingQuestion: {
+        ...state.pendingQuestion,
+        [sessionId]: request,
+      },
+    }));
+  },
+
+  answerQuestion: async (sessionId, answers) => {
+    if (!hasElectronAPI) return;
+    const { pendingQuestion, setPendingQuestion } = get();
+    const request = pendingQuestion[sessionId];
+
+    if (!request) {
+      console.warn('[Session Store] No pending question to answer');
+      return;
+    }
+
+    const response: QuestionResponse = {
+      requestId: request.requestId,
+      answers,
+    };
+
+    console.log('[Session Store] Answering question:', request.requestId, answers);
+    await window.electronAPI.claude.respondToQuestion(response);
+    setPendingQuestion(sessionId, null);
   },
 }));

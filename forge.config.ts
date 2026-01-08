@@ -17,6 +17,12 @@ const config: ForgeConfig = {
     name: 'Claudette',
     executableName: 'claudette',
     appBundleId: 'com.parcha.claudette',
+    // macOS icon - place icon.icns in assets/ folder
+    // Or use a 1024x1024 PNG and Electron Forge will convert it
+    icon: './assets/icon',
+    // macOS specific
+    darwinDarkModeSupport: true,
+    appCategoryType: 'public.app-category.developer-tools',
   },
   rebuildConfig: {},
   makers: [

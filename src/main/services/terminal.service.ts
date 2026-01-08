@@ -18,7 +18,7 @@ export class TerminalService {
   private dockerService: DockerService;
 
   constructor() {
-    this.store = new Store({ name: 'grep-sessions' });
+    this.store = new Store({ name: 'claudette-sessions' });
     this.dockerService = new DockerService();
   }
 

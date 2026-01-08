@@ -1,24 +1,26 @@
 import React from 'react';
 import MessageBubble from './MessageBubble';
+import ToolCallCard from './ToolCallCard';
 import type { ChatMessage, ToolCall } from '../../../shared/types';
+import type { StreamEvent } from '../../stores/session.store';
 
 interface MessageListProps {
   messages: ChatMessage[];
   isStreaming: boolean;
+  streamEvents: StreamEvent[];
   streamContent: string;
-  thinkingContent?: string;
   streamingToolCalls?: ToolCall[];
 }
 
 export default function MessageList({
   messages,
   isStreaming,
+  streamEvents,
   streamContent,
-  thinkingContent,
   streamingToolCalls,
 }: MessageListProps) {
-  // Check if we have any content to show (either messages, streaming content, thinking, or streaming tool calls)
-  const hasStreamingContent = isStreaming && (streamContent || thinkingContent || (streamingToolCalls && streamingToolCalls.length > 0));
+  // Check if we have any content to show (either messages, streaming content, or streaming tool calls)
+  const hasStreamingContent = isStreaming && (streamContent || (streamingToolCalls && streamingToolCalls.length > 0));
 
   if (messages.length === 0 && !hasStreamingContent) {
     return (
@@ -31,30 +33,51 @@ export default function MessageList({
     );
   }
 
+  // Sort messages by timestamp to ensure chronological order
+  const sortedMessages = React.useMemo(() => {
+    return [...messages].sort((a, b) => {
+      const timeA = new Date(a.timestamp).getTime();
+      const timeB = new Date(b.timestamp).getTime();
+      return timeA - timeB;
+    });
+  }, [messages]);
+
   return (
     <div className="p-4 space-y-4">
-      {messages.map((message, index) => (
+      {sortedMessages.map((message, index) => (
         <MessageBubble
           key={message.id}
           message={message}
-          isLatestMessage={!hasStreamingContent && index === messages.length - 1}
+          isLatestMessage={!hasStreamingContent && index === sortedMessages.length - 1}
         />
       ))}
 
-      {/* Streaming message with tool calls and thinking */}
-      {hasStreamingContent && (
-        <MessageBubble
-          message={{
-            id: 'streaming',
-            role: 'assistant',
-            content: streamContent || '',
-            timestamp: new Date(),
-          }}
-          isStreaming
-          streamingToolCalls={streamingToolCalls}
-          thinkingContent={thinkingContent}
-          isLatestMessage={true}
-        />
+      {/* Streaming events in chronological order (excluding thinking - shown separately) */}
+      {isStreaming && streamEvents.length > 0 && (
+        <div className="px-4 space-y-2">
+          {streamEvents.map((event) => {
+            // Skip thinking events - they're shown in the dedicated thinking section
+            if (event.type === 'thinking') {
+              return null;
+            } else if (event.type === 'tool') {
+              return (
+                <ToolCallCard
+                  key={event.id}
+                  toolCall={event.toolCall!}
+                  isLatest={false}
+                  isStreaming={true}
+                />
+              );
+            } else if (event.type === 'text' && event.content) {
+              return (
+                <div key={event.id} className="text-claude-text font-mono">
+                  {event.content}
+                </div>
+              );
+            }
+            return null;
+          })}
+        </div>
       )}
 
       {/* Loading indicator - only show when streaming but no content yet */}
