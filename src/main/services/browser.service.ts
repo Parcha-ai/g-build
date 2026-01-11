@@ -74,16 +74,29 @@ export class BrowserService {
 
     // Listen for webview registration from renderer
     ipcMain.on('browser:register-webview', (_event, data: { sessionId: string; webContentsId: number }) => {
-      console.log('[Browser Service] Registering webview:', data.sessionId, '->', data.webContentsId);
-      // Clean up any existing mapping for this session (in case of re-registration)
-      const oldWebContentsId = this.sessionWebContents.get(data.sessionId);
-      if (oldWebContentsId && oldWebContentsId !== data.webContentsId) {
-        this.webContentsToSession.delete(oldWebContentsId);
+      console.log('[Browser Service] === WEBVIEW REGISTRATION ===');
+      console.log('[Browser Service] Session ID:', data.sessionId);
+      console.log('[Browser Service] webContentsId:', data.webContentsId);
+
+      // Verify the webContents exists
+      const wc = webContents.fromId(data.webContentsId);
+      if (wc) {
+        console.log('[Browser Service] webContents verified - URL:', wc.getURL?.() || 'unknown');
+
+        // Clean up any existing mapping for this session (in case of re-registration)
+        const oldWebContentsId = this.sessionWebContents.get(data.sessionId);
+        if (oldWebContentsId && oldWebContentsId !== data.webContentsId) {
+          this.webContentsToSession.delete(oldWebContentsId);
+        }
+
+        // Set up new mappings (including reverse mapping for multi-session support)
+        this.sessionWebContents.set(data.sessionId, data.webContentsId);
+        this.webContentsToSession.set(data.webContentsId, data.sessionId);
+        console.log('[Browser Service] Registration successful. Total registered:', this.sessionWebContents.size);
+        console.log('[Browser Service] Active sessions with browsers:', Array.from(this.sessionWebContents.keys()));
+      } else {
+        console.error('[Browser Service] FAILED - webContents.fromId returned null for ID:', data.webContentsId);
       }
-      // Set up new mappings
-      this.sessionWebContents.set(data.sessionId, data.webContentsId);
-      this.webContentsToSession.set(data.webContentsId, data.sessionId);
-      console.log('[Browser Service] Active sessions with browsers:', Array.from(this.sessionWebContents.keys()));
     });
 
     // Listen for webview unregistration
@@ -103,14 +116,37 @@ export class BrowserService {
 
   /**
    * Get webContents for a session's webview
+   * Falls back to any registered session if specified session not found
    */
   private getWebContents(sessionId: string): Electron.WebContents | null {
-    const webContentsId = this.sessionWebContents.get(sessionId);
+    // Debug: Log all registered sessions
+    console.log('[Browser Service] getWebContents called for session:', sessionId);
+    console.log('[Browser Service] All registered sessions:', Array.from(this.sessionWebContents.entries()));
+
+    let webContentsId = this.sessionWebContents.get(sessionId);
+
     if (!webContentsId) {
       console.warn('[Browser Service] No webContentsId found for session:', sessionId);
-      return null;
+
+      // Fallback: use any registered session (useful for MCP tools without session context)
+      const allSessions = Array.from(this.sessionWebContents.entries());
+      if (allSessions.length > 0) {
+        const [fallbackSessionId, fallbackWebContentsId] = allSessions[0];
+        console.log('[Browser Service] Using fallback session:', fallbackSessionId);
+        webContentsId = fallbackWebContentsId;
+      } else {
+        console.error('[Browser Service] No webviews registered at all!');
+        return null;
+      }
     }
-    return webContents.fromId(webContentsId) || null;
+
+    const wc = webContents.fromId(webContentsId);
+    if (!wc) {
+      console.error('[Browser Service] webContents.fromId returned null for ID:', webContentsId);
+    } else {
+      console.log('[Browser Service] Found webContents:', wc.id, 'URL:', wc.getURL?.() || 'unknown');
+    }
+    return wc || null;
   }
 
   /**
@@ -176,6 +212,11 @@ export class BrowserService {
    * Navigate browser to a specific URL using CDP
    */
   async navigate(sessionId: string, url: string): Promise<void> {
+    // Check if browser panel is open
+    if (this.sessionWebContents.size === 0) {
+      throw new Error('Browser panel is not open. Please open the browser panel (use the globe icon in the toolbar) to use browser automation tools.');
+    }
+
     // Emit start event for visual feedback
     this.emitAutomationEvent(sessionId, { type: 'start', action: 'navigate', data: { url } });
 
@@ -184,7 +225,16 @@ export class BrowserService {
       // Fallback to IPC method
       const mainWindow = BrowserWindow.getAllWindows()[0];
       if (mainWindow) {
-        mainWindow.webContents.send('browser:navigate', { sessionId, url });
+        // Use fallback session if original sessionId has no webview
+        let targetSessionId = sessionId;
+        if (!this.sessionWebContents.has(sessionId)) {
+          const allSessions = Array.from(this.sessionWebContents.keys());
+          if (allSessions.length > 0) {
+            targetSessionId = allSessions[0];
+            console.log('[Browser Service] Using fallback session for IPC navigate:', targetSessionId);
+          }
+        }
+        mainWindow.webContents.send('browser:navigate', { sessionId: targetSessionId, url });
       }
       this.emitAutomationEvent(sessionId, { type: 'end', action: 'navigate', data: { success: true, url } });
       return;
@@ -223,6 +273,11 @@ export class BrowserService {
    * Click on an element by CSS selector using CDP
    */
   async click(sessionId: string, selector: string): Promise<{ success: boolean; error?: string; position?: { x: number; y: number } }> {
+    // Check if browser panel is open
+    if (this.sessionWebContents.size === 0) {
+      return { success: false, error: 'Browser panel is not open. Please open the browser panel (use the globe icon in the toolbar) to use browser automation tools.' };
+    }
+
     const wc = this.getWebContents(sessionId);
     if (!wc) {
       return { success: false, error: 'No webview found for session' };
@@ -290,6 +345,11 @@ export class BrowserService {
    * Type text into an element using CDP
    */
   async type(sessionId: string, selector: string, text: string): Promise<{ success: boolean; error?: string }> {
+    // Check if browser panel is open
+    if (this.sessionWebContents.size === 0) {
+      return { success: false, error: 'Browser panel is not open. Please open the browser panel (use the globe icon in the toolbar) to use browser automation tools.' };
+    }
+
     const wc = this.getWebContents(sessionId);
     if (!wc) {
       return { success: false, error: 'No webview found for session' };
@@ -347,6 +407,11 @@ export class BrowserService {
    * Extract text from page or specific element using CDP
    */
   async extractText(sessionId: string, selector?: string): Promise<{ success: boolean; text?: string; error?: string }> {
+    // Check if browser panel is open
+    if (this.sessionWebContents.size === 0) {
+      return { success: false, error: 'Browser panel is not open. Please open the browser panel (use the globe icon in the toolbar) to use browser automation tools.' };
+    }
+
     const wc = this.getWebContents(sessionId);
     if (!wc) {
       return { success: false, error: 'No webview found for session' };
@@ -377,6 +442,11 @@ export class BrowserService {
    * Execute custom JavaScript using CDP Runtime.evaluate
    */
   async executeScript(sessionId: string, script: string): Promise<{ success: boolean; result?: unknown; error?: string }> {
+    // Check if browser panel is open
+    if (this.sessionWebContents.size === 0) {
+      return { success: false, error: 'Browser panel is not open. Please open the browser panel (use the globe icon in the toolbar) to use browser automation tools.' };
+    }
+
     const wc = this.getWebContents(sessionId);
     if (!wc) {
       return { success: false, error: 'No webview found for session' };
@@ -403,6 +473,11 @@ export class BrowserService {
    * Get page info using CDP
    */
   async getPageInfo(sessionId: string): Promise<{ success: boolean; url?: string; title?: string; error?: string }> {
+    // Check if browser panel is open
+    if (this.sessionWebContents.size === 0) {
+      return { success: false, error: 'Browser panel is not open. Please open the browser panel (use the globe icon in the toolbar) to use browser automation tools.' };
+    }
+
     const wc = this.getWebContents(sessionId);
     if (!wc) {
       return { success: false, error: 'No webview found for session' };
@@ -429,6 +504,11 @@ export class BrowserService {
    * Capture screenshot using CDP Page.captureScreenshot
    */
   async captureScreenshotCDP(sessionId: string): Promise<{ success: boolean; screenshot?: string; error?: string }> {
+    // Check if browser panel is open
+    if (this.sessionWebContents.size === 0) {
+      return { success: false, error: 'Browser panel is not open. Please open the browser panel (use the globe icon in the toolbar) to use browser automation tools.' };
+    }
+
     const wc = this.getWebContents(sessionId);
     if (!wc) {
       return { success: false, error: 'No webview found for session' };
@@ -450,6 +530,11 @@ export class BrowserService {
    * Get DOM tree using CDP
    */
   async getDOM(sessionId: string): Promise<{ success: boolean; html?: string; error?: string }> {
+    // Check if browser panel is open
+    if (this.sessionWebContents.size === 0) {
+      return { success: false, error: 'Browser panel is not open. Please open the browser panel (use the globe icon in the toolbar) to use browser automation tools.' };
+    }
+
     const wc = this.getWebContents(sessionId);
     if (!wc) {
       return { success: false, error: 'No webview found for session' };
@@ -600,6 +685,11 @@ export class BrowserService {
    * Enable console capture via CDP Runtime domain
    */
   async enableConsoleCapture(sessionId: string): Promise<{ success: boolean; error?: string }> {
+    // Check if browser panel is open
+    if (this.sessionWebContents.size === 0) {
+      return { success: false, error: 'Browser panel is not open. Please open the browser panel (use the globe icon in the toolbar) to use browser automation tools.' };
+    }
+
     const wc = this.getWebContents(sessionId);
     if (!wc) {
       return { success: false, error: 'No webview found for session' };
@@ -668,6 +758,11 @@ export class BrowserService {
    * Enable network request capture via CDP Network domain
    */
   async enableNetworkCapture(sessionId: string): Promise<{ success: boolean; error?: string }> {
+    // Check if browser panel is open
+    if (this.sessionWebContents.size === 0) {
+      return { success: false, error: 'Browser panel is not open. Please open the browser panel (use the globe icon in the toolbar) to use browser automation tools.' };
+    }
+
     const wc = this.getWebContents(sessionId);
     if (!wc) {
       return { success: false, error: 'No webview found for session' };
@@ -744,6 +839,11 @@ export class BrowserService {
    * Get response body for a specific request (if available)
    */
   async getResponseBody(sessionId: string, requestId: string): Promise<{ success: boolean; body?: string; base64Encoded?: boolean; error?: string }> {
+    // Check if browser panel is open
+    if (this.sessionWebContents.size === 0) {
+      return { success: false, error: 'Browser panel is not open. Please open the browser panel (use the globe icon in the toolbar) to use browser automation tools.' };
+    }
+
     const wc = this.getWebContents(sessionId);
     if (!wc) {
       return { success: false, error: 'No webview found for session' };
@@ -780,9 +880,21 @@ export class BrowserService {
   }
 
   /**
+   * Check if browser automation is available (webview is registered)
+   */
+  isBrowserAvailable(sessionId: string): boolean {
+    return this.sessionWebContents.size > 0;
+  }
+
+  /**
    * Capture a snapshot of the current browser view (using CDP when possible)
    */
   async captureSnapshot(sessionId: string, url: string): Promise<BrowserSnapshot> {
+    // Check if any webview is registered
+    if (this.sessionWebContents.size === 0) {
+      throw new Error('Browser panel is not open. Please open the browser panel (use the globe icon in the toolbar) to use browser automation tools.');
+    }
+
     const wc = this.getWebContents(sessionId);
 
     if (wc) {
@@ -813,8 +925,18 @@ export class BrowserService {
       throw new Error('No browser window available');
     }
 
-    const requestId = `${sessionId}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    mainWindow.webContents.send('browser:capture-snapshot', { sessionId, requestId });
+    // Try to use fallback session if original sessionId has no webview registered
+    let targetSessionId = sessionId;
+    if (!this.sessionWebContents.has(sessionId)) {
+      const allSessions = Array.from(this.sessionWebContents.keys());
+      if (allSessions.length > 0) {
+        targetSessionId = allSessions[0];
+        console.log('[Browser Service] Using fallback session for IPC capture:', targetSessionId);
+      }
+    }
+
+    const requestId = `${targetSessionId}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    mainWindow.webContents.send('browser:capture-snapshot', { sessionId: targetSessionId, requestId });
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {

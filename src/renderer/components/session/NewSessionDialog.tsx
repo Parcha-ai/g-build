@@ -8,11 +8,12 @@ interface NewSessionDialogProps {
   isOpen: boolean;
   onClose: () => void;
   initialPath?: string; // Optional: for creating a new session in an existing folder
+  initialName?: string; // Optional: initial session name
 }
 
-export default function NewSessionDialog({ isOpen, onClose, initialPath }: NewSessionDialogProps) {
+export default function NewSessionDialog({ isOpen, onClose, initialPath, initialName }: NewSessionDialogProps) {
   const { repos } = useAuthStore();
-  const { createSession, setActiveSession } = useSessionStore();
+  const { createSession, setActiveSession, addSession } = useSessionStore();
 
   const [step, setStep] = useState<'source' | 'repo' | 'folder' | 'config'>('source');
   const [searchQuery, setSearchQuery] = useState('');
@@ -20,7 +21,37 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath }: NewSe
   const [selectedFolder, setSelectedFolder] = useState<string>('');
   const [sessionName, setSessionName] = useState('');
   const [branch, setBranch] = useState('');
+  const [createWorktree, setCreateWorktree] = useState(false);
+  const [isGitRepo, setIsGitRepo] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
+  const [worktreeSetupType, setWorktreeSetupType] = useState<'none' | 'script' | 'instructions'>('none');
+  const [worktreeScriptPath, setWorktreeScriptPath] = useState('');
+  const [worktreeInstructions, setWorktreeInstructions] = useState('');
+  const [hasExistingSetup, setHasExistingSetup] = useState(false);
+
+  // Initialize with initialPath if provided
+  React.useEffect(() => {
+    if (initialPath && isOpen) {
+      setSelectedFolder(initialPath);
+      setSessionName(initialName || initialPath.split('/').pop() || 'New Session');
+      setStep('config');
+
+      // Check if it's a git repo
+      window.electronAPI.dev.checkGitRepo(initialPath).then(result => {
+        setIsGitRepo(result.isGit);
+        if (result.branch) {
+          setBranch(result.branch);
+        }
+      });
+
+      // Check for existing worktree setup
+      window.electronAPI.dev.checkWorktreeSetup(initialPath).then(result => {
+        if (result.success && (result.hasScript || result.hasInstructions)) {
+          setHasExistingSetup(true);
+        }
+      });
+    }
+  }, [initialPath, initialName, isOpen]);
 
   const filteredRepos = useMemo(() => {
     if (!searchQuery) return repos;
@@ -47,7 +78,14 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath }: NewSe
       setSelectedFolder(result.repoPath);
       setSessionName(result.name || result.repoPath.split('/').pop() || 'Folder');
       setBranch(result.branch || 'main');
+      setIsGitRepo(result.isGit || false);
       setStep('config');
+
+      // Check for existing worktree setup
+      const setupResult = await window.electronAPI.dev.checkWorktreeSetup(result.repoPath);
+      if (setupResult.success && (setupResult.hasScript || setupResult.hasInstructions)) {
+        setHasExistingSetup(true);
+      }
     } else if (result.canceled) {
       // User canceled - go back to source selection
       setStep('source');
@@ -61,6 +99,13 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath }: NewSe
     setStep('config');
   };
 
+  const handleSelectScriptFile = async () => {
+    const result = await window.electronAPI.dev.openLocalRepo();
+    if (result.success && result.repoPath) {
+      setWorktreeScriptPath(result.repoPath);
+    }
+  };
+
   const handleCreate = async () => {
     if (!selectedRepo && !selectedFolder) return;
 
@@ -68,12 +113,33 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath }: NewSe
     try {
       let session;
       if (selectedFolder) {
+        // Save worktree setup if provided and worktree is being created
+        if (isGitRepo && createWorktree && !hasExistingSetup) {
+          if (worktreeSetupType === 'script' && worktreeScriptPath) {
+            await window.electronAPI.dev.saveWorktreeScript({
+              repoPath: selectedFolder,
+              sourcePath: worktreeScriptPath,
+            });
+          } else if (worktreeSetupType === 'instructions' && worktreeInstructions.trim()) {
+            await window.electronAPI.dev.saveWorktreeInstructions({
+              repoPath: selectedFolder,
+              instructions: worktreeInstructions,
+            });
+          }
+        }
+
         // Create session from local folder using dev mode
         session = await window.electronAPI.dev.createSession({
           name: sessionName,
           repoPath: selectedFolder,
           branch,
+          createWorktree: isGitRepo && createWorktree,
         });
+
+        // Add the session to the store
+        if (session) {
+          addSession(session);
+        }
       } else if (selectedRepo) {
         // Create session from GitHub repo
         session = await createSession({
@@ -98,9 +164,11 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath }: NewSe
     setStep(initialPath ? 'config' : 'source');
     setSearchQuery('');
     setSelectedRepo(null);
-    setSelectedFolder('');
-    setSessionName('');
+    setSelectedFolder(initialPath || '');
+    setSessionName(initialName || '');
     setBranch('');
+    setCreateWorktree(false);
+    setIsGitRepo(false);
     onClose();
   };
 
@@ -308,6 +376,130 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath }: NewSe
                       )}
                     </div>
                   </div>
+
+                  {/* Worktree option for git repos */}
+                  {isGitRepo && selectedFolder && (
+                    <div className="p-3 bg-claude-bg/50 border border-claude-border">
+                      <label className="flex items-start gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={createWorktree}
+                          onChange={(e) => setCreateWorktree(e.target.checked)}
+                          className="mt-0.5 w-4 h-4 accent-claude-accent"
+                        />
+                        <div>
+                          <div className="text-xs font-bold text-claude-text mb-1">
+                            Create Git Worktree
+                          </div>
+                          <p className="text-[10px] text-claude-text-secondary leading-relaxed">
+                            Creates a new worktree for isolated work. Recommended for parallel development without affecting your main working directory.
+                          </p>
+                        </div>
+                      </label>
+                    </div>
+                  )}
+
+                  {/* Worktree setup configuration */}
+                  {isGitRepo && selectedFolder && createWorktree && !hasExistingSetup && (
+                    <div className="p-3 bg-claude-bg border border-claude-border space-y-3">
+                      <div>
+                        <label className="block text-[10px] font-bold mb-2 text-claude-text-secondary" style={{ letterSpacing: '0.1em' }}>
+                          WORKTREE SETUP (OPTIONAL)
+                        </label>
+                        <p className="text-[10px] text-claude-text-secondary mb-3 leading-relaxed">
+                          Configure automated setup for this worktree. Saved to .claudette/ and runs on each new worktree.
+                        </p>
+                        <div className="space-y-2">
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="worktree-setup"
+                              checked={worktreeSetupType === 'none'}
+                              onChange={() => setWorktreeSetupType('none')}
+                              className="w-3 h-3 accent-claude-accent"
+                            />
+                            <span className="text-xs text-claude-text">No Setup</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="worktree-setup"
+                              checked={worktreeSetupType === 'script'}
+                              onChange={() => setWorktreeSetupType('script')}
+                              className="w-3 h-3 accent-claude-accent"
+                            />
+                            <span className="text-xs text-claude-text">Shell Script</span>
+                          </label>
+                          <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="worktree-setup"
+                              checked={worktreeSetupType === 'instructions'}
+                              onChange={() => setWorktreeSetupType('instructions')}
+                              className="w-3 h-3 accent-claude-accent"
+                            />
+                            <span className="text-xs text-claude-text">Instructions for Claude</span>
+                          </label>
+                        </div>
+                      </div>
+
+                      {worktreeSetupType === 'script' && (
+                        <div>
+                          <label className="block text-[10px] font-bold mb-1.5 text-claude-text-secondary" style={{ letterSpacing: '0.1em' }}>
+                            SCRIPT PATH
+                          </label>
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={worktreeScriptPath}
+                              onChange={(e) => setWorktreeScriptPath(e.target.value)}
+                              placeholder="/path/to/setup.sh"
+                              className="flex-1 px-2 py-1.5 text-[10px] font-mono focus:outline-none focus:border-claude-accent bg-claude-surface border border-claude-border text-claude-text"
+                              style={{ borderRadius: 0 }}
+                            />
+                            <button
+                              onClick={handleSelectScriptFile}
+                              className="px-3 py-1.5 text-[10px] font-bold bg-claude-bg hover:bg-claude-surface border border-claude-border text-claude-text"
+                              style={{ borderRadius: 0 }}
+                            >
+                              BROWSE
+                            </button>
+                          </div>
+                          <p className="text-[9px] text-claude-text-secondary mt-1">
+                            Will be copied to .claudette/worktree-setup.sh
+                          </p>
+                        </div>
+                      )}
+
+                      {worktreeSetupType === 'instructions' && (
+                        <div>
+                          <label className="block text-[10px] font-bold mb-1.5 text-claude-text-secondary" style={{ letterSpacing: '0.1em' }}>
+                            SETUP INSTRUCTIONS
+                          </label>
+                          <textarea
+                            value={worktreeInstructions}
+                            onChange={(e) => setWorktreeInstructions(e.target.value)}
+                            placeholder="Enter setup instructions for Claude to follow..."
+                            rows={4}
+                            className="w-full px-2 py-1.5 text-[10px] font-mono focus:outline-none focus:border-claude-accent bg-claude-surface border border-claude-border text-claude-text resize-none"
+                            style={{ borderRadius: 0 }}
+                          />
+                          <p className="text-[9px] text-claude-text-secondary mt-1">
+                            Will be saved to .claudette/worktree-setup.md
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Show info about existing setup */}
+                  {isGitRepo && selectedFolder && createWorktree && hasExistingSetup && (
+                    <div className="p-3 bg-claude-accent/10 border border-claude-accent">
+                      <p className="text-[10px] text-claude-text-secondary leading-relaxed">
+                        This project already has worktree setup configured in .claudette/. It will run automatically when the worktree is created.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </>
             )}

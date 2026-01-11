@@ -83,6 +83,11 @@ export const IPC_CHANNELS = {
   // Dev mode channels
   DEV_OPEN_LOCAL_REPO: 'dev:open-local-repo',
   DEV_CREATE_SESSION: 'dev:create-session',
+  DEV_CHECK_GIT_REPO: 'dev:check-git-repo',
+  DEV_CHECK_WORKTREE_SETUP: 'dev:check-worktree-setup',
+  DEV_SAVE_WORKTREE_SCRIPT: 'dev:save-worktree-script',
+  DEV_SAVE_WORKTREE_INSTRUCTIONS: 'dev:save-worktree-instructions',
+  DEV_EXECUTE_WORKTREE_SETUP: 'dev:execute-worktree-setup',
 
   // File system channels
   FS_LIST_FILES: 'fs:list-files',

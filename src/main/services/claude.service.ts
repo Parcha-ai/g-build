@@ -135,7 +135,7 @@ export class ClaudeService {
             };
           }
 
-          // Return snapshot info with image
+          // Return snapshot info with image (MCP format)
           return {
             content: [
               {
@@ -144,11 +144,8 @@ export class ClaudeService {
               },
               {
                 type: 'image',
-                source: {
-                  type: 'base64',
-                  media_type: 'image/png',
-                  data: screenshotData,
-                },
+                data: screenshotData,
+                mimeType: 'image/png',
               },
             ],
           };
@@ -396,14 +393,15 @@ export class ClaudeService {
       'BrowserGetConsoleLogs',
       'Get captured console logs from the browser. Must call BrowserEnableDebugging first. Can filter by type (log, warning, error, info, debug) and limit the number of results.',
       {
-        type: z.enum(['log', 'warning', 'error', 'info', 'debug']).optional().describe('Filter by log type'),
+        type: z.string().optional().describe('Filter by log type: "log", "warning", "error", "info", or "debug"'),
         limit: z.number().optional().describe('Maximum number of logs to return (default: all)'),
       },
       async (args) => {
         try {
           const { type, limit } = args;
-          console.log('[Claude Service] Getting console logs:', { type, limit });
-          const logs = browserService.getConsoleLogs(sessionId, { type, limit });
+          const logType = type as 'log' | 'warning' | 'error' | 'info' | 'debug' | undefined;
+          console.log('[Claude Service] Getting console logs:', { type: logType, limit });
+          const logs = browserService.getConsoleLogs(sessionId, { type: logType, limit });
 
           if (logs.length === 0) {
             return {
