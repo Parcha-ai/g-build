@@ -259,16 +259,23 @@ const electronAPI = {
       branch?: string;
       name?: string;
       needsGitInit?: boolean;
+      isGit?: boolean;
     }> => ipcRenderer.invoke(IPC_CHANNELS.DEV_OPEN_LOCAL_REPO),
     initGit: (repoPath: string): Promise<{
       success: boolean;
       branch?: string;
       error?: string;
     }> => ipcRenderer.invoke('dev:init-git', repoPath),
+    checkGitRepo: (repoPath: string): Promise<{
+      isGit: boolean;
+      branch?: string;
+      error?: string;
+    }> => ipcRenderer.invoke(IPC_CHANNELS.DEV_CHECK_GIT_REPO, repoPath),
     createSession: (data: {
       name: string;
       repoPath: string;
       branch: string;
+      createWorktree?: boolean;
     }): Promise<Session> => ipcRenderer.invoke(IPC_CHANNELS.DEV_CREATE_SESSION, data),
     getActiveSession: (): Promise<string | null> =>
       ipcRenderer.invoke('dev:get-active-session'),
@@ -278,6 +285,34 @@ const electronAPI = {
       ipcRenderer.invoke('dev:get-dev-mode'),
     setDevMode: (enabled: boolean): Promise<void> =>
       ipcRenderer.invoke('dev:set-dev-mode', enabled),
+    checkWorktreeSetup: (repoPath: string): Promise<{
+      success: boolean;
+      hasScript: boolean;
+      hasInstructions: boolean;
+      scriptPath?: string;
+      instructionsPath?: string;
+      error?: string;
+    }> => ipcRenderer.invoke(IPC_CHANNELS.DEV_CHECK_WORKTREE_SETUP, repoPath),
+    saveWorktreeScript: (data: { repoPath: string; sourcePath: string }): Promise<{
+      success: boolean;
+      path?: string;
+      error?: string;
+    }> => ipcRenderer.invoke(IPC_CHANNELS.DEV_SAVE_WORKTREE_SCRIPT, data),
+    saveWorktreeInstructions: (data: { repoPath: string; instructions: string }): Promise<{
+      success: boolean;
+      path?: string;
+      error?: string;
+    }> => ipcRenderer.invoke(IPC_CHANNELS.DEV_SAVE_WORKTREE_INSTRUCTIONS, data),
+    executeWorktreeSetup: (data: { repoPath: string; worktreePath: string }): Promise<{
+      success: boolean;
+      type?: 'script' | 'instructions' | 'none';
+      output?: string;
+      error?: string;
+      instructions?: string;
+      message?: string;
+    }> => ipcRenderer.invoke(IPC_CHANNELS.DEV_EXECUTE_WORKTREE_SETUP, data),
+    getRegisteredWebviews: (): Promise<{ success: boolean; webviews: Array<[string, number]> }> =>
+      ipcRenderer.invoke('dev:get-registered-webviews'),
   },
 
   // File System

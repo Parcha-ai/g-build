@@ -392,6 +392,17 @@ export default function BrowserPreview({ session }: BrowserPreviewProps) {
       const webview = webviewRef.current;
       if (!webview) {
         console.error('[BrowserPreview] No webview available for snapshot');
+        // Must send error response to prevent timeout in main process
+        if (requestId) {
+          window.electronAPI.browser.sendSnapshotData({
+            url: '',
+            screenshot: '',
+            html: '',
+            timestamp: new Date(),
+            requestId,
+            error: 'No webview available',
+          });
+        }
         return;
       }
 
@@ -896,6 +907,7 @@ export default function BrowserPreview({ session }: BrowserPreviewProps) {
         style={isAutomationActive ? { '--tw-ring-color': '#5D5FEF' } as React.CSSProperties : undefined}
       >
         <webview
+          key={session.id}
           ref={webviewRef}
           src={url}
           className="absolute inset-0 w-full h-full"

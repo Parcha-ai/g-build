@@ -57,7 +57,7 @@ export default function MessageList({
   }
 
   return (
-    <div className="p-4 space-y-4">
+    <div className="p-4 space-y-4 min-w-0">
       {sortedMessages.map((message, index) => (
         <MessageBubble
           key={message.id}
@@ -86,7 +86,7 @@ export default function MessageList({
               );
             } else if (event.type === 'text' && event.content) {
               return (
-                <div key={event.id} className="prose prose-invert max-w-none font-mono text-claude-text">
+                <div key={event.id} className="prose prose-invert max-w-none font-mono text-claude-text break-words min-w-0" style={{ overflowWrap: 'anywhere' }}>
                   <ReactMarkdown
                     components={{
                       code({ className, children, ...props }) {

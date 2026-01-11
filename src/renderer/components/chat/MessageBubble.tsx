@@ -27,9 +27,9 @@ function MessageBubble({ message, isStreaming, streamingToolCalls, isLatestMessa
   const isToolOnlyMessage = !message.content && toolCalls.length > 0;
 
   return (
-    <div className="flex gap-2">
+    <div className="flex gap-2 min-w-0">
       {/* Content */}
-      <div className="flex-1">
+      <div className="flex-1 min-w-0">
         {isUser ? (
           // User messages - left border accent with subtle background
           <div className="border-l-2 border-blue-500 pl-3 py-1 bg-blue-500/5">
@@ -60,7 +60,7 @@ function MessageBubble({ message, isStreaming, streamingToolCalls, isLatestMessa
                     text={message.content}
                   />
                 </div>
-                <div className="prose prose-invert max-w-none font-mono text-claude-text pr-12">
+                <div className="prose prose-invert max-w-none font-mono text-claude-text pr-12 break-words" style={{ overflowWrap: 'anywhere' }}>
                   <ReactMarkdown
                   components={{
                     // Custom code block rendering

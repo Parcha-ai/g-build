@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { ChevronRight, ChevronDown, Folder, Plus, Zap } from 'lucide-react';
 import { useSessionStore } from '../../stores/session.store';
 import SessionCard from './SessionCard';
+import NewSessionDialog from './NewSessionDialog';
 import type { Session } from '../../../shared/types';
 
 interface ProjectGroup {
@@ -14,6 +15,9 @@ interface ProjectGroup {
 export default function SessionList() {
   const { sessions, activeSessionId, setActiveSession } = useSessionStore();
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
+  const [newSessionDialogOpen, setNewSessionDialogOpen] = useState(false);
+  const [newSessionInitialPath, setNewSessionInitialPath] = useState<string>('');
+  const [newSessionInitialName, setNewSessionInitialName] = useState<string>('');
 
   // Track sessions that have been visited during this app instance
   const [visitedSessionIds, setVisitedSessionIds] = useState<Set<string>>(new Set());
@@ -59,11 +63,11 @@ export default function SessionList() {
       a.name.localeCompare(b.name)
     );
 
-    // Sort sessions within each project by most recent update (newest first)
-    // This sort only runs when sessions are added/removed, not on every update
+    // Sort sessions within each project by creation date (newest first)
+    // This ensures stable ordering that doesn't change based on activity
     sorted.forEach(project => {
       project.sessions.sort((a, b) =>
-        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       );
     });
 
@@ -71,7 +75,7 @@ export default function SessionList() {
   }, [sessions.map(s => s.id).join(',')]); // Only re-sort when session IDs change (add/remove)
 
   // Get active sessions (sessions visited during this app instance)
-  // Keep them in the order they were visited (most recently visited first)
+  // Keep them in stable creation order (newest first) for consistency
   const activeSessions = useMemo(() => {
     return sessions
       .filter(s => visitedSessionIds.has(s.id))
@@ -79,33 +83,19 @@ export default function SessionList() {
         // If one is the currently active session, it goes first
         if (a.id === activeSessionId) return -1;
         if (b.id === activeSessionId) return 1;
-        // Otherwise maintain creation order for stability
-        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        // Otherwise maintain creation order (newest first) for consistency with project folders
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       });
   }, [sessions, visitedSessionIds, activeSessionId]);
 
-  const handleCreateSessionInFolder = async (projectPath: string, projectName: string) => {
-    // Create a new session in the same folder
-    try {
-      // Get branch from first session in this project
-      const firstSession = sessions.find(s => s.worktreePath === projectPath);
-      const branch = firstSession?.branch || 'main';
+  const handleCreateSessionInFolder = (projectPath: string, projectName: string) => {
+    // Open dialog to create a new session in the same folder
+    const timestamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+    const sessionName = `${projectName} - ${timestamp}`;
 
-      const timestamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
-      const sessionName = `${projectName} - ${timestamp}`;
-
-      const session = await window.electronAPI.dev.createSession({
-        name: sessionName,
-        repoPath: projectPath,
-        branch,
-      });
-
-      if (session) {
-        setActiveSession(session.id);
-      }
-    } catch (error) {
-      console.error('Failed to create session:', error);
-    }
+    setNewSessionInitialPath(projectPath);
+    setNewSessionInitialName(sessionName);
+    setNewSessionDialogOpen(true);
   };
 
   const toggleProject = (projectPath: string) => {
@@ -223,6 +213,18 @@ export default function SessionList() {
           })}
         </div>
       )}
+
+      {/* New Session Dialog */}
+      <NewSessionDialog
+        isOpen={newSessionDialogOpen}
+        onClose={() => {
+          setNewSessionDialogOpen(false);
+          setNewSessionInitialPath('');
+          setNewSessionInitialName('');
+        }}
+        initialPath={newSessionInitialPath}
+        initialName={newSessionInitialName}
+      />
     </div>
   );
 }

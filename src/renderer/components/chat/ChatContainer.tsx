@@ -56,7 +56,7 @@ export default function ChatContainer({ session }: ChatContainerProps) {
   }, [sessionMessages, streamContent, thinkingContent, streamingToolCalls]);
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden font-mono bg-claude-bg">
+    <div className="flex-1 flex flex-col overflow-hidden font-mono bg-claude-bg min-w-0">
       {/* Header - brutalist */}
       <div className="h-10 border-b border-claude-border flex items-center justify-between px-4 bg-claude-surface/50">
         <div className="flex items-center">
@@ -89,7 +89,7 @@ export default function ChatContainer({ session }: ChatContainerProps) {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden min-w-0">
         <MessageList
           messages={sessionMessages}
           isStreaming={isSessionStreaming}

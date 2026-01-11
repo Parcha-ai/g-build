@@ -171,9 +171,9 @@ export class SessionService extends EventEmitter {
     storedSessions.forEach(s => sessionMap.set(s.id, s));
     claudeSessions.forEach(s => sessionMap.set(s.id, s));  // Override with discovered sessions
 
-    // Sort by updatedAt (most recent first)
+    // Sort by createdAt (newest first) for stable ordering
     const allSessions = Array.from(sessionMap.values());
-    allSessions.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    allSessions.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     return allSessions;
   }

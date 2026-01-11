@@ -89,14 +89,23 @@ export default function MainContent() {
   // Handle panel horizontal resize
   const handlePanelResizeMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setIsPanelResizing(true);
 
-    const containerRect = (e.currentTarget.parentElement as HTMLElement).getBoundingClientRect();
-    const containerWidth = containerRect.width;
+    const container = e.currentTarget.parentElement as HTMLElement;
+
+    // Prevent text selection and iframes from capturing mouse events during drag
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    document.body.style.pointerEvents = 'none';
+    // Re-enable pointer events on body itself so we can track mouse
+    (e.currentTarget.parentElement as HTMLElement).style.pointerEvents = 'auto';
 
     const handleMouseMove = (e: MouseEvent) => {
+      // Get fresh rect on each move for accuracy
+      const containerRect = container.getBoundingClientRect();
       const mouseX = e.clientX - containerRect.left;
-      const ratio = (mouseX / containerWidth) * 100;
+      const ratio = (mouseX / containerRect.width) * 100;
       // Constrain between 20% and 80%
       const newRatio = Math.max(20, Math.min(80, ratio));
       setCustomSplitRatio(newRatio);
@@ -104,6 +113,9 @@ export default function MainContent() {
 
     const handleMouseUp = () => {
       setIsPanelResizing(false);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      document.body.style.pointerEvents = '';
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
