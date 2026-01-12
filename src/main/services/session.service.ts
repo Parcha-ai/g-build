@@ -39,6 +39,9 @@ export class SessionService extends EventEmitter {
   private dockerService: DockerService;
   private gitService: GitService;
   private sessionsPath: string;
+  private discoveredSessionsCache: Map<string, Session> = new Map();
+  private lastDiscoveryTime: number = 0;
+  private readonly DISCOVERY_CACHE_TTL = 60000; // 1 minute cache
 
   constructor() {
     super();
@@ -154,13 +157,33 @@ export class SessionService extends EventEmitter {
   }
 
   async getSession(sessionId: string): Promise<Session | null> {
-    const session = this.store.get(`sessions.${sessionId}`) as Session | undefined;
-    return session || null;
+    // Check store first (for manually created sessions)
+    const storedSession = this.store.get(`sessions.${sessionId}`) as Session | undefined;
+    if (storedSession) return storedSession;
+
+    // Check discovered sessions cache
+    if (this.discoveredSessionsCache.has(sessionId)) {
+      return this.discoveredSessionsCache.get(sessionId)!;
+    }
+
+    // If cache is stale, refresh discovery and check again
+    const now = Date.now();
+    if (now - this.lastDiscoveryTime > this.DISCOVERY_CACHE_TTL) {
+      await this.listSessions(); // This will refresh the cache
+      return this.discoveredSessionsCache.get(sessionId) || null;
+    }
+
+    return null;
   }
 
   async listSessions(): Promise<Session[]> {
     // Discover sessions from ~/.claude/projects/ directory
     const claudeSessions = await this.discoverClaudeSessions();
+
+    // Update cache with discovered sessions
+    this.discoveredSessionsCache.clear();
+    claudeSessions.forEach(s => this.discoveredSessionsCache.set(s.id, s));
+    this.lastDiscoveryTime = Date.now();
 
     // Merge with any sessions in our store (shouldn't be many since we discover from Claude)
     const storedSessions = this.getSessions();
