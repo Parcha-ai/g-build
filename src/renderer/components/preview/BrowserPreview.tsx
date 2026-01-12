@@ -30,12 +30,51 @@ interface BrowserPreviewProps {
 export default function BrowserPreview({ session, isVisible = true }: BrowserPreviewProps) {
   const webviewRef = useRef<Electron.WebviewTag>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const { updateSession } = useSessionStore();
+  const { updateSession, messages } = useSessionStore();
 
-  // Use last browser URL if available, otherwise default to session's web port
-  const getSessionUrl = () => session.lastBrowserUrl || `http://localhost:${session.ports.web}`;
-  const [url, setUrl] = useState(getSessionUrl);
-  const [inputUrl, setInputUrl] = useState(getSessionUrl);
+  // Smart URL detection: use last browser URL, or find last localhost URL in transcript
+  const getSessionUrl = () => {
+    if (session.lastBrowserUrl) {
+      return session.lastBrowserUrl;
+    }
+
+    // Search messages for localhost URLs (most recent first)
+    const sessionMessages = messages[session.id] || [];
+    const localhostRegex = /https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?[^\s]*/gi;
+
+    for (let i = sessionMessages.length - 1; i >= 0; i--) {
+      const msg = sessionMessages[i];
+      if (msg.content) {
+        const matches = msg.content.match(localhostRegex);
+        if (matches && matches.length > 0) {
+          console.log('[BrowserPreview] Found localhost URL in transcript:', matches[matches.length - 1]);
+          return matches[matches.length - 1];
+        }
+      }
+    }
+
+    // Fallback to session's web port, or default to 3000 if not set
+    const port = session.ports?.web || 3000;
+    return `http://localhost:${port}`;
+  };
+
+  const [url, setUrl] = useState(() => {
+    try {
+      const initialUrl = getSessionUrl();
+      console.log('[BrowserPreview] Initial URL:', initialUrl);
+      return initialUrl;
+    } catch (err) {
+      console.error('[BrowserPreview] Error getting initial URL:', err);
+      return 'http://localhost:3000';
+    }
+  });
+  const [inputUrl, setInputUrl] = useState(() => {
+    try {
+      return getSessionUrl();
+    } catch (err) {
+      return 'http://localhost:3000';
+    }
+  });
   const [isLoading, setIsLoading] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
   const [canGoForward, setCanGoForward] = useState(false);

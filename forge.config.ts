@@ -14,12 +14,11 @@ import { rendererConfig } from './webpack.renderer.config';
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
-    name: 'Claudette',
-    executableName: 'claudette',
-    appBundleId: 'com.parcha.claudette',
-    // macOS icon - place icon.icns in assets/ folder
-    // Or use a 1024x1024 PNG and Electron Forge will convert it
-    icon: './assets/icon',
+    name: 'Grep Build',
+    executableName: 'grep-build',
+    appBundleId: 'com.parcha.grep-build',
+    // macOS icon - Grep logo (black on purple)
+    icon: './assets/grep-icon',
     // macOS specific
     darwinDarkModeSupport: true,
     appCategoryType: 'public.app-category.developer-tools',
@@ -33,7 +32,7 @@ const config: ForgeConfig = {
       for (const outputPath of options.outputPaths) {
         let resourcesPath;
         if (options.platform === 'darwin') {
-          resourcesPath = path.join(outputPath, 'Claudette.app', 'Contents', 'Resources');
+          resourcesPath = path.join(outputPath, 'Grep Build.app', 'Contents', 'Resources');
         } else {
           resourcesPath = path.join(outputPath, 'resources');
         }

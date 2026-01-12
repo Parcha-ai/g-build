@@ -197,17 +197,19 @@ export default function LoginScreen() {
       <div className="w-full max-w-md p-6">
         {/* Logo - brutalist */}
         <div className="text-center mb-6">
-          <div
-            className="w-16 h-16 flex items-center justify-center mx-auto mb-3 bg-claude-accent"
-            style={{ borderRadius: 0 }}
-          >
-            <span className="text-3xl font-black text-white">C</span>
+          {/* Grep blocky G lettermark logo */}
+          <div className="flex justify-center mb-4">
+            <div className="w-24 h-24 bg-claude-accent flex items-center justify-center p-3" style={{ borderRadius: 0 }}>
+              <svg viewBox="0 0 923 923" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M312.676 121V217.652H217V708.35H312.676V803.94H609.165V708.35H705.893V422.065H411.621V576.314H519.083V515.971H598.651V697.729H323.189V228.273H598.651V321.233H705.893V217.652H609.165V121H312.676Z" fill="#000000"/>
+              </svg>
+            </div>
           </div>
           <h1
             className="text-xl font-black mb-1 text-claude-text"
             style={{ letterSpacing: '0.1em' }}
           >
-            CLAUDETTE
+            GREP BUILD
           </h1>
           <p className="text-[10px] text-claude-text-secondary" style={{ letterSpacing: '0.05em' }}>
             AI-POWERED DEVELOPMENT ENVIRONMENT

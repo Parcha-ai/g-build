@@ -4,6 +4,8 @@ import remarkGfm from 'remark-gfm';
 import ToolCallCard from './ToolCallCard';
 import { SpeakerButton } from './SpeakerButton';
 import { useEditorStore } from '../../stores/editor.store';
+import { useUIStore } from '../../stores/ui.store';
+import { useSessionStore } from '../../stores/session.store';
 import type { ChatMessage, ToolCall } from '../../../shared/types';
 
 // Regex to match file paths with optional line numbers
@@ -20,6 +22,8 @@ interface MessageBubbleProps {
 function MessageBubble({ message, isStreaming, streamingToolCalls, isLatestMessage = false }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const openFile = useEditorStore((state) => state.openFile);
+  const { toggleBrowserPanel, isBrowserPanelOpen } = useUIStore();
+  const { activeSessionId, updateSession, sessions } = useSessionStore();
 
   // Use streaming tool calls if provided, otherwise use message.toolCalls
   const toolCalls = streamingToolCalls || message.toolCalls || [];
@@ -166,7 +170,24 @@ function MessageBubble({ message, isStreaming, streamingToolCalls, isLatestMessa
                           href={href}
                           onClick={(e) => {
                             e.preventDefault();
-                            if (href) {
+                            if (!href) return;
+
+                            // Check if it's a localhost URL
+                            if (href.includes('localhost') || href.includes('127.0.0.1')) {
+                              // Open in internal browser preview
+                              const session = sessions.find(s => s.id === activeSessionId);
+                              if (session) {
+                                // Update session's last browser URL
+                                updateSession(session.id, { lastBrowserUrl: href });
+                                // Open browser panel if not already open
+                                if (!isBrowserPanelOpen) {
+                                  toggleBrowserPanel();
+                                }
+                                // Navigate browser to URL
+                                window.electronAPI.browser.navigateTo(session.id, href);
+                              }
+                            } else {
+                              // Open external URLs in default browser
                               window.electronAPI.app.openExternal(href);
                             }
                           }}

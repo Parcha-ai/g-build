@@ -33,13 +33,15 @@ export default function MessageList({
     return map;
   }, [currentToolCalls]);
 
-  // Sort messages by timestamp to ensure chronological order
+  // Sort messages by timestamp and filter out system messages
   const sortedMessages = React.useMemo(() => {
-    return [...messages].sort((a, b) => {
-      const timeA = new Date(a.timestamp).getTime();
-      const timeB = new Date(b.timestamp).getTime();
-      return timeA - timeB;
-    });
+    return [...messages]
+      .filter(msg => msg.role !== 'system') // Don't show system messages in chat
+      .sort((a, b) => {
+        const timeA = new Date(a.timestamp).getTime();
+        const timeB = new Date(b.timestamp).getTime();
+        return timeA - timeB;
+      });
   }, [messages]);
 
   // Check if we have any content to show (either messages, streaming content, or streaming tool calls)

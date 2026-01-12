@@ -68,8 +68,8 @@ export default function ExtensionsExplorer({ sessionId, projectPath }: Extension
       // We need to construct the path
       const agentName = item.name;
       if (item.scope === 'user') {
-        const os = await import('os');
-        filePath = `${os.homedir()}/.claude/agents/${agentName}.md`;
+        // Use ~ for home directory (shell will expand it)
+        filePath = `~/.claude/agents/${agentName}.md`;
       } else {
         filePath = `${projectPath}/.claude/agents/${agentName}.md`;
       }

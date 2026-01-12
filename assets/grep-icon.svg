@@ -1,0 +1,18 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Solid purple background with rounded corners (macOS style) -->
+  <rect width="1024" height="1024" rx="226" fill="#8B8DFF"/>
+
+  <!-- Large blocky G lettermark - centered and scaled up -->
+  <g transform="translate(150, 200) scale(0.85)">
+    <path d="M312.676 121V217.652H217V708.35H312.676V803.94H609.165V708.35H705.893V422.065H411.621V576.314H519.083V515.971H598.651V697.729H323.189V228.273H598.651V321.233H705.893V217.652H609.165V121H312.676Z"
+          fill="#000000"/>
+  </g>
+
+  <!-- Build indicator - construction blocks/bricks in bottom right -->
+  <g transform="translate(720, 750)">
+    <!-- Three stacked blocks representing "building" -->
+    <rect x="0" y="80" width="120" height="40" fill="#000000"/>
+    <rect x="40" y="40" width="120" height="40" fill="#000000"/>
+    <rect x="0" y="0" width="120" height="40" fill="#000000"/>
+  </g>
+</svg>

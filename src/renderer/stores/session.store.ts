@@ -167,12 +167,33 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       // Verify the active session still exists
       const sessionExists = sessions.some((s) => s.id === activeSessionId);
-      const validActiveSessionId = sessionExists ? activeSessionId : null;
+      let validActiveSessionId = sessionExists ? activeSessionId : null;
+      let autoSelected = false;
+
+      // Auto-select most recent session if no active session
+      if (!validActiveSessionId && sessions.length > 0) {
+        // Prefer running sessions, then most recent by updatedAt
+        const runningSession = sessions
+          .filter(s => s.status === 'running')
+          .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+
+        const mostRecentSession = sessions
+          .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+
+        validActiveSessionId = runningSession?.id || mostRecentSession?.id || null;
+        autoSelected = true;
+        console.log('[SessionStore] Auto-selected session:', validActiveSessionId);
+      }
 
       set({
         sessions,
         activeSessionId: validActiveSessionId,
       });
+
+      // Persist auto-selected session
+      if (autoSelected && validActiveSessionId) {
+        window.electronAPI.dev.setActiveSession(validActiveSessionId);
+      }
 
       // Load messages for the active session
       if (validActiveSessionId) {

@@ -212,9 +212,10 @@ export class BrowserService {
    * Navigate browser to a specific URL using CDP
    */
   async navigate(sessionId: string, url: string): Promise<void> {
-    // Check if browser panel is open
+    // Check if browser panel is open - if not, silently ignore (might be called during initialization)
     if (this.sessionWebContents.size === 0) {
-      throw new Error('Browser panel is not open. Please open the browser panel (use the globe icon in the toolbar) to use browser automation tools.');
+      console.log('[Browser Service] Navigate called but no browser panels registered yet. Ignoring.');
+      return;
     }
 
     // Emit start event for visual feedback

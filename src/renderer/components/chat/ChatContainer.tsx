@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useSessionStore } from '../../stores/session.store';
 import { useAudioStore } from '../../stores/audio.store';
 import MessageList from './MessageList';
@@ -7,6 +7,7 @@ import PermissionDialog from './PermissionDialog';
 import QuestionDialog from './QuestionDialog';
 import ThinkingBlock from './ThinkingBlock';
 import { SoundVisualization } from './SoundVisualization';
+import { ArrowDown } from 'lucide-react';
 import type { Session } from '../../../shared/types';
 
 interface ChatContainerProps {
@@ -31,6 +32,11 @@ export default function ChatContainer({ session }: ChatContainerProps) {
   } = useSessionStore();
   const { audioModeActive, ttsStates } = useAudioStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const [showScrollButton, setShowScrollButton] = useState(false);
+  const [hasNewContent, setHasNewContent] = useState(false);
+  const lastMessageCountRef = useRef(0);
 
   const sessionMessages = messages[session.id] || [];
   const isSessionStreaming = isStreaming[session.id] || false;
@@ -51,9 +57,53 @@ export default function ChatContainer({ session }: ChatContainerProps) {
     return unsubscribe;
   }, [subscribeToClaude]);
 
+  // Check if user is at bottom of chat
+  const checkIfAtBottom = useCallback(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return true;
+
+    const threshold = 100; // pixels from bottom to consider "at bottom"
+    const isBottom = container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
+    setIsAtBottom(isBottom);
+    setShowScrollButton(!isBottom);
+    return isBottom;
+  }, []);
+
+  // Handle scroll events
   useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    const handleScroll = () => {
+      checkIfAtBottom();
+    };
+
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [checkIfAtBottom]);
+
+  // Auto-scroll only if user is at bottom
+  useEffect(() => {
+    if (isAtBottom) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      setHasNewContent(false); // Clear new content flag when at bottom
+    } else {
+      // Check if we got new content while scrolled up
+      const currentCount = sessionMessages.length;
+      if (currentCount > lastMessageCountRef.current || streamContent || thinkingContent) {
+        setHasNewContent(true);
+      }
+    }
+    lastMessageCountRef.current = sessionMessages.length;
+  }, [sessionMessages, streamContent, thinkingContent, streamingToolCalls, isAtBottom]);
+
+  // Scroll to bottom function for FAB
+  const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [sessionMessages, streamContent, thinkingContent, streamingToolCalls]);
+    setIsAtBottom(true);
+    setShowScrollButton(false);
+    setHasNewContent(false);
+  }, []);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden font-mono bg-claude-bg min-w-0">
@@ -89,7 +139,7 @@ export default function ChatContainer({ session }: ChatContainerProps) {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden min-w-0">
+      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 relative">
         <MessageList
           messages={sessionMessages}
           isStreaming={isSessionStreaming}
@@ -121,6 +171,25 @@ export default function ChatContainer({ session }: ChatContainerProps) {
         )}
 
         <div ref={messagesEndRef} />
+
+        {/* Floating action button to scroll to bottom - brutalist terminal style */}
+        {showScrollButton && (
+          <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-50">
+            <button
+              onClick={scrollToBottom}
+              className={`px-4 py-2 border-2 border-claude-accent bg-claude-surface hover:bg-claude-surface-hover text-claude-accent transition-all flex items-center gap-2 ${
+                hasNewContent ? 'animate-pulse shadow-lg shadow-claude-accent/50' : ''
+              }`}
+              style={{ borderRadius: 0 }}
+              title="Scroll to bottom"
+            >
+              <span className="text-xs font-bold uppercase" style={{ letterSpacing: '0.05em' }}>
+                {hasNewContent ? 'NEW' : '▼'}
+              </span>
+              <ArrowDown size={14} />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Active thinking section - separate from message history */}

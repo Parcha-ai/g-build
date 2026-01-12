@@ -18,6 +18,7 @@ export default function SessionList() {
   const [newSessionDialogOpen, setNewSessionDialogOpen] = useState(false);
   const [newSessionInitialPath, setNewSessionInitialPath] = useState<string>('');
   const [newSessionInitialName, setNewSessionInitialName] = useState<string>('');
+  const [showAllActiveSessions, setShowAllActiveSessions] = useState(false);
 
   // Track sessions that have been visited during this app instance
   const [visitedSessionIds, setVisitedSessionIds] = useState<Set<string>>(new Set());
@@ -71,33 +72,40 @@ export default function SessionList() {
       }
     });
 
-    // Sort projects alphabetically by name for consistent ordering
+    // Sort projects by most recent activity (most recently used first)
     const sorted = Array.from(projectGroups.values()).sort((a, b) =>
-      a.name.localeCompare(b.name)
+      b.mostRecentUpdate.getTime() - a.mostRecentUpdate.getTime()
     );
 
-    // Sort sessions within each project by creation date (newest first)
-    // This ensures stable ordering that doesn't change based on activity
+    // Sort sessions within each project by last used (newest first)
+    // This ensures most recently worked-on sessions appear at the top
     sorted.forEach(project => {
       project.sessions.sort((a, b) =>
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
       );
     });
 
     return sorted;
   }, [sessions.map(s => s.id).join(',')]); // Only re-sort when session IDs change (add/remove)
 
-  // Get active sessions (sessions visited during this app instance)
-  // Keep them in stable creation order (newest first) for consistency
+  // Get active sessions (running sessions + recently used)
+  // Show discovered Claude Code sessions by default
   const activeSessions = useMemo(() => {
+    // Get running sessions and recently updated sessions (within last 7 days)
+    const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
+
     return sessions
-      .filter(s => visitedSessionIds.has(s.id))
+      .filter(s =>
+        s.status === 'running' || // Show all running sessions
+        visitedSessionIds.has(s.id) || // Show visited sessions
+        new Date(s.updatedAt).getTime() > sevenDaysAgo // Show recently used sessions
+      )
       .sort((a, b) => {
-        // If one is the currently active session, it goes first
+        // Currently active session goes first
         if (a.id === activeSessionId) return -1;
         if (b.id === activeSessionId) return 1;
-        // Otherwise maintain creation order (newest first) for consistency with project folders
-        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        // Then sort by most recently used
+        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
       });
   }, [sessions, visitedSessionIds, activeSessionId]);
 
@@ -138,11 +146,11 @@ export default function SessionList() {
           <div className="px-3 py-1.5 flex items-center gap-2">
             <Zap size={12} className="text-amber-400" />
             <span className="text-[10px] font-bold text-claude-text-secondary uppercase tracking-wider">
-              Active Sessions
+              Active Sessions {activeSessions.length > 5 && `(${activeSessions.length})`}
             </span>
           </div>
           <div>
-            {activeSessions.map((session) => (
+            {activeSessions.slice(0, showAllActiveSessions ? undefined : 5).map((session) => (
               <SessionCard
                 key={session.id}
                 session={session}
@@ -150,6 +158,17 @@ export default function SessionList() {
                 onClick={() => setActiveSession(session.id)}
               />
             ))}
+
+            {/* Show more/less button */}
+            {activeSessions.length > 5 && (
+              <button
+                onClick={() => setShowAllActiveSessions(!showAllActiveSessions)}
+                className="w-full px-3 py-1.5 text-[10px] font-bold text-claude-accent hover:bg-claude-surface-hover transition-colors uppercase"
+                style={{ letterSpacing: '0.05em' }}
+              >
+                {showAllActiveSessions ? '▲ SHOW LESS' : `▼ SHOW ${activeSessions.length - 5} MORE`}
+              </button>
+            )}
           </div>
         </div>
       )}
