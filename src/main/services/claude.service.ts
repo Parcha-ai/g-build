@@ -1201,43 +1201,34 @@ export class ClaudeService {
    * Get messages from SDK transcript files for a session
    */
   async getMessages(sessionId: string): Promise<ChatMessage[]> {
-    const session = this.sessionStore.get(`sessions.${sessionId}`) as Session | undefined;
-    if (!session) {
-      console.error('Session not found:', sessionId);
-      return [];
-    }
-
-    const projectPath = session.worktreePath || session.repoPath;
-    if (!projectPath) {
-      return [];
-    }
-
-    // Look for transcript files in ~/.claude/projects/{project-slug}/
-    const claudeDir = path.join(os.homedir(), '.claude', 'projects');
-    const projectSlug = this.getProjectSlug(projectPath);
-    const projectDir = path.join(claudeDir, projectSlug);
-
     // Get the stored SDK session ID for this session
     // Try new location first, then fall back to old location for backwards compatibility
     const sdkSessionId = this.sessionStore.get(`sdkSessionMappings.${sessionId}`) as string | undefined
-      || this.sessionStore.get(`sessions.${sessionId}.sdkSessionId`) as string | undefined;
+      || this.sessionStore.get(`sessions.${sessionId}.sdkSessionId`) as string | undefined
+      || sessionId; // If no mapping, use sessionId itself as the transcript filename
+
+    // Look for transcript files in ~/.claude/projects/ - search all project directories
+    const claudeDir = path.join(os.homedir(), '.claude', 'projects');
+    const transcriptFilename = `${sdkSessionId}.jsonl`;
 
     try {
-      // Check if directory exists
-      if (!fs.existsSync(projectDir)) {
-        // Try alternate slug formats
-        const dirs = fs.existsSync(claudeDir) ? fs.readdirSync(claudeDir) : [];
-        const matchingDir = dirs.find(d =>
-          d.toLowerCase().includes(path.basename(projectPath).toLowerCase())
-        );
-        if (!matchingDir) {
-          console.log('No transcript directory found for project:', projectPath);
-          return [];
-        }
-        return this.parseTranscriptsFromDir(path.join(claudeDir, matchingDir), sdkSessionId);
+      // Search all project directories for the transcript file
+      if (!fs.existsSync(claudeDir)) {
+        console.log('Claude projects directory not found:', claudeDir);
+        return [];
       }
 
-      return this.parseTranscriptsFromDir(projectDir, sdkSessionId);
+      const projectDirs = fs.readdirSync(claudeDir);
+      for (const projectDir of projectDirs) {
+        const transcriptPath = path.join(claudeDir, projectDir, transcriptFilename);
+        if (fs.existsSync(transcriptPath)) {
+          console.log('[Claude] Loading transcript:', transcriptFilename, 'from', projectDir);
+          return this.parseTranscriptsFromDir(path.join(claudeDir, projectDir), sdkSessionId);
+        }
+      }
+
+      console.log('[Claude] Transcript not found:', transcriptFilename);
+      return [];
     } catch (error) {
       console.error('Error reading transcripts:', error);
       return [];
