@@ -275,28 +275,24 @@ export class SessionService extends EventEmitter {
               const content = await fs.readFile(transcriptPath, 'utf-8');
               const lines = content.split('\n').filter(l => l.trim());
 
-              // Parse lines to find cwd, sessionId, and count meaningful messages
+              // Parse lines to find cwd, sessionId, and check if transcript has content
               let sessionCwd: string | null = null;
               let transcriptSessionId: string | null = null;
-              let messageCount = 0;
 
-              for (const line of lines) {
+              for (const line of lines.slice(0, 50)) {
                 try {
                   const parsed = JSON.parse(line);
                   if (parsed.cwd) sessionCwd = parsed.cwd;
                   if (parsed.sessionId) transcriptSessionId = parsed.sessionId;
-                  // Count user and assistant messages
-                  if (parsed.type === 'user' || parsed.type === 'assistant') {
-                    messageCount++;
-                  }
+                  if (sessionCwd && transcriptSessionId) break;
                 } catch {
                   // Not valid JSON, skip
                 }
               }
 
-              // Skip transcripts with fewer than 4 messages (2 complete exchanges)
-              if (messageCount < 4) {
-                console.log('[Session Discovery] Skipping minimal transcript:', jsonlFile, `(${messageCount} messages)`);
+              // Skip empty transcripts (0 bytes or no lines)
+              if (stats.size === 0 || lines.length === 0) {
+                console.log('[Session Discovery] Skipping empty transcript:', jsonlFile);
                 continue;
               }
 
