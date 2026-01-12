@@ -319,9 +319,13 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
   // Load commands, skills, and agents when session changes
   useEffect(() => {
     const currentSession = sessions.find(s => s.id === sessionId);
-    if (!currentSession) return;
+    if (!currentSession) {
+      console.log('[InputArea] No current session found');
+      return;
+    }
 
     const projectPath = currentSession.worktreePath;
+    console.log('[InputArea] Loading extensions for:', projectPath);
 
     // Load all extensions
     Promise.all([
@@ -329,6 +333,7 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
       window.electronAPI.extensions.scanSkills(projectPath),
       window.electronAPI.extensions.scanAgents(projectPath),
     ]).then(([cmds, skls, agts]) => {
+      console.log('[InputArea] Extensions loaded:', { commands: cmds.length, skills: skls.length, agents: agts.length });
       setCommands(cmds);
       setSkills(skls);
       setAgents(agts);
@@ -348,7 +353,9 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
     // Check for slash commands at the start of input
     if (value.startsWith('/') && cursorPos > 0) {
       const commandText = textBeforeCursor.slice(1);
+      console.log('[InputArea] Slash detected, commandText:', commandText, 'hasSpace:', /\s/.test(commandText));
       if (!/\s/.test(commandText)) {
+        console.log('[InputArea] Showing command autocomplete, query:', commandText, 'commands:', commands.length, 'skills:', skills.length);
         setShowCommands(true);
         setCommandType('command');
         setCommandQuery(commandText);

@@ -28,6 +28,7 @@ export default function CommandAutocomplete({
   // Filter items based on query
   const filteredItems = React.useMemo(() => {
     const lowerQuery = query.toLowerCase();
+    console.log('[CommandAutocomplete] Filtering:', { query, type, commandsCount: commands.length, skillsCount: skills.length, agentsCount: agents.length });
 
     if (type === 'command') {
       // Show both commands AND skills for slash notation (combined system)
@@ -39,7 +40,9 @@ export default function CommandAutocomplete({
         .filter(skill => skill.name.toLowerCase().includes(lowerQuery))
         .map(skill => ({ ...skill, itemType: 'skill' as const }));
 
-      return [...matchedCommands, ...matchedSkills].slice(0, 10);
+      const result = [...matchedCommands, ...matchedSkills].slice(0, 10);
+      console.log('[CommandAutocomplete] Filtered results:', result.length, result.map(r => r.name));
+      return result;
     } else if (type === 'skill') {
       return skills
         .filter(skill => skill.name.toLowerCase().includes(lowerQuery))
