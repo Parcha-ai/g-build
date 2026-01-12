@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useCallback } from 'react';
-import Editor, { OnMount, OnChange } from '@monaco-editor/react';
+import Editor, { OnMount, OnChange, BeforeMount } from '@monaco-editor/react';
+import * as monaco from 'monaco-editor';
 import { X, Save, FileText, Circle, Loader2 } from 'lucide-react';
 import { useEditorStore } from '../../stores/editor.store';
 
@@ -65,6 +66,19 @@ export default function EditorPanel({ onClose }: EditorPanelProps) {
       }, 100);
     }
   }, [activeTab?.id, activeTab?.lineNumber]);
+
+  // Clean up existing models before mounting to prevent leaks
+  const handleBeforeMount: BeforeMount = useCallback((monacoInstance) => {
+    // Dispose any existing models that might cause conflicts
+    if (activeTab?.filePath) {
+      const existingModel = monacoInstance.editor.getModels().find(
+        (model: monaco.editor.ITextModel) => model.uri.path === activeTab.filePath
+      );
+      if (existingModel) {
+        existingModel.dispose();
+      }
+    }
+  }, [activeTab?.filePath]);
 
   const handleEditorMount: OnMount = useCallback((editor) => {
     editorRef.current = editor;
@@ -178,12 +192,17 @@ export default function EditorPanel({ onClose }: EditorPanelProps) {
           </div>
         ) : activeTab ? (
           <Editor
+            key={activeTab.id} // Force remount when switching tabs to prevent model leaks
             height="100%"
+            path={activeTab.filePath} // Monaco uses this for model management
             language={activeTab.language}
             value={activeTab.content}
             theme="vs-dark"
+            beforeMount={handleBeforeMount}
             onMount={handleEditorMount}
             onChange={handleEditorChange}
+            keepCurrentModel={false} // Dispose model on unmount to prevent leaks
+            saveViewState={true} // But preserve view state for tab switching
             options={{
               fontSize: 13,
               fontFamily: 'JetBrains Mono, Menlo, Monaco, monospace',
