@@ -13,6 +13,7 @@ export interface Session {
   updatedAt: Date;
   setupScript: string;
   isDevMode?: boolean; // True for local dev sessions (no Docker)
+  isTeleported?: boolean; // True for sessions imported from claude.ai/code
   lastBrowserUrl?: string; // Last URL visited in browser preview
 }
 
@@ -85,6 +86,7 @@ export interface ChatMessage {
   toolCalls?: ToolCall[];
   attachments?: Attachment[];
   timestamp: Date;
+  interrupted?: boolean; // True if message was interrupted before completion
 }
 
 export interface Attachment {

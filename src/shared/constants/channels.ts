@@ -83,6 +83,7 @@ export const IPC_CHANNELS = {
   // Dev mode channels
   DEV_OPEN_LOCAL_REPO: 'dev:open-local-repo',
   DEV_CREATE_SESSION: 'dev:create-session',
+  DEV_CREATE_TELEPORT_SESSION: 'dev:create-teleport-session',
   DEV_CHECK_GIT_REPO: 'dev:check-git-repo',
   DEV_CHECK_WORKTREE_SETUP: 'dev:check-worktree-setup',
   DEV_SAVE_WORKTREE_SCRIPT: 'dev:save-worktree-script',

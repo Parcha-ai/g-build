@@ -297,6 +297,50 @@ export function registerDevHandlers(ipcMain: IpcMain): void {
     }
   });
 
+  // Create a teleport session from a remote session ID
+  ipcMain.handle(IPC_CHANNELS.DEV_CREATE_TELEPORT_SESSION, async (_event, data: {
+    sessionId: string;
+    name: string;
+  }) => {
+    try {
+      // Use the remote session ID directly as our session ID
+      // The SDK will handle resuming from the remote session
+      const sessionId = data.sessionId;
+
+      // Create a session object that will resume the remote session
+      const session: Session = {
+        id: sessionId,
+        name: data.name,
+        repoPath: process.cwd(), // Use current directory as placeholder
+        worktreePath: process.cwd(),
+        branch: 'main',
+        status: 'running',
+        ports: {
+          web: 3000,
+          api: 8080,
+          debug: 9229,
+        },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        setupScript: '',
+        isDevMode: true,
+        isTeleported: true, // Flag to indicate this is a teleported session
+      };
+
+      // Store the session with the remote session ID
+      store.set(`sessions.${sessionId}`, session);
+      // Also store the sdkSessionId mapping so it can resume properly
+      store.set(`sdkSessionMappings.${sessionId}`, sessionId);
+
+      console.log('[Dev] Created teleport session:', sessionId);
+
+      return session;
+    } catch (error) {
+      console.error('[Dev] Failed to create teleport session:', error);
+      throw error;
+    }
+  });
+
   // Debug: Get registered webviews
   ipcMain.handle('dev:get-registered-webviews', async () => {
     const { browserService } = await import('../services/browser.service');

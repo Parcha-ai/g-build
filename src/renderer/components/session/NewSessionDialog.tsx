@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { X, Search, Loader2, GitBranch, Lock, Globe, Folder, Github } from 'lucide-react';
+import { X, Search, Loader2, GitBranch, Lock, Globe, Folder, Github, Zap } from 'lucide-react';
 import { useAuthStore } from '../../stores/auth.store';
 import { useSessionStore } from '../../stores/session.store';
 
@@ -15,7 +15,7 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
   const { repos } = useAuthStore();
   const { createSession, setActiveSession, addSession } = useSessionStore();
 
-  const [step, setStep] = useState<'source' | 'repo' | 'folder' | 'config'>('source');
+  const [step, setStep] = useState<'source' | 'repo' | 'folder' | 'config' | 'teleport'>('source');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRepo, setSelectedRepo] = useState<typeof repos[0] | null>(null);
   const [selectedFolder, setSelectedFolder] = useState<string>('');
@@ -28,6 +28,7 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
   const [worktreeScriptPath, setWorktreeScriptPath] = useState('');
   const [worktreeInstructions, setWorktreeInstructions] = useState('');
   const [hasExistingSetup, setHasExistingSetup] = useState(false);
+  const [teleportSessionId, setTeleportSessionId] = useState('');
 
   // Initialize with initialPath if provided
   React.useEffect(() => {
@@ -63,9 +64,11 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
     );
   }, [repos, searchQuery]);
 
-  const handleSelectSource = (source: 'github' | 'local') => {
+  const handleSelectSource = (source: 'github' | 'local' | 'teleport') => {
     if (source === 'github') {
       setStep('repo');
+    } else if (source === 'teleport') {
+      setStep('teleport');
     } else {
       // Open folder dialog
       handleSelectFolder();
@@ -103,6 +106,29 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
     const result = await window.electronAPI.dev.openLocalRepo();
     if (result.success && result.repoPath) {
       setWorktreeScriptPath(result.repoPath);
+    }
+  };
+
+  const handleTeleport = async () => {
+    if (!teleportSessionId.trim()) return;
+
+    setIsCreating(true);
+    try {
+      // Create a teleported session using the remote session ID
+      const session = await window.electronAPI.dev.createTeleportSession({
+        sessionId: teleportSessionId.trim(),
+        name: sessionName || 'Teleported Session',
+      });
+
+      if (session) {
+        addSession(session);
+        setActiveSession(session.id);
+        handleClose();
+      }
+    } catch (error) {
+      console.error('Failed to teleport session:', error);
+    } finally {
+      setIsCreating(false);
     }
   };
 
@@ -190,6 +216,7 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
               {step === 'repo' && 'SELECT REPOSITORY'}
               {step === 'folder' && 'SELECT FOLDER'}
               {step === 'config' && 'CONFIGURE SESSION'}
+              {step === 'teleport' && 'TELEPORT SESSION'}
             </Dialog.Title>
             <Dialog.Close asChild>
               <button
@@ -252,6 +279,81 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
                       </div>
                     </div>
                   </button>
+
+                  {/* Teleport option */}
+                  <button
+                    onClick={() => handleSelectSource('teleport')}
+                    className="w-full p-4 text-left hover:bg-claude-bg transition-colors border border-claude-border group"
+                    style={{ borderRadius: 0 }}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="p-2 bg-claude-bg group-hover:bg-claude-surface transition-colors">
+                        <Zap size={20} className="text-amber-400" />
+                      </div>
+                      <div className="flex-1">
+                        <h4 className="text-sm font-bold text-claude-text mb-1">
+                          Teleport Session
+                        </h4>
+                        <p className="text-xs text-claude-text-secondary">
+                          Import a session from claude.ai/code
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+                </div>
+              </>
+            ) : step === 'teleport' ? (
+              <>
+                {/* Teleport Session UI */}
+                <div className="space-y-4">
+                  <p className="text-xs text-claude-text-secondary" style={{ letterSpacing: '0.05em' }}>
+                    Enter a session ID from claude.ai/code to import that conversation into Claudette.
+                  </p>
+
+                  <div>
+                    <label
+                      className="block text-[10px] font-bold mb-1.5 text-claude-text-secondary"
+                      style={{ letterSpacing: '0.1em' }}
+                    >
+                      SESSION ID
+                    </label>
+                    <input
+                      type="text"
+                      value={teleportSessionId}
+                      onChange={(e) => setTeleportSessionId(e.target.value)}
+                      placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                      className="w-full px-3 py-2 text-sm font-mono focus:outline-none focus:border-claude-accent bg-claude-bg border border-claude-border text-claude-text"
+                      style={{ borderRadius: 0 }}
+                      autoFocus
+                    />
+                    <p className="text-[9px] text-claude-text-secondary mt-1">
+                      Find your session ID at claude.ai/code or use the /teleport command
+                    </p>
+                  </div>
+
+                  <div>
+                    <label
+                      className="block text-[10px] font-bold mb-1.5 text-claude-text-secondary"
+                      style={{ letterSpacing: '0.1em' }}
+                    >
+                      SESSION NAME (OPTIONAL)
+                    </label>
+                    <input
+                      type="text"
+                      value={sessionName}
+                      onChange={(e) => setSessionName(e.target.value)}
+                      placeholder="Imported Session"
+                      className="w-full px-3 py-2 text-sm focus:outline-none focus:border-claude-accent bg-claude-bg border border-claude-border text-claude-text"
+                      style={{ borderRadius: 0 }}
+                    />
+                  </div>
+
+                  <div className="p-3 bg-amber-400/10 border border-amber-400/30">
+                    <p className="text-[10px] text-claude-text-secondary leading-relaxed">
+                      <Zap size={12} className="inline mr-1 text-amber-400" />
+                      Teleported sessions will resume with full conversation history from claude.ai/code
+                    </p>
+                  </div>
                 </div>
               </>
             ) : step === 'repo' ? (
@@ -525,6 +627,15 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
                 BACK
               </button>
             )}
+            {step === 'teleport' && (
+              <button
+                onClick={() => setStep('source')}
+                className="px-3 py-1.5 text-[10px] font-bold hover:bg-claude-bg transition-colors text-claude-text-secondary"
+                style={{ letterSpacing: '0.05em', borderRadius: 0 }}
+              >
+                BACK
+              </button>
+            )}
             <div className="ml-auto flex items-center gap-2">
               <Dialog.Close asChild>
                 <button
@@ -543,6 +654,17 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
                 >
                   {isCreating && <Loader2 size={12} className="animate-spin" />}
                   {isCreating ? 'CREATING...' : 'CREATE SESSION'}
+                </button>
+              )}
+              {step === 'teleport' && (
+                <button
+                  onClick={handleTeleport}
+                  disabled={isCreating || !teleportSessionId.trim()}
+                  className="px-4 py-1.5 text-[10px] font-bold text-white flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed bg-amber-500 hover:bg-amber-600"
+                  style={{ letterSpacing: '0.05em', borderRadius: 0 }}
+                >
+                  {isCreating && <Loader2 size={12} className="animate-spin" />}
+                  {isCreating ? 'TELEPORTING...' : 'TELEPORT SESSION'}
                 </button>
               )}
             </div>

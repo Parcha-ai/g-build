@@ -187,7 +187,9 @@ const electronAPI = {
     onNavigate: (callback: (data: { sessionId: string; url: string }) => void) => {
       const handler = (_: IpcRendererEvent, data: { sessionId: string; url: string }) => callback(data);
       ipcRenderer.on('browser:navigate', handler);
-      return () => ipcRenderer.removeListener('browser:navigate', handler);
+      return () => {
+        ipcRenderer.removeListener('browser:navigate', handler);
+      };
     },
     onAction: (callback: (data: { sessionId: string; requestId: string; action: string; params: Record<string, unknown> }) => void) => {
       const handler = (_: IpcRendererEvent, data: { sessionId: string; requestId: string; action: string; params: Record<string, unknown> }) => callback(data);
@@ -277,6 +279,10 @@ const electronAPI = {
       branch: string;
       createWorktree?: boolean;
     }): Promise<Session> => ipcRenderer.invoke(IPC_CHANNELS.DEV_CREATE_SESSION, data),
+    createTeleportSession: (data: {
+      sessionId: string;
+      name: string;
+    }): Promise<Session> => ipcRenderer.invoke(IPC_CHANNELS.DEV_CREATE_TELEPORT_SESSION, data),
     getActiveSession: (): Promise<string | null> =>
       ipcRenderer.invoke('dev:get-active-session'),
     setActiveSession: (sessionId: string | null): Promise<void> =>
