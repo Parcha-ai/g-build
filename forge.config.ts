@@ -25,6 +25,39 @@ const config: ForgeConfig = {
     appCategoryType: 'public.app-category.developer-tools',
   },
   rebuildConfig: {},
+  hooks: {
+    postPackage: async (forgeConfig, options) => {
+      const fs = require('fs-extra');
+      const path = require('path');
+
+      for (const outputPath of options.outputPaths) {
+        let resourcesPath;
+        if (options.platform === 'darwin') {
+          resourcesPath = path.join(outputPath, 'Claudette.app', 'Contents', 'Resources');
+        } else {
+          resourcesPath = path.join(outputPath, 'resources');
+        }
+
+        // Copy to Resources/node_modules (one level up from app.asar)
+        const nodeModulesPath = path.join(resourcesPath, 'node_modules');
+        await fs.ensureDir(nodeModulesPath);
+
+        // Copy externalized dependencies
+        const deps = [
+          { name: 'node-pty', source: path.join(__dirname, 'node_modules', 'node-pty') },
+          { name: '@anthropic-ai/claude-agent-sdk', source: path.join(__dirname, 'node_modules', '@anthropic-ai', 'claude-agent-sdk'), dest: path.join(nodeModulesPath, '@anthropic-ai', 'claude-agent-sdk') },
+          { name: '@anthropic-ai/sdk', source: path.join(__dirname, 'node_modules', '@anthropic-ai', 'sdk'), dest: path.join(nodeModulesPath, '@anthropic-ai', 'sdk') },
+        ];
+
+        for (const dep of deps) {
+          const dest = dep.dest || path.join(nodeModulesPath, dep.name);
+          await fs.ensureDir(path.dirname(dest));
+          await fs.copy(dep.source, dest);
+          console.log(`[Packaging] Copied ${dep.name} to ${dest}`);
+        }
+      }
+    },
+  },
   makers: [
     new MakerSquirrel({}),
     new MakerZIP({}, ['darwin']),
@@ -48,6 +81,8 @@ const config: ForgeConfig = {
           },
         ],
       },
+      // Include externalized dependencies in node_modules
+      packageSourceMaps: false,
     }),
     // Fuses are used to enable/disable various Electron functionality
     // at package time, before code signing the application

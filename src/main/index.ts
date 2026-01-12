@@ -86,6 +86,8 @@ const createWindow = (): void => {
     height: 900,
     minWidth: 1000,
     minHeight: 700,
+    show: false, // Show after ready-to-show to prevent flash
+    center: true, // Center on screen
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 15, y: 10 },
     backgroundColor: '#1a1a1a',
@@ -98,8 +100,35 @@ const createWindow = (): void => {
     },
   });
 
+  // Show window when ready to prevent blank screen
+  mainWindow.once('ready-to-show', () => {
+    console.log('[Main] Window ready to show');
+    mainWindow?.show();
+    mainWindow?.focus();
+  });
+
+  // Fallback: force show after 3 seconds if ready-to-show doesn't fire
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isVisible()) {
+      console.log('[Main] Forcing window to show (ready-to-show timeout)');
+      mainWindow.show();
+      mainWindow.center();
+      mainWindow.focus();
+    }
+  }, 3000);
+
   // Load the index.html of the app.
-  mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY);
+  console.log('[Main] Loading renderer from:', MAIN_WINDOW_WEBPACK_ENTRY);
+  console.log('[Main] __dirname:', __dirname);
+  console.log('[Main] process.resourcesPath:', process.resourcesPath);
+
+  mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY)
+    .then(() => console.log('[Main] Renderer loaded successfully'))
+    .catch(err => console.error('[Main] Failed to load renderer:', err));
+
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+    console.error('[Main] Renderer failed to load:', errorCode, errorDescription);
+  });
 
   // Set Content Security Policy
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
@@ -381,10 +410,8 @@ const createWindow = (): void => {
     return { action: 'deny' };
   });
 
-  // Open DevTools in development
-  if (process.env.NODE_ENV === 'development') {
-    mainWindow.webContents.openDevTools();
-  }
+  // Open DevTools for debugging (always on for now)
+  mainWindow.webContents.openDevTools();
 
   mainWindow.on('closed', () => {
     mainWindow = null;

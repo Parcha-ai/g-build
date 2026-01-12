@@ -211,96 +211,122 @@ export default function MainContent() {
               </div>
             </div>
 
-            {/* Side panel container */}
+            {/* Side panel container - horizontal layout for browser + extensions */}
             <div
-              className="flex flex-col overflow-hidden bg-claude-surface transition-all duration-200"
+              className="flex overflow-hidden bg-claude-surface transition-all duration-200"
               style={{ flexBasis: flexBasis.side, flexShrink: 0, flexGrow: 0 }}
             >
-              {/* Browser panel - renders multiple BrowserPreview instances for multi-session support */}
-              {isBrowserPanelOpen && (
-                <div className={`flex flex-col overflow-hidden ${isGitPanelOpen ? 'flex-1' : 'h-full'}`}>
-                  <div className="h-10 flex items-center justify-between px-3 border-b border-claude-border bg-claude-surface">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium">Browser Preview</span>
-                      {sessionsWithBrowsers.length > 1 && (
-                        <span className="text-xs text-claude-text-secondary">
-                          ({sessionsWithBrowsers.length} browsers)
-                        </span>
+              {/* Left side of side panel: Browser, Git, Editor (stacked vertically) */}
+              <div className={`flex flex-col overflow-hidden ${isExtensionsPanelOpen && isBrowserPanelOpen ? 'flex-1' : 'w-full'}`}>
+                {/* Browser panel - renders multiple BrowserPreview instances for multi-session support */}
+                {isBrowserPanelOpen && (
+                  <div className={`flex flex-col overflow-hidden ${isGitPanelOpen || isEditorOpen ? 'flex-1' : 'h-full'}`}>
+                    <div className="h-10 flex items-center justify-between px-3 border-b border-claude-border bg-claude-surface">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium">Browser Preview</span>
+                        {sessionsWithBrowsers.length > 1 && (
+                          <span className="text-xs text-claude-text-secondary">
+                            ({sessionsWithBrowsers.length} browsers)
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        onClick={toggleBrowserPanel}
+                        className="p-1 rounded hover:bg-claude-bg text-claude-text-secondary hover:text-claude-text"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                    <div className="flex-1 overflow-hidden relative">
+                      {/* Render a BrowserPreview for each session with browser enabled */}
+                      {/* Only the active session's browser is visible, others stay mounted but hidden */}
+                      {sessionsWithBrowsers.map(session => (
+                        <div
+                          key={session.id}
+                          className="absolute inset-0"
+                          style={{ display: session.id === activeSessionId ? 'block' : 'none' }}
+                        >
+                          <BrowserPreview
+                            session={session}
+                            isVisible={session.id === activeSessionId}
+                          />
+                        </div>
+                      ))}
+                      {/* Fallback for active session if not in sessionsWithBrowsers yet */}
+                      {activeSession && !sessionBrowsersEnabled[activeSession.id] && (
+                        <BrowserPreview session={activeSession} isVisible={true} />
                       )}
                     </div>
-                    <button
-                      onClick={toggleBrowserPanel}
-                      className="p-1 rounded hover:bg-claude-bg text-claude-text-secondary hover:text-claude-text"
-                    >
-                      <X size={14} />
-                    </button>
                   </div>
-                  <div className="flex-1 overflow-hidden relative">
-                    {/* Render a BrowserPreview for each session with browser enabled */}
-                    {/* Only the active session's browser is visible, others stay mounted but hidden */}
-                    {sessionsWithBrowsers.map(session => (
-                      <div
-                        key={session.id}
-                        className="absolute inset-0"
-                        style={{ display: session.id === activeSessionId ? 'block' : 'none' }}
+                )}
+
+                {/* Horizontal divider when both panels open */}
+                {isBrowserPanelOpen && isGitPanelOpen && (
+                  <div className="h-px bg-claude-border" />
+                )}
+
+                {/* Git panel */}
+                {isGitPanelOpen && (
+                  <div className={`flex flex-col overflow-hidden ${isBrowserPanelOpen ? 'h-[300px]' : isEditorOpen ? 'h-[200px]' : 'h-full'}`}>
+                    <div className="h-10 flex items-center justify-between px-3 border-b border-claude-border bg-claude-surface">
+                      <span className="text-sm font-medium">Git Explorer</span>
+                      <button
+                        onClick={toggleGitPanel}
+                        className="p-1 rounded hover:bg-claude-bg text-claude-text-secondary hover:text-claude-text"
                       >
-                        <BrowserPreview
-                          session={session}
-                          isVisible={session.id === activeSessionId}
-                        />
-                      </div>
-                    ))}
-                    {/* Fallback for active session if not in sessionsWithBrowsers yet */}
-                    {activeSession && !sessionBrowsersEnabled[activeSession.id] && (
-                      <BrowserPreview session={activeSession} isVisible={true} />
+                        <X size={14} />
+                      </button>
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                      <GitExplorer session={activeSession} />
+                    </div>
+                  </div>
+                )}
+
+                {/* Horizontal divider when editor is with other panels */}
+                {isEditorOpen && (isBrowserPanelOpen || isGitPanelOpen) && (
+                  <div className="h-px bg-claude-border" />
+                )}
+
+                {/* Editor panel */}
+                {isEditorOpen && (
+                  <div className={`flex flex-col overflow-hidden ${(isBrowserPanelOpen || isGitPanelOpen) ? 'flex-1' : 'h-full'}`}>
+                    <EditorPanel onClose={closeEditor} />
+                  </div>
+                )}
+
+                {/* Extensions panel - shown here only when browser is NOT open */}
+                {isExtensionsPanelOpen && !isBrowserPanelOpen && (
+                  <>
+                    {(isGitPanelOpen || isEditorOpen) && (
+                      <div className="h-px bg-claude-border" />
                     )}
-                  </div>
-                </div>
+                    <div className={`flex flex-col overflow-hidden ${(isGitPanelOpen || isEditorOpen) ? 'flex-1' : 'h-full'}`}>
+                      <div className="h-10 flex items-center justify-between px-3 border-b border-claude-border bg-claude-surface">
+                        <span className="text-sm font-medium">Extensions</span>
+                        <button
+                          onClick={toggleExtensionsPanel}
+                          className="p-1 rounded hover:bg-claude-bg text-claude-text-secondary hover:text-claude-text"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                      <div className="flex-1 overflow-hidden">
+                        <ExtensionsExplorer sessionId={activeSession.id} projectPath={activeSession.worktreePath} />
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Vertical divider between browser and extensions */}
+              {isExtensionsPanelOpen && isBrowserPanelOpen && (
+                <div className="w-px bg-claude-border" />
               )}
 
-              {/* Horizontal divider when both panels open */}
-              {isBrowserPanelOpen && isGitPanelOpen && (
-                <div className="h-px bg-claude-border" />
-              )}
-
-              {/* Git panel */}
-              {isGitPanelOpen && (
-                <div className={`flex flex-col overflow-hidden ${isBrowserPanelOpen ? 'h-[300px]' : isEditorOpen ? 'h-[200px]' : 'h-full'}`}>
-                  <div className="h-10 flex items-center justify-between px-3 border-b border-claude-border bg-claude-surface">
-                    <span className="text-sm font-medium">Git Explorer</span>
-                    <button
-                      onClick={toggleGitPanel}
-                      className="p-1 rounded hover:bg-claude-bg text-claude-text-secondary hover:text-claude-text"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                  <div className="flex-1 overflow-hidden">
-                    <GitExplorer session={activeSession} />
-                  </div>
-                </div>
-              )}
-
-              {/* Horizontal divider when editor is with other panels */}
-              {isEditorOpen && (isBrowserPanelOpen || isGitPanelOpen) && (
-                <div className="h-px bg-claude-border" />
-              )}
-
-              {/* Editor panel */}
-              {isEditorOpen && (
-                <div className={`flex flex-col overflow-hidden ${(isBrowserPanelOpen || isGitPanelOpen || isExtensionsPanelOpen) ? 'flex-1' : 'h-full'}`}>
-                  <EditorPanel onClose={closeEditor} />
-                </div>
-              )}
-
-              {/* Horizontal divider when extensions panel is with other panels */}
-              {isExtensionsPanelOpen && (isBrowserPanelOpen || isGitPanelOpen || isEditorOpen) && (
-                <div className="h-px bg-claude-border" />
-              )}
-
-              {/* Extensions panel */}
-              {isExtensionsPanelOpen && (
-                <div className={`flex flex-col overflow-hidden ${(isBrowserPanelOpen || isGitPanelOpen || isEditorOpen) ? 'flex-1' : 'h-full'}`}>
+              {/* Extensions panel - right side pane when browser is open */}
+              {isExtensionsPanelOpen && isBrowserPanelOpen && (
+                <div className="w-[300px] flex flex-col overflow-hidden border-l border-claude-border">
                   <div className="h-10 flex items-center justify-between px-3 border-b border-claude-border bg-claude-surface">
                     <span className="text-sm font-medium">Extensions</span>
                     <button

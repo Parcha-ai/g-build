@@ -10,6 +10,8 @@ export const rules: Required<ModuleOptions>['rules'] = [
   },
   {
     test: /[/\\]node_modules[/\\].+\.(m?js|node)$/,
+    // Exclude packages with native modules from asset relocator
+    exclude: /node_modules[/\\](node-pty|@anthropic-ai)/,
     parser: { amd: false },
     use: {
       loader: '@vercel/webpack-asset-relocator-loader',
@@ -53,6 +55,11 @@ export const rules: Required<ModuleOptions>['rules'] = [
         },
       },
     ],
+  },
+  // WASM files (for Claude Agent SDK)
+  {
+    test: /\.wasm$/,
+    type: 'asset/resource',
   },
   // Asset handling
   {

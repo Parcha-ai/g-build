@@ -18,9 +18,10 @@ export function useSessionSwitcher() {
   const ctrlHeldRef = useRef(false);
   const switcherActiveRef = useRef(false);
 
-  // Get sessions ordered by recent activity (MRU order)
+  // Get sessions ordered by recent activity (MRU order) - only running sessions
   const getOrderedSessions = useCallback(() => {
     return [...sessions]
+      .filter(s => s.status === 'running')  // Only active sessions
       .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
       .map(s => s.id);
   }, [sessions]);

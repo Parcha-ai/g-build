@@ -17,8 +17,10 @@ export const mainConfig: Configuration = {
   resolve: {
     extensions: ['.js', '.ts', '.jsx', '.tsx', '.css', '.json'],
   },
-  // Externalize native modules that shouldn't be bundled
+  // Externalize packages with native modules like pheuter/claude-agent-desktop
   externals: {
     'node-pty': 'commonjs node-pty',
+    '@anthropic-ai/claude-agent-sdk': 'commonjs @anthropic-ai/claude-agent-sdk',
+    '@anthropic-ai/sdk': 'commonjs @anthropic-ai/sdk',
   },
 };

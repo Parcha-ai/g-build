@@ -32,16 +32,23 @@ export class ExtensionService {
 
     // Scan user commands
     const userCommandsDir = path.join(os.homedir(), '.claude', 'commands');
+    console.log('[ExtensionService] Scanning user commands:', userCommandsDir);
     const userCommands = await this.scanCommandsRec(userCommandsDir, 'user', '');
+    console.log('[ExtensionService] Found user commands:', userCommands.length);
     commands.push(...userCommands);
 
     // Scan project commands
     if (projectPath) {
       const projectCommandsDir = path.join(projectPath, '.claude', 'commands');
+      console.log('[ExtensionService] Scanning project commands:', projectCommandsDir);
       const projectCommands = await this.scanCommandsRec(projectCommandsDir, 'project', '');
+      console.log('[ExtensionService] Found project commands:', projectCommands.length);
       commands.push(...projectCommands);
+    } else {
+      console.log('[ExtensionService] No projectPath provided for commands scan');
     }
 
+    console.log('[ExtensionService] Total commands:', commands.length, commands.map(c => `${c.name} (${c.scope})`));
     return commands;
   }
 
@@ -83,15 +90,22 @@ export class ExtensionService {
     const skills: Skill[] = [];
 
     const userSkillsDir = path.join(os.homedir(), '.claude', 'skills');
+    console.log('[ExtensionService] Scanning user skills:', userSkillsDir);
     const userSkills = await this.scanSkillsRec(userSkillsDir, 'user');
+    console.log('[ExtensionService] Found user skills:', userSkills.length);
     skills.push(...userSkills);
 
     if (projectPath) {
       const projectSkillsDir = path.join(projectPath, '.claude', 'skills');
+      console.log('[ExtensionService] Scanning project skills:', projectSkillsDir);
       const projectSkills = await this.scanSkillsRec(projectSkillsDir, 'project');
+      console.log('[ExtensionService] Found project skills:', projectSkills.length);
       skills.push(...projectSkills);
+    } else {
+      console.log('[ExtensionService] No projectPath provided for skills scan');
     }
 
+    console.log('[ExtensionService] Total skills:', skills.length, skills.map(s => `${s.name} (${s.scope})`));
     return skills;
   }
 

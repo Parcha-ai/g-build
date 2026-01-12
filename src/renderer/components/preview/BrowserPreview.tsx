@@ -456,6 +456,24 @@ export default function BrowserPreview({ session, isVisible = true }: BrowserPre
     };
   }, [session.id]);
 
+  // Handle navigation requests from main process (browser automation)
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.browser.onNavigate(
+      ({ sessionId: reqSessionId, url: targetUrl }) => {
+        if (reqSessionId !== session.id) return;
+        console.log('[BrowserPreview] Received navigate request:', targetUrl);
+        // Navigate by updating URL state - navigate function is defined later
+        let finalUrl = targetUrl;
+        if (!finalUrl.startsWith('http')) {
+          finalUrl = 'http://' + finalUrl;
+        }
+        setUrl(finalUrl);
+        setInputUrl(finalUrl);
+      }
+    );
+    return () => unsubscribe();
+  }, [session.id]);
+
   const injectInspector = async () => {
     const webview = webviewRef.current;
     if (!webview) return;

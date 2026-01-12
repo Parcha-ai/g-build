@@ -40,6 +40,13 @@ function MessageBubble({ message, isStreaming, streamingToolCalls, isLatestMessa
         ) : (
           // Assistant messages - tools → content
           <div className="space-y-2">
+            {/* Interrupted indicator */}
+            {message.interrupted && (
+              <div className="flex items-center gap-2 px-2 py-1 bg-amber-500/10 border-l-2 border-amber-500 text-amber-400 text-xs font-mono">
+                <span style={{ letterSpacing: '0.05em' }}>INTERRUPTED</span>
+              </div>
+            )}
+
             {/* Tool calls execute (during action) */}
             {toolCalls.map((toolCall, index) => (
               <ToolCallCard

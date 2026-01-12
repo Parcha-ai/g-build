@@ -99,6 +99,7 @@ interface SessionState {
   moveToFront: (sessionId: string, messageId: string) => void;
   clearQueue: (sessionId: string) => void;
   interruptAndSend: (sessionId: string, message: string, attachments?: unknown[]) => Promise<void>;
+  cancelStream: (sessionId: string) => void;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -806,11 +807,65 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     console.log(`Queue cleared for session ${sessionId}`);
   },
 
+  cancelStream: (sessionId) => {
+    const state = get();
+
+    // Cancel current streaming
+    window.electronAPI.claude.cancel(sessionId);
+
+    // Save partial content as an interrupted message before clearing
+    const partialContent = state.currentStreamContent[sessionId] || '';
+    const partialToolCalls = state.currentToolCalls[sessionId] || [];
+
+    if (partialContent || partialToolCalls.length > 0) {
+      // Create an interrupted message with whatever content we had
+      const interruptedMessage: ChatMessage = {
+        id: `interrupted-${Date.now()}`,
+        role: 'assistant',
+        content: partialContent || '(interrupted)',
+        toolCalls: partialToolCalls.length > 0 ? partialToolCalls : undefined,
+        timestamp: new Date(),
+        interrupted: true,
+      };
+      state.addMessage(sessionId, interruptedMessage);
+      console.log(`[cancelStream] Saved interrupted message with ${partialContent.length} chars of content`);
+    }
+
+    // Clear current streaming state
+    set((state) => ({
+      isStreaming: { ...state.isStreaming, [sessionId]: false },
+      streamEvents: { ...state.streamEvents, [sessionId]: [] },
+      currentStreamContent: { ...state.currentStreamContent, [sessionId]: '' },
+      currentThinkingContent: { ...state.currentThinkingContent, [sessionId]: '' },
+      currentToolCalls: { ...state.currentToolCalls, [sessionId]: [] },
+    }));
+
+    console.log(`Stream cancelled for session ${sessionId}`);
+  },
+
   interruptAndSend: async (sessionId, message, attachments) => {
     const state = get();
 
     // Cancel current streaming
     window.electronAPI.claude.cancel(sessionId);
+
+    // Save partial content as an interrupted message before clearing
+    const partialContent = state.currentStreamContent[sessionId] || '';
+    const partialToolCalls = state.currentToolCalls[sessionId] || [];
+
+    if (partialContent || partialToolCalls.length > 0) {
+      // Create an interrupted message with whatever content we had
+      const interruptedMessage: ChatMessage = {
+        id: `interrupted-${Date.now()}`,
+        role: 'assistant',
+        content: partialContent || '(interrupted)',
+        toolCalls: partialToolCalls.length > 0 ? partialToolCalls : undefined,
+        timestamp: new Date(),
+        interrupted: true,
+      };
+      state.addMessage(sessionId, interruptedMessage);
+      console.log(`Saved interrupted message with ${partialContent.length} chars of content`);
+    }
 
     // Clear current streaming state
     set((state) => ({
