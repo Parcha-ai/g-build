@@ -201,8 +201,9 @@ export class SessionService extends EventEmitter {
         const projectDir = path.join(claudeProjectsDir, entry.name);
         console.log('[Session Discovery] Scanning project directory:', entry.name);
 
-        // Read actual path from session transcript
-        let projectPath: string | null = null;
+        // Find a valid project path from ANY transcript in this directory
+        // This handles cases where some transcripts have stale Docker paths
+        let validProjectPath: string | null = null;
         try {
           // Find .jsonl files (skip agent files and summary files)
           const files = await fs.readdir(projectDir);
@@ -212,7 +213,37 @@ export class SessionService extends EventEmitter {
             f.length > 20  // Skip short summary files
           );
 
-          // Create a session for EACH .jsonl transcript file
+          // First pass: find ANY valid cwd from the transcripts
+          for (const jsonlFile of jsonlFiles) {
+            try {
+              const transcriptPath = path.join(projectDir, jsonlFile);
+              const content = await fs.readFile(transcriptPath, 'utf-8');
+              const lines = content.split('\n').filter(l => l.trim());
+
+              for (const line of lines.slice(0, 50)) {
+                try {
+                  const parsed = JSON.parse(line);
+                  if (parsed.cwd) {
+                    try {
+                      await fs.access(parsed.cwd);
+                      validProjectPath = parsed.cwd;
+                      console.log('[Session Discovery] Found valid path:', validProjectPath);
+                      break;
+                    } catch {
+                      // Path doesn't exist, try next
+                    }
+                  }
+                } catch {
+                  // Not valid JSON, skip
+                }
+              }
+              if (validProjectPath) break;
+            } catch {
+              // Error reading transcript, try next
+            }
+          }
+
+          // Second pass: create sessions for each transcript using the valid path
           for (const jsonlFile of jsonlFiles) {
             try {
               const transcriptPath = path.join(projectDir, jsonlFile);
@@ -235,15 +266,29 @@ export class SessionService extends EventEmitter {
                 }
               }
 
-              if (!sessionCwd) continue;  // Skip if no cwd found
+              // Use the cached valid path if the transcript's cwd doesn't exist
+              let actualPath: string;
+              try {
+                await fs.access(sessionCwd!); // Non-null assertion: sessionCwd checked above
+                actualPath = sessionCwd!;
+              } catch {
+                // Path doesn't exist - use the cached valid path from first pass
+                if (validProjectPath) {
+                  actualPath = validProjectPath;
+                  console.log('[Session Discovery] Using cached path for', jsonlFile, ':', actualPath);
+                } else {
+                  // No valid path found in any transcript - skip
+                  console.log('[Session Discovery] No valid path found for project:', entry.name);
+                  continue;
+                }
+              }
 
-              // Verify path exists
-              await fs.access(sessionCwd);
+              // At this point actualPath is guaranteed to be a valid string
 
               // Get git branch
               let branch = 'main';
               try {
-                const git = simpleGit(sessionCwd);
+                const git = simpleGit(actualPath);
                 const status = await git.status();
                 branch = status.current || 'main';
               } catch {
@@ -264,9 +309,9 @@ export class SessionService extends EventEmitter {
                 // Create new session from transcript
                 const session: Session = {
                   id: sessionId,
-                  name: `${path.basename(sessionCwd)} - ${new Date(stats.mtime).toLocaleDateString()}`,
-                  repoPath: sessionCwd,
-                  worktreePath: sessionCwd,
+                  name: `${path.basename(actualPath)} - ${new Date(stats.mtime).toLocaleDateString()}`,
+                  repoPath: actualPath,
+                  worktreePath: actualPath,
                   branch,
                   status: 'running',
                   ports: { web: 3000, api: 8080, debug: 9229 },
