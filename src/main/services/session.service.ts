@@ -304,6 +304,8 @@ export class SessionService extends EventEmitter {
               if (existingSession) {
                 existingSession.branch = branch;
                 existingSession.updatedAt = stats.mtime;  // Use file modification time
+                // Ensure sdkSessionId is set for existing sessions too
+                this.store.set(`sessions.${sessionId}.sdkSessionId`, sessionId);
                 sessions.push(existingSession);
               } else {
                 // Create new session from transcript
@@ -322,6 +324,8 @@ export class SessionService extends EventEmitter {
                 };
 
                 this.store.set(`sessions.${sessionId}`, session);
+                // Store the sdkSessionId so ClaudeService knows which transcript to resume
+                this.store.set(`sessions.${sessionId}.sdkSessionId`, sessionId);
                 sessions.push(session);
                 console.log('[Session Discovery] Created session:', session.name);
               }
