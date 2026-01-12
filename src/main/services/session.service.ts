@@ -348,7 +348,24 @@ export class SessionService extends EventEmitter {
 
   async updateSession(sessionId: string, updates: Partial<Session>): Promise<Session> {
     const session = await this.getSession(sessionId);
-    if (!session) throw new Error(`Session ${sessionId} not found`);
+    if (!session) {
+      // Silently ignore updates for ephemeral (discovered) sessions
+      // These are read-only and recreated on each discovery
+      console.log('[Session] Ignoring update for ephemeral session:', sessionId);
+      // Return a minimal session object to satisfy the caller
+      return {
+        id: sessionId,
+        name: 'Ephemeral Session',
+        repoPath: '',
+        worktreePath: '',
+        branch: 'main',
+        status: 'running',
+        ports: { web: 3000, api: 8080, debug: 9229 },
+        setupScript: '',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+    }
 
     const updatedSession = {
       ...session,
