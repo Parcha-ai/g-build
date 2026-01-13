@@ -6,6 +6,7 @@ import InputArea from './InputArea';
 import PermissionDialog from './PermissionDialog';
 import QuestionDialog from './QuestionDialog';
 import ThinkingBlock from './ThinkingBlock';
+import CompactionBar from './CompactionBar';
 import { SoundVisualization } from './SoundVisualization';
 import { ArrowDown } from 'lucide-react';
 import type { Session } from '../../../shared/types';
@@ -29,6 +30,7 @@ export default function ChatContainer({ session }: ChatContainerProps) {
     pendingQuestion,
     answerQuestion,
     subscribeToClaude,
+    compactionStatus,
   } = useSessionStore();
   const { audioModeActive, ttsStates } = useAudioStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -48,6 +50,7 @@ export default function ChatContainer({ session }: ChatContainerProps) {
   const isAudioMode = audioModeActive[session.id] || false;
   const currentPermissionRequest = pendingPermission[session.id] || null;
   const currentQuestionRequest = pendingQuestion[session.id] || null;
+  const currentCompactionStatus = compactionStatus[session.id] || null;
 
   // Check if any TTS is actively playing for messages in this session
   const isTTSPlaying = sessionMessages.some(msg => ttsStates[msg.id]?.isPlaying);
@@ -197,6 +200,11 @@ export default function ChatContainer({ session }: ChatContainerProps) {
         <div className="border-t border-claude-border bg-claude-surface/30 px-4 py-2">
           <ThinkingBlock content={thinkingContent} isStreaming={true} />
         </div>
+      )}
+
+      {/* Smart Compact / Compaction status bar */}
+      {currentCompactionStatus && currentCompactionStatus.isCompacting && (
+        <CompactionBar status={currentCompactionStatus} />
       )}
 
       {/* Input */}

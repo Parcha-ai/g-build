@@ -6,13 +6,13 @@ import Store from 'electron-store';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import type { ChatMessage, ToolCall, Session, QuestionRequest, QuestionResponse, Attachment, ContentBlock } from '../../shared/types';
+import type { ChatMessage, ToolCall, Session, QuestionRequest, QuestionResponse, Attachment, ContentBlock, CompactionStatus, CompactionComplete } from '../../shared/types';
 import { BrowserWindow } from 'electron';
 import { IPC_CHANNELS } from '../../shared/constants/channels';
 import { browserService } from './browser.service';
 
 interface StreamEvent {
-  type: 'text_delta' | 'thinking_delta' | 'tool_use' | 'tool_result' | 'message_complete' | 'error' | 'system' | 'permission_request';
+  type: 'text_delta' | 'thinking_delta' | 'tool_use' | 'tool_result' | 'message_complete' | 'error' | 'system' | 'permission_request' | 'compaction_status' | 'compaction_complete';
   content?: string;
   toolCall?: ToolCall;
   result?: unknown;
@@ -28,6 +28,9 @@ interface StreamEvent {
   toolName?: string;
   toolInput?: Record<string, unknown>;
   approvalMessage?: string; // Message about why approval is needed
+  // Compaction fields
+  compactionStatus?: CompactionStatus;
+  compactionComplete?: CompactionComplete;
 }
 
 interface PendingQuestion {
@@ -983,13 +986,81 @@ You are intelligent enough to determine what URLs to test based on the project s
         // Handle different message types from the SDK
         switch (msg.type) {
           case 'system': {
-            // System message with tool/model info - also contains SDK session ID
+            // System messages can have different subtypes
             const systemMsg = msg as SDKMessage & {
+              subtype?: string;
               session_id?: string;
               tools?: string[];
               model?: string;
+              status?: 'compacting' | null;
+              compact_metadata?: {
+                trigger: 'manual' | 'auto';
+                pre_tokens: number;
+              };
             };
 
+            // Handle compaction status changes (subtype: 'status')
+            if (systemMsg.subtype === 'status') {
+              const isCompacting = systemMsg.status === 'compacting';
+              console.log('[Claude SDK] Compaction status:', isCompacting ? 'COMPACTING' : 'idle');
+
+              // Determine if Smart Compact is needed
+              // Smart Compact: if using Opus or other models without extended context, we note it
+              const currentModel = model || 'claude-sonnet-4-5-20250929';
+              const isOpus = currentModel.includes('opus');
+              const needsSmartCompact = isOpus && isCompacting;
+
+              const compactionStatus: CompactionStatus = {
+                sessionId,
+                isCompacting,
+                ...(needsSmartCompact && {
+                  smartCompact: {
+                    enabled: true,
+                    originalModel: currentModel,
+                    compactingModel: 'claude-sonnet-4-5-20250929',
+                    reason: 'Opus does not support extended context - using Sonnet for compaction',
+                  },
+                }),
+              };
+
+              // Emit to renderer via IPC
+              if (this.mainWindow) {
+                this.mainWindow.webContents.send(IPC_CHANNELS.CLAUDE_COMPACTION_STATUS, compactionStatus);
+              }
+
+              yield {
+                type: 'compaction_status',
+                compactionStatus,
+              };
+              break;
+            }
+
+            // Handle compaction complete (subtype: 'compact_boundary')
+            if (systemMsg.subtype === 'compact_boundary' && systemMsg.compact_metadata) {
+              console.log('[Claude SDK] Compaction complete:', systemMsg.compact_metadata);
+
+              const compactionComplete: CompactionComplete = {
+                sessionId,
+                preTokens: systemMsg.compact_metadata.pre_tokens,
+                smartCompact: {
+                  modelSwitched: (model || '').includes('opus'),
+                  restoredModel: model || 'claude-sonnet-4-5-20250929',
+                },
+              };
+
+              // Emit to renderer via IPC
+              if (this.mainWindow) {
+                this.mainWindow.webContents.send(IPC_CHANNELS.CLAUDE_COMPACTION_COMPLETE, compactionComplete);
+              }
+
+              yield {
+                type: 'compaction_complete',
+                compactionComplete,
+              };
+              break;
+            }
+
+            // Default system message handling (tool/model info)
             // Store the SDK session ID for future resume calls in separate mappings object
             if (systemMsg.session_id) {
               this.sessionStore.set(`sdkSessionMappings.${sessionId}`, systemMsg.session_id);

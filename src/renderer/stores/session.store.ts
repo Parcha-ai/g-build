@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Session, ChatMessage, ToolCall, PermissionRequest, PermissionResponse, QuestionRequest, QuestionResponse } from '../../shared/types';
+import type { Session, ChatMessage, ToolCall, PermissionRequest, PermissionResponse, QuestionRequest, QuestionResponse, SetupProgressEvent, CompactionStatus, CompactionComplete } from '../../shared/types';
 
 // Check if running in Electron environment
 const hasElectronAPI = typeof window !== 'undefined' && !!window.electronAPI;
@@ -47,6 +47,8 @@ interface SessionState {
   availableModels: ModelInfo[];
   pendingPermission: Record<string, PermissionRequest | null>;
   pendingQuestion: Record<string, QuestionRequest | null>;
+  setupProgress: Record<string, SetupProgressEvent | null>;
+  compactionStatus: Record<string, CompactionStatus | null>;
   messageQueue: Record<string, Array<{
     id: string;
     message: string;
@@ -100,6 +102,12 @@ interface SessionState {
   clearQueue: (sessionId: string) => void;
   interruptAndSend: (sessionId: string, message: string, attachments?: unknown[]) => Promise<void>;
   cancelStream: (sessionId: string) => void;
+  // Setup progress
+  setSetupProgress: (sessionId: string, progress: SetupProgressEvent | null) => void;
+  subscribeToSetupProgress: () => () => void;
+  // Compaction status (Smart Compact feature)
+  setCompactionStatus: (sessionId: string, status: CompactionStatus | null) => void;
+  subscribeToCompaction: () => () => void;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -118,6 +126,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   availableModels: [],
   pendingPermission: {},
   pendingQuestion: {},
+  setupProgress: {},
+  compactionStatus: {},
   messageQueue: {},
 
   setActiveSession: async (sessionId) => {
@@ -901,5 +911,70 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     // Send new message immediately (will bypass queue since isStreaming is now false)
     state.sendMessage(sessionId, message, attachments);
+  },
+
+  // Setup progress methods
+  setSetupProgress: (sessionId, progress) => {
+    set((state) => ({
+      setupProgress: {
+        ...state.setupProgress,
+        [sessionId]: progress,
+      },
+    }));
+  },
+
+  subscribeToSetupProgress: () => {
+    if (!hasElectronAPI) return () => {};
+
+    const unsubscribe = window.electronAPI.dev.onSetupProgress((progress) => {
+      const { setSetupProgress } = get();
+      console.log('[SessionStore] Setup progress received:', progress);
+      setSetupProgress(progress.sessionId, progress);
+
+      // If setup completed or errored, clear the progress after a delay
+      if (progress.status === 'completed' || progress.status === 'error') {
+        setTimeout(() => {
+          setSetupProgress(progress.sessionId, null);
+        }, 3000);
+      }
+    });
+
+    return unsubscribe;
+  },
+
+  // Smart Compact / Compaction status methods
+  setCompactionStatus: (sessionId, status) => {
+    set((state) => ({
+      compactionStatus: {
+        ...state.compactionStatus,
+        [sessionId]: status,
+      },
+    }));
+  },
+
+  subscribeToCompaction: () => {
+    if (!hasElectronAPI) return () => {};
+
+    const { setCompactionStatus } = get();
+
+    // Subscribe to compaction status changes
+    const unsubscribeStatus = window.electronAPI.claude.onCompactionStatus((status) => {
+      console.log('[SessionStore] Compaction status received:', status);
+      setCompactionStatus(status.sessionId, status);
+    });
+
+    // Subscribe to compaction complete events
+    const unsubscribeComplete = window.electronAPI.claude.onCompactionComplete((complete) => {
+      console.log('[SessionStore] Compaction complete received:', complete);
+      // Clear compaction status after showing completion briefly
+      setTimeout(() => {
+        setCompactionStatus(complete.sessionId, null);
+      }, 2000);
+    });
+
+    return () => {
+      unsubscribeStatus();
+      unsubscribeComplete();
+    };
   },
 }));

@@ -57,6 +57,8 @@ export const IPC_CHANNELS = {
   CLAUDE_PERMISSION_RESPONSE: 'claude:permission-response',
   CLAUDE_QUESTION_REQUEST: 'claude:question-request',
   CLAUDE_QUESTION_RESPONSE: 'claude:question-response',
+  CLAUDE_COMPACTION_STATUS: 'claude:compaction-status',
+  CLAUDE_COMPACTION_COMPLETE: 'claude:compaction-complete',
 
   // Browser preview channels
   BROWSER_NAVIGATE: 'browser:navigate',
@@ -90,6 +92,7 @@ export const IPC_CHANNELS = {
   DEV_SAVE_WORKTREE_SCRIPT: 'dev:save-worktree-script',
   DEV_SAVE_WORKTREE_INSTRUCTIONS: 'dev:save-worktree-instructions',
   DEV_EXECUTE_WORKTREE_SETUP: 'dev:execute-worktree-setup',
+  DEV_SETUP_PROGRESS: 'dev:setup-progress',
 
   // File system channels
   FS_LIST_FILES: 'fs:list-files',

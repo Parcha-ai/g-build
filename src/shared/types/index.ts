@@ -17,7 +17,16 @@ export interface Session {
   lastBrowserUrl?: string; // Last URL visited in browser preview
 }
 
-export type SessionStatus = 'creating' | 'starting' | 'running' | 'stopping' | 'stopped' | 'error';
+export type SessionStatus = 'creating' | 'starting' | 'setup' | 'running' | 'stopping' | 'stopped' | 'error';
+
+// Setup progress event for worktree initialization
+export interface SetupProgressEvent {
+  sessionId: string;
+  status: 'running' | 'completed' | 'error';
+  message?: string;
+  output?: string;
+  error?: string;
+}
 
 export interface PortAllocation {
   web: number;
@@ -206,6 +215,30 @@ export interface BrowserSnapshot {
   screenshot: string;
   html: string;
   timestamp: Date;
+}
+
+// Smart Compact types - context compaction with automatic model switching
+export interface CompactionStatus {
+  sessionId: string;
+  isCompacting: boolean;
+  smartCompact?: {
+    enabled: boolean;
+    originalModel: string;
+    compactingModel: string;
+    reason: string; // e.g., "Model does not support extended context"
+  };
+  preTokens?: number;
+  trigger?: 'manual' | 'auto';
+}
+
+export interface CompactionComplete {
+  sessionId: string;
+  preTokens: number;
+  postTokens?: number;
+  smartCompact?: {
+    modelSwitched: boolean;
+    restoredModel: string;
+  };
 }
 
 // Export audio types

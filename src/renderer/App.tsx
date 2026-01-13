@@ -118,7 +118,7 @@ function PreviewMode() {
 // Main App component that requires Electron
 function ElectronApp() {
   const { user, isLoading, isDevMode, checkAuth } = useAuthStore();
-  const { loadSessions, subscribeToSessionChanges } = useSessionStore();
+  const { loadSessions, subscribeToSessionChanges, subscribeToSetupProgress, subscribeToCompaction } = useSessionStore();
   const {
     isSidebarOpen,
     isTerminalPanelOpen,
@@ -162,10 +162,16 @@ function ElectronApp() {
     // Load sessions when authenticated OR in dev mode
     if (user || isDevMode) {
       loadSessions();
-      const unsubscribe = subscribeToSessionChanges();
-      return unsubscribe;
+      const unsubscribeSession = subscribeToSessionChanges();
+      const unsubscribeSetup = subscribeToSetupProgress();
+      const unsubscribeCompaction = subscribeToCompaction();
+      return () => {
+        unsubscribeSession();
+        unsubscribeSetup();
+        unsubscribeCompaction();
+      };
     }
-  }, [user, isDevMode, loadSessions, subscribeToSessionChanges]);
+  }, [user, isDevMode, loadSessions, subscribeToSessionChanges, subscribeToSetupProgress, subscribeToCompaction]);
 
   if (!isInitialized || isLoading) {
     return (

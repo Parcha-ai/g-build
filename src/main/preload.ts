@@ -162,6 +162,18 @@ const electronAPI = {
     // Send question response
     respondToQuestion: (response: { requestId: string; answers: Record<string, string> }): Promise<void> =>
       ipcRenderer.invoke(IPC_CHANNELS.CLAUDE_QUESTION_RESPONSE, response),
+    // Compaction status listener (Smart Compact feature)
+    onCompactionStatus: (callback: (status: { sessionId: string; isCompacting: boolean; smartCompact?: { enabled: boolean; originalModel: string; compactingModel: string; reason: string }; preTokens?: number; trigger?: string }) => void) => {
+      const handler = (_: IpcRendererEvent, status: any) => callback(status);
+      ipcRenderer.on(IPC_CHANNELS.CLAUDE_COMPACTION_STATUS, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.CLAUDE_COMPACTION_STATUS, handler);
+    },
+    // Compaction complete listener
+    onCompactionComplete: (callback: (complete: { sessionId: string; preTokens: number; postTokens?: number; smartCompact?: { modelSwitched: boolean; restoredModel: string } }) => void) => {
+      const handler = (_: IpcRendererEvent, complete: any) => callback(complete);
+      ipcRenderer.on(IPC_CHANNELS.CLAUDE_COMPACTION_COMPLETE, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.CLAUDE_COMPACTION_COMPLETE, handler);
+    },
   },
 
   // Browser Preview
@@ -321,6 +333,11 @@ const electronAPI = {
     }> => ipcRenderer.invoke(IPC_CHANNELS.DEV_EXECUTE_WORKTREE_SETUP, data),
     getRegisteredWebviews: (): Promise<{ success: boolean; webviews: Array<[string, number]> }> =>
       ipcRenderer.invoke('dev:get-registered-webviews'),
+    onSetupProgress: (callback: (data: { sessionId: string; status: 'running' | 'completed' | 'error'; message?: string; output?: string; error?: string }) => void) => {
+      const handler = (_: IpcRendererEvent, data: { sessionId: string; status: 'running' | 'completed' | 'error'; message?: string; output?: string; error?: string }) => callback(data);
+      ipcRenderer.on(IPC_CHANNELS.DEV_SETUP_PROGRESS, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.DEV_SETUP_PROGRESS, handler);
+    },
   },
 
   // File System
