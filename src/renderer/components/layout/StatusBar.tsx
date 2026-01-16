@@ -25,7 +25,7 @@ function getSubagentType(input: Record<string, unknown>): string | null {
 }
 
 export default function StatusBar() {
-  const { activeSessionId, sessions, updateSession, currentToolCalls } = useSessionStore();
+  const { activeSessionId, sessions, updateSession, refreshSessionBranch, currentToolCalls } = useSessionStore();
   const [dockerStatus, setDockerStatus] = useState<{ available: boolean; version?: string } | null>(null);
   const [showBranchMenu, setShowBranchMenu] = useState(false);
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -34,6 +34,21 @@ export default function StatusBar() {
   const menuRef = useRef<HTMLDivElement>(null);
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
+
+  // Poll for branch changes every 5 seconds for the active session
+  useEffect(() => {
+    if (!activeSessionId) return;
+
+    // Refresh immediately on session change
+    refreshSessionBranch(activeSessionId);
+
+    // Set up polling interval
+    const interval = setInterval(() => {
+      refreshSessionBranch(activeSessionId);
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [activeSessionId, refreshSessionBranch]);
 
   // Track active Task tool calls (subagents)
   const activeTaskTools = useMemo(() => {

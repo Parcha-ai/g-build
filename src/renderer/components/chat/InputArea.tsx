@@ -5,7 +5,7 @@ import { useUIStore } from '../../stores/ui.store';
 import { useAudioStore } from '../../stores/audio.store';
 import MentionAutocomplete, { type Mention } from './MentionAutocomplete';
 import CommandAutocomplete from './CommandAutocomplete';
-import { MicrophoneButton } from './MicrophoneButton';
+import { MicrophoneButton, type VoiceModeHandle } from './MicrophoneButton';
 import { MessageQueuePanel } from './MessageQueuePanel';
 
 interface TodoItem {
@@ -146,6 +146,14 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const voiceModeRef = useRef<VoiceModeHandle>(null);
+
+  // Push-to-talk (CMD hotkey) state
+  const [isPushToTalkActive, setIsPushToTalkActive] = useState(false);
+
+  // Double-tap CMD detection for voice mode toggle
+  const lastCmdTapRef = useRef<number>(0);
+  const DOUBLE_TAP_THRESHOLD = 300; // ms
   const { sendMessage, interruptAndSend, isStreaming, permissionMode, cyclePermissionMode, thinkingMode, cycleThinkingMode, currentToolCalls, messages, sessions, messageQueue, selectedModel, setSelectedModel, availableModels, loadAvailableModels } = useSessionStore();
   const { selectedElement, setSelectedElement, sessionInspectorActive, setSessionInspectorActive, toggleBrowserPanel } = useUIStore();
   const { settings: audioSettings, setAudioMode, voiceModeStates } = useAudioStore();
@@ -899,6 +907,96 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
     }
   }, [message]);
 
+  // Voice mode hotkeys:
+  // - Hold CMD: Push-to-talk (start recording while held, stop on release)
+  // - Double-tap CMD: Toggle voice mode on/off
+  useEffect(() => {
+    let cmdHoldTimeout: NodeJS.Timeout | null = null;
+    let isHolding = false;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only handle CMD key when textarea is focused
+      if (e.key !== 'Meta' || document.activeElement !== textareaRef.current) {
+        return;
+      }
+
+      // Check for double-tap (quick tap-tap)
+      const now = Date.now();
+      const timeSinceLastTap = now - lastCmdTapRef.current;
+
+      if (timeSinceLastTap < DOUBLE_TAP_THRESHOLD && !isPushToTalkActive && !isHolding) {
+        // Double-tap detected - toggle voice mode
+        console.log('[InputArea] Double-tap CMD: toggling voice mode');
+        e.preventDefault();
+        lastCmdTapRef.current = 0; // Reset to prevent triple-tap issues
+        voiceModeRef.current?.toggleVoiceMode();
+        return;
+      }
+
+      // Start hold detection - wait a bit to distinguish from double-tap
+      if (!isPushToTalkActive && !disabled && !isHolding) {
+        cmdHoldTimeout = setTimeout(() => {
+          if (!isPushToTalkActive) {
+            console.log('[InputArea] CMD hold: starting push-to-talk');
+            isHolding = true;
+            setIsPushToTalkActive(true);
+            voiceModeRef.current?.startPushToTalk();
+          }
+        }, 150); // Wait 150ms to distinguish from double-tap
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key !== 'Meta') return;
+
+      // Clear hold timeout if CMD released quickly (potential double-tap)
+      if (cmdHoldTimeout) {
+        clearTimeout(cmdHoldTimeout);
+        cmdHoldTimeout = null;
+      }
+
+      // Record tap time for double-tap detection
+      if (!isHolding && !isPushToTalkActive) {
+        lastCmdTapRef.current = Date.now();
+      }
+
+      // Stop push-to-talk if it was active
+      if (isPushToTalkActive) {
+        console.log('[InputArea] CMD release: stopping push-to-talk');
+        setIsPushToTalkActive(false);
+        isHolding = false;
+        voiceModeRef.current?.stopPushToTalk();
+      }
+      isHolding = false;
+    };
+
+    // Also handle blur to stop push-to-talk if user clicks away
+    const handleBlur = () => {
+      if (isPushToTalkActive) {
+        console.log('[InputArea] Push-to-talk: stopping due to blur');
+        setIsPushToTalkActive(false);
+        voiceModeRef.current?.stopPushToTalk();
+      }
+      if (cmdHoldTimeout) {
+        clearTimeout(cmdHoldTimeout);
+        cmdHoldTimeout = null;
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('keyup', handleKeyUp);
+    textareaRef.current?.addEventListener('blur', handleBlur);
+
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('keyup', handleKeyUp);
+      textareaRef.current?.removeEventListener('blur', handleBlur);
+      if (cmdHoldTimeout) {
+        clearTimeout(cmdHoldTimeout);
+      }
+    };
+  }, [isPushToTalkActive, disabled, DOUBLE_TAP_THRESHOLD]);
+
   const getAttachmentIcon = (attachment: Attachment) => {
     switch (attachment.type) {
       case 'dom_element':
@@ -1020,7 +1118,7 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
 
       {/* Input row - CLI style */}
       <div className={`flex items-center gap-2 transition-all duration-300 ${
-        isVoiceModeActive
+        isVoiceModeActive || isPushToTalkActive
           ? 'ring-2 ring-claude-accent/40 ring-inset shadow-[0_0_12px_rgba(179,136,255,0.25)] rounded-sm'
           : ''
       }`}>
@@ -1141,6 +1239,7 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
             </button>
           )}
           <MicrophoneButton
+            ref={voiceModeRef}
             sessionId={sessionId}
             onInterimTranscript={(text) => {
               // Stream real-time transcript into the input box
@@ -1282,6 +1381,9 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
             <span>@ FILE</span>
             <span>ENTER SEND</span>
             <span>⌘↵ FORCE</span>
+            <span className={isPushToTalkActive || isVoiceModeActive ? 'text-claude-accent' : ''}>
+              {isPushToTalkActive ? '⌘ LISTENING...' : isVoiceModeActive ? '⌘⌘ EXIT VOICE' : '⌘⌘ VOICE'}
+            </span>
           </>
         )}
         {isStreamingProp && (

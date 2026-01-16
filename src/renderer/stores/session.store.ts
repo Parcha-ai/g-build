@@ -70,6 +70,7 @@ interface SessionState {
   stopSession: (sessionId: string) => Promise<void>;
   deleteSession: (sessionId: string) => Promise<void>;
   updateSession: (sessionId: string, updates: Partial<Session>) => Promise<void>;
+  refreshSessionBranch: (sessionId: string) => Promise<string | null>;
   subscribeToSessionChanges: () => () => void;
 
   // Chat
@@ -271,6 +272,30 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set((state) => ({
       sessions: state.sessions.map((s) => (s.id === sessionId ? session : s)),
     }));
+  },
+
+  refreshSessionBranch: async (sessionId) => {
+    if (!hasElectronAPI) return null;
+    try {
+      const status = await window.electronAPI.git.getStatus(sessionId);
+      const currentBranch = status?.current;
+      if (!currentBranch) return null;
+
+      // Check if branch changed
+      const session = get().sessions.find(s => s.id === sessionId);
+      if (session && session.branch !== currentBranch) {
+        // Update the session with the new branch
+        const updatedSession = await window.electronAPI.sessions.update(sessionId, { branch: currentBranch });
+        set((state) => ({
+          sessions: state.sessions.map((s) => (s.id === sessionId ? updatedSession : s)),
+        }));
+        console.log(`[SessionStore] Branch updated: ${session.branch} → ${currentBranch}`);
+      }
+      return currentBranch;
+    } catch (error) {
+      console.error('[SessionStore] Failed to refresh branch:', error);
+      return null;
+    }
   },
 
   subscribeToSessionChanges: () => {

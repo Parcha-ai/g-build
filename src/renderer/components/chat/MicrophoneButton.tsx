@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, forwardRef, useImperativeHandle } from 'react';
 import { Mic, Loader2 } from 'lucide-react';
 import { useVoiceConversation } from '../../hooks/useVoiceConversation';
 import { useAudioStore } from '../../stores/audio.store';
@@ -45,17 +45,28 @@ interface MicrophoneButtonProps {
   disabled?: boolean;
 }
 
+// Imperative handle for voice mode control from InputArea
+export interface VoiceModeHandle {
+  startPushToTalk: () => Promise<void>;
+  stopPushToTalk: () => Promise<void>;
+  toggleVoiceMode: () => Promise<void>;
+  disconnectVoiceMode: () => Promise<void>;
+  isConnected: boolean;
+}
+
 /**
  * Microphone Button - Toggles ElevenLabs Voice Mode
  *
  * Click: Toggle voice mode on/off
  * When on, the InputArea shows voice mode UI
+ *
+ * Also exposes imperative handle for push-to-talk (CMD hotkey)
  */
-export const MicrophoneButton: React.FC<MicrophoneButtonProps> = ({
+export const MicrophoneButton = forwardRef<VoiceModeHandle, MicrophoneButtonProps>(({
   sessionId,
   onTranscriptionComplete,
   disabled = false,
-}) => {
+}, ref) => {
   const {
     settings: audioSettings,
     voiceModeStates,
@@ -212,6 +223,68 @@ ${messageSummary || 'No messages yet'}`;
     },
   });
 
+  // Expose imperative handle for voice mode control from InputArea
+  useImperativeHandle(ref, () => ({
+    startPushToTalk: async () => {
+      console.log('[VoiceMode] startPushToTalk called, isConnected:', hookConnected);
+      if (!hookConnected && !hookConnecting) {
+        // Need to connect first
+        try {
+          setVoiceModeConnecting(sessionId);
+          await connect();
+          // Wait a bit for connection to establish before starting recording
+          setTimeout(async () => {
+            await startRecording();
+          }, 100);
+        } catch (e) {
+          console.error('[VoiceMode] Push-to-talk connect error:', e);
+          setVoiceModeError(sessionId, e instanceof Error ? e.message : 'Failed to connect');
+        }
+      } else if (hookConnected) {
+        // Already connected, just start recording
+        await startRecording();
+      }
+    },
+    stopPushToTalk: async () => {
+      console.log('[VoiceMode] stopPushToTalk called');
+      // Stop recording but keep connected for quick follow-up
+      // Just signal end of user input
+      await window.electronAPI.voice.endInput();
+    },
+    toggleVoiceMode: async () => {
+      console.log('[VoiceMode] toggleVoiceMode called, isConnected:', hookConnected);
+      if (hookConnected) {
+        // Disconnect
+        await disconnect();
+        setVoiceModeDisconnected(sessionId);
+        setAudioMode(sessionId, false);
+      } else if (!hookConnecting) {
+        // Connect
+        try {
+          setVoiceModeConnecting(sessionId);
+          await connect();
+          // Start recording immediately after connecting
+          setTimeout(async () => {
+            await startRecording();
+          }, 100);
+        } catch (e) {
+          console.error('[VoiceMode] Toggle connect error:', e);
+          setVoiceModeError(sessionId, e instanceof Error ? e.message : 'Failed to connect');
+        }
+      }
+    },
+    disconnectVoiceMode: async () => {
+      console.log('[VoiceMode] disconnectVoiceMode called');
+      if (hookConnected) {
+        await disconnect();
+        setVoiceModeDisconnected(sessionId);
+        setAudioMode(sessionId, false);
+      }
+    },
+    isConnected: hookConnected,
+  }), [hookConnected, hookConnecting, connect, disconnect, startRecording, sessionId,
+      setVoiceModeConnecting, setVoiceModeDisconnected, setVoiceModeError, setAudioMode]);
+
   // Sync hook state to store
   useEffect(() => {
     if (hookConnecting && !isConnecting) {
@@ -302,8 +375,8 @@ ${messageSummary || 'No messages yet'}`;
           console.log('[MicrophoneButton] Streaming ended, announcing completion:', summary);
           // Send clear completion context update
           updateContext(`TASK COMPLETE: ${summary}\nGrep has finished. Ready for next request.`);
-          // Proactively speak the completion with "Done" prefix
-          speak(`Done. ${summary}`);
+          // Have the agent announce completion in first person
+          speak(`Here's an update: ${summary}. Please summarize what was just accomplished in the first person, briefly.`);
         } else {
           // Still streaming - just a progress update
           updateContext(`Grep progress: ${summary}\nStatus: Still working...`);
@@ -428,4 +501,6 @@ ${messageSummary || 'No messages yet'}`;
       {renderIcon()}
     </button>
   );
-};
+});
+
+MicrophoneButton.displayName = 'MicrophoneButton';

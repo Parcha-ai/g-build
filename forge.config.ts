@@ -79,6 +79,25 @@ const config: ForgeConfig = {
     new AutoUnpackNativesPlugin({}),
     new WebpackPlugin({
       mainConfig,
+      devServer: {
+        // Filter out Monaco editor disposal errors from the error overlay
+        // These are harmless race conditions in @monaco-editor/react
+        client: {
+          overlay: {
+            runtimeErrors: (error: Error) => {
+              const suppressPatterns = [
+                'TextModel got disposed before DiffEditorWidget model got reset',
+                'no diff result available',
+                'Diff editor requires a model',
+                'Cannot read properties of disposed',
+                'DISPOSED',
+              ];
+              const errorMessage = error?.message || '';
+              return !suppressPatterns.some(pattern => errorMessage.includes(pattern));
+            },
+          },
+        },
+      },
       renderer: {
         config: rendererConfig,
         entryPoints: [

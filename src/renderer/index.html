@@ -5,6 +5,39 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src 'self' https://api.anthropic.com https://api.github.com ws://localhost:* http://localhost:*; img-src 'self' data: https: blob:; font-src 'self' data:;" />
     <title>Grep</title>
+    <!-- Early Monaco error suppression - runs before React loads -->
+    <script>
+      (function() {
+        var monacoErrors = [
+          'TextModel got disposed before DiffEditorWidget model got reset',
+          'no diff result available',
+          'Diff editor requires a model',
+          'Cannot read properties of disposed',
+          'DISPOSED'
+        ];
+        function isMonacoError(msg) {
+          if (!msg) return false;
+          for (var i = 0; i < monacoErrors.length; i++) {
+            if (msg.indexOf(monacoErrors[i]) !== -1) return true;
+          }
+          return false;
+        }
+        window.onerror = function(message, source, lineno, colno, error) {
+          var msg = String(message || (error && error.message) || '');
+          if (isMonacoError(msg)) return true;
+          return false;
+        };
+        window.addEventListener('error', function(event) {
+          var msg = event.message || (event.error && event.error.message) || '';
+          if (isMonacoError(msg)) {
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            return false;
+          }
+        }, true);
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
