@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { X, Search, Loader2, GitBranch, Lock, Globe, Folder, Github, Zap, ChevronDown } from 'lucide-react';
+import { X, Search, Loader2, GitBranch, Lock, Globe, Folder, Github, Zap, ChevronDown, AlertTriangle } from 'lucide-react';
 import { useAuthStore } from '../../stores/auth.store';
 import { useSessionStore } from '../../stores/session.store';
 
@@ -29,11 +29,33 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
   const [worktreeInstructions, setWorktreeInstructions] = useState('');
   const [hasExistingSetup, setHasExistingSetup] = useState(false);
   const [teleportSessionId, setTeleportSessionId] = useState('');
+  const [teleportDirectory, setTeleportDirectory] = useState('');
+  const [claudeCliInstalled, setClaudeCliInstalled] = useState<boolean | null>(null);
+  const [claudeCliVersion, setClaudeCliVersion] = useState<string | null>(null);
   const [availableBranches, setAvailableBranches] = useState<Array<{ name: string; current: boolean }>>([]);
   const [isBranchDropdownOpen, setIsBranchDropdownOpen] = useState(false);
 
+  // Check if Claude CLI is installed when dialog opens
+  useEffect(() => {
+    const checkCli = async () => {
+      try {
+        const result = await window.electronAPI.dev.checkClaudeCli();
+        setClaudeCliInstalled(result.installed);
+        setClaudeCliVersion(result.version);
+        console.log('[NewSessionDialog] Claude CLI check:', result);
+      } catch (error) {
+        console.error('[NewSessionDialog] Failed to check Claude CLI:', error);
+        setClaudeCliInstalled(false);
+        setClaudeCliVersion(null);
+      }
+    };
+    if (isOpen) {
+      checkCli();
+    }
+  }, [isOpen]);
+
   // Initialize with initialPath if provided
-  React.useEffect(() => {
+  useEffect(() => {
     if (initialPath && isOpen) {
       setSelectedFolder(initialPath);
       setSessionName(initialName || initialPath.split('/').pop() || 'New Session');
@@ -129,16 +151,36 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
     }
   };
 
+  const handleSelectTeleportDirectory = async () => {
+    const result = await window.electronAPI.dev.openLocalRepo();
+    if (result.success && result.repoPath) {
+      setTeleportDirectory(result.repoPath);
+    }
+  };
+
+  const [teleportError, setTeleportError] = useState<string | null>(null);
+
   const handleTeleport = async () => {
-    if (!teleportSessionId.trim()) return;
+    console.log('[Teleport UI] handleTeleport called', { teleportSessionId, teleportDirectory });
+
+    if (!teleportSessionId.trim() || !teleportDirectory) {
+      console.log('[Teleport UI] Missing required fields');
+      return;
+    }
 
     setIsCreating(true);
+    setTeleportError(null);
+
     try {
-      // Create a teleported session using the remote session ID
+      console.log('[Teleport UI] Calling createTeleportSession...');
+      // Create a teleported session by spawning Claude CLI with --teleport
       const session = await window.electronAPI.dev.createTeleportSession({
         sessionId: teleportSessionId.trim(),
         name: sessionName || 'Teleported Session',
+        cwd: teleportDirectory,
       });
+
+      console.log('[Teleport UI] Got session:', session);
 
       if (session) {
         addSession(session);
@@ -146,7 +188,9 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
         handleClose();
       }
     } catch (error) {
-      console.error('Failed to teleport session:', error);
+      console.error('[Teleport UI] Failed to teleport session:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setTeleportError(errorMessage);
     } finally {
       setIsCreating(false);
     }
@@ -217,6 +261,8 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
     setIsGitRepo(false);
     setAvailableBranches([]);
     setIsBranchDropdownOpen(false);
+    setTeleportSessionId('');
+    setTeleportDirectory('');
     onClose();
   };
 
@@ -305,12 +351,17 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
                   {/* Teleport option */}
                   <button
                     onClick={() => handleSelectSource('teleport')}
-                    className="w-full p-4 text-left hover:bg-claude-bg transition-colors border border-claude-border group"
+                    disabled={claudeCliInstalled === false}
+                    className={`w-full p-4 text-left transition-colors border border-claude-border group ${
+                      claudeCliInstalled === false
+                        ? 'opacity-50 cursor-not-allowed bg-claude-bg'
+                        : 'hover:bg-claude-bg'
+                    }`}
                     style={{ borderRadius: 0 }}
                   >
                     <div className="flex items-start gap-3">
                       <div className="p-2 bg-claude-bg group-hover:bg-claude-surface transition-colors">
-                        <Zap size={20} className="text-amber-400" />
+                        <Zap size={20} className={claudeCliInstalled === false ? 'text-claude-text-secondary' : 'text-amber-400'} />
                       </div>
                       <div className="flex-1">
                         <h4 className="text-sm font-bold text-claude-text mb-1">
@@ -319,9 +370,28 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
                         <p className="text-xs text-claude-text-secondary">
                           Import a session from claude.ai/code
                         </p>
+                        {claudeCliInstalled === false && (
+                          <div className="mt-2 flex items-center gap-1.5 text-amber-400 text-[10px]">
+                            <AlertTriangle size={12} />
+                            <span>Claude Code CLI required</span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </button>
+
+                  {/* Show CLI installation instructions if not installed */}
+                  {claudeCliInstalled === false && (
+                    <div className="p-3 bg-amber-500/10 border border-amber-500/30">
+                      <p className="text-[10px] text-amber-400 leading-relaxed">
+                        <AlertTriangle size={12} className="inline mr-1.5" />
+                        Teleport requires Claude Code CLI. Install it with:
+                      </p>
+                      <code className="block mt-2 text-[10px] font-mono text-claude-text bg-claude-bg p-2 select-all">
+                        npm install -g @anthropic-ai/claude-code
+                      </code>
+                    </div>
+                  )}
                 </div>
               </>
             ) : step === 'teleport' ? (
@@ -329,7 +399,7 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
                 {/* Teleport Session UI */}
                 <div className="space-y-4">
                   <p className="text-xs text-claude-text-secondary" style={{ letterSpacing: '0.05em' }}>
-                    Enter a session ID from claude.ai/code to import that conversation into Claudette.
+                    Enter a session ID from claude.ai/code to import that conversation into Grep.
                   </p>
 
                   <div>
@@ -349,7 +419,37 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
                       autoFocus
                     />
                     <p className="text-[9px] text-claude-text-secondary mt-1">
-                      Find your session ID at claude.ai/code or use the /teleport command
+                      Find your session ID at claude.ai/code using /session-id
+                    </p>
+                  </div>
+
+                  <div>
+                    <label
+                      className="block text-[10px] font-bold mb-1.5 text-claude-text-secondary"
+                      style={{ letterSpacing: '0.1em' }}
+                    >
+                      PROJECT DIRECTORY
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={teleportDirectory}
+                        readOnly
+                        placeholder="Select project directory..."
+                        className="flex-1 px-3 py-2 text-sm font-mono focus:outline-none bg-claude-bg border border-claude-border text-claude-text cursor-pointer"
+                        style={{ borderRadius: 0 }}
+                        onClick={handleSelectTeleportDirectory}
+                      />
+                      <button
+                        onClick={handleSelectTeleportDirectory}
+                        className="px-4 py-2 text-[10px] font-bold bg-claude-bg hover:bg-claude-surface border border-claude-border text-claude-text"
+                        style={{ borderRadius: 0 }}
+                      >
+                        BROWSE
+                      </button>
+                    </div>
+                    <p className="text-[9px] text-claude-text-secondary mt-1">
+                      The session will be teleported to this directory
                     </p>
                   </div>
 
@@ -370,12 +470,26 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
                     />
                   </div>
 
+                  {teleportError && (
+                    <div className="p-3 bg-red-500/20 border border-red-500/50">
+                      <p className="text-[10px] text-red-400 font-mono whitespace-pre-wrap">
+                        {teleportError}
+                      </p>
+                    </div>
+                  )}
+
                   <div className="p-3 bg-amber-400/10 border border-amber-400/30">
                     <p className="text-[10px] text-claude-text-secondary leading-relaxed">
                       <Zap size={12} className="inline mr-1 text-amber-400" />
                       Teleported sessions will resume with full conversation history from claude.ai/code
                     </p>
                   </div>
+
+                  {claudeCliVersion && (
+                    <div className="text-[9px] text-claude-text-secondary">
+                      Claude CLI: {claudeCliVersion}
+                    </div>
+                  )}
                 </div>
               </>
             ) : step === 'repo' ? (
@@ -722,7 +836,7 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
               {step === 'teleport' && (
                 <button
                   onClick={handleTeleport}
-                  disabled={isCreating || !teleportSessionId.trim()}
+                  disabled={isCreating || !teleportSessionId.trim() || !teleportDirectory}
                   className="px-4 py-1.5 text-[10px] font-bold text-white flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed bg-amber-500 hover:bg-amber-600"
                   style={{ letterSpacing: '0.05em', borderRadius: 0 }}
                 >

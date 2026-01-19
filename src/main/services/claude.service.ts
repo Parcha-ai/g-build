@@ -1655,6 +1655,30 @@ You are intelligent enough to determine what URLs to test based on the project s
               return;
             }
 
+            // Check for thinking blocks corruption error
+            if (resultMsg.is_error && resultMsg.result?.includes('thinking or redacted_thinking blocks')) {
+              console.error('[Claude SDK] Thinking blocks corrupted in transcript for:', sessionId);
+              const sdkSessionId = this.sessionStore.get(`sessions.${sessionId}.sdkSessionId`) as string | undefined;
+
+              // Attempt to repair the transcript
+              const repaired = await this.repairCorruptedTranscript(sessionId, sdkSessionId);
+
+              if (repaired) {
+                yield {
+                  type: 'error',
+                  error: '⚠️ Thinking blocks were corrupted in the session transcript. The transcript has been repaired by removing the corrupted entries. Please try sending your message again.'
+                };
+              } else {
+                // If repair failed, clear SDK session ID to start fresh
+                this.sessionStore.delete(`sessions.${sessionId}.sdkSessionId`);
+                yield {
+                  type: 'error',
+                  error: '⚠️ Thinking blocks were corrupted in the session transcript. Could not repair automatically - starting a fresh session. Please try sending your message again.'
+                };
+              }
+              return;
+            }
+
             // Check for other API errors
             if (resultMsg.is_error && resultMsg.result) {
               yield { type: 'error', error: resultMsg.result };
@@ -1746,6 +1770,116 @@ You are intelligent enough to determine what URLs to test based on the project s
     // SDK uses a slug that starts with dash and preserves case
     // /Users/aj/dev/project -> -Users-aj-dev-project
     return projectPath.replace(/\//g, '-');
+  }
+
+  /**
+   * Repair a corrupted transcript by removing the last assistant message entries
+   * that contain corrupted thinking blocks.
+   *
+   * The error "thinking or redacted_thinking blocks in the latest assistant message
+   * cannot be modified" means the last assistant turn's thinking was corrupted.
+   * We repair this by removing those entries from the transcript.
+   */
+  private async repairCorruptedTranscript(sessionId: string, sdkSessionId?: string): Promise<boolean> {
+    try {
+      // Resolve the SDK session ID
+      const resolvedSdkSessionId = sdkSessionId
+        || this.sessionStore.get(`sdkSessionMappings.${sessionId}`) as string | undefined
+        || this.sessionStore.get(`sessions.${sessionId}.sdkSessionId`) as string | undefined;
+
+      if (!resolvedSdkSessionId) {
+        console.log('[Claude] No SDK session ID found, cannot repair transcript');
+        return false;
+      }
+
+      // Find the transcript file
+      const claudeDir = path.join(os.homedir(), '.claude', 'projects');
+      const transcriptFilename = `${resolvedSdkSessionId}.jsonl`;
+
+      if (!fs.existsSync(claudeDir)) {
+        console.log('[Claude] Claude projects directory not found:', claudeDir);
+        return false;
+      }
+
+      // Search for the transcript file
+      let transcriptPath: string | null = null;
+      const projectDirs = fs.readdirSync(claudeDir);
+      for (const projectDir of projectDirs) {
+        const candidatePath = path.join(claudeDir, projectDir, transcriptFilename);
+        if (fs.existsSync(candidatePath)) {
+          transcriptPath = candidatePath;
+          break;
+        }
+      }
+
+      if (!transcriptPath) {
+        console.log('[Claude] Transcript file not found:', transcriptFilename);
+        return false;
+      }
+
+      console.log('[Claude] Repairing transcript:', transcriptPath);
+
+      // Read the transcript file
+      const content = fs.readFileSync(transcriptPath, 'utf-8');
+      const lines = content.trim().split('\n');
+
+      if (lines.length === 0) {
+        console.log('[Claude] Transcript is empty, nothing to repair');
+        return false;
+      }
+
+      // Parse lines to find the last assistant message and remove it
+      // We need to find entries that are part of the corrupted assistant turn
+      const entries: Array<{ line: string; parsed: Record<string, unknown> }> = [];
+      for (const line of lines) {
+        if (line.trim()) {
+          try {
+            const parsed = JSON.parse(line);
+            entries.push({ line, parsed });
+          } catch {
+            // Skip unparseable lines
+          }
+        }
+      }
+
+      // Find the last assistant turn start and remove everything from there
+      // Look for message types that indicate an assistant response
+      let lastAssistantTurnStart = -1;
+      for (let i = entries.length - 1; i >= 0; i--) {
+        const entry = entries[i].parsed;
+        // SDK transcript entries have various types
+        // Look for 'assistant' type or message with role 'assistant'
+        if (entry.type === 'assistant' ||
+            (entry.message && (entry.message as Record<string, unknown>).role === 'assistant')) {
+          lastAssistantTurnStart = i;
+          break;
+        }
+      }
+
+      if (lastAssistantTurnStart === -1) {
+        console.log('[Claude] Could not find last assistant turn to remove');
+        return false;
+      }
+
+      // Create backup before modifying
+      const backupPath = transcriptPath + '.backup.' + Date.now();
+      fs.copyFileSync(transcriptPath, backupPath);
+      console.log('[Claude] Created transcript backup:', backupPath);
+
+      // Remove entries from the last assistant turn onwards
+      const repairedEntries = entries.slice(0, lastAssistantTurnStart);
+      const repairedContent = repairedEntries.map(e => e.line).join('\n') + '\n';
+
+      // Write repaired transcript
+      fs.writeFileSync(transcriptPath, repairedContent);
+      console.log('[Claude] Transcript repaired - removed', entries.length - lastAssistantTurnStart, 'entries');
+      console.log('[Claude] Original entries:', entries.length, '-> Repaired entries:', repairedEntries.length);
+
+      return true;
+    } catch (error) {
+      console.error('[Claude] Error repairing transcript:', error);
+      return false;
+    }
   }
 
   /**

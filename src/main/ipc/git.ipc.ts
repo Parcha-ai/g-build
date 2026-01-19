@@ -1,8 +1,15 @@
-import { IpcMain } from 'electron';
+import { IpcMain, BrowserWindow } from 'electron';
 import { IPC_CHANNELS } from '../../shared/constants/channels';
 import { GitService } from '../services/git.service';
 
 const gitService = new GitService();
+
+// Set up branch change callback to emit to all windows
+gitService.onBranchChange((sessionId, branch) => {
+  BrowserWindow.getAllWindows().forEach((window) => {
+    window.webContents.send(IPC_CHANNELS.GIT_BRANCH_CHANGED, { sessionId, branch });
+  });
+});
 
 export function registerGitHandlers(ipcMain: IpcMain): void {
   ipcMain.handle(IPC_CHANNELS.GIT_STATUS, async (_, sessionId: string) => {
@@ -39,5 +46,15 @@ export function registerGitHandlers(ipcMain: IpcMain): void {
 
   ipcMain.handle(IPC_CHANNELS.GIT_CLONE, async (_, url: string, targetPath: string) => {
     return gitService.clone(url, targetPath);
+  });
+
+  // Branch watching handlers
+  ipcMain.handle(IPC_CHANNELS.GIT_WATCH_BRANCH, async (_, sessionId: string) => {
+    return gitService.watchBranch(sessionId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.GIT_UNWATCH_BRANCH, async (_, sessionId: string) => {
+    gitService.unwatchBranch(sessionId);
+    return { success: true };
   });
 }

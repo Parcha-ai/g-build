@@ -35,20 +35,36 @@ export default function StatusBar() {
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
 
-  // Poll for branch changes every 5 seconds for the active session
+  // Watch for branch changes via file system events (not polling)
   useEffect(() => {
     if (!activeSessionId) return;
 
-    // Refresh immediately on session change
-    refreshSessionBranch(activeSessionId);
+    // Start watching the branch file
+    window.electronAPI.git.watchBranch(activeSessionId).then((result) => {
+      if (result.success && result.branch) {
+        // Initial branch value from the watcher
+        refreshSessionBranch(activeSessionId);
+      }
+    }).catch(console.error);
 
-    // Set up polling interval
-    const interval = setInterval(() => {
-      refreshSessionBranch(activeSessionId);
-    }, 5000);
-
-    return () => clearInterval(interval);
+    // Clean up: stop watching when session changes or component unmounts
+    return () => {
+      window.electronAPI.git.unwatchBranch(activeSessionId).catch(console.error);
+    };
   }, [activeSessionId, refreshSessionBranch]);
+
+  // Listen for branch change events from the file system watcher
+  useEffect(() => {
+    const unsubscribe = window.electronAPI.git.onBranchChanged(({ sessionId, branch }) => {
+      if (sessionId === activeSessionId) {
+        console.log(`[StatusBar] Branch changed via fs.watch: ${branch}`);
+        // Update the session store with the new branch
+        updateSession(sessionId, { branch });
+      }
+    });
+
+    return unsubscribe;
+  }, [activeSessionId, updateSession]);
 
   // Track active Task tool calls (subagents)
   const activeTaskTools = useMemo(() => {

@@ -110,6 +110,11 @@ interface SessionState {
   // Compaction status (Smart Compact feature)
   setCompactionStatus: (sessionId: string, status: CompactionStatus | null) => void;
   subscribeToCompaction: () => () => void;
+  // Auto-resume for Grep It mode
+  saveAutoResumeState: (sessionId: string) => Promise<void>;
+  clearAutoResumeState: () => Promise<void>;
+  checkAndAutoResume: () => Promise<void>;
+  setupAutoResumeOnClose: () => () => void;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -1052,6 +1057,109 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     return () => {
       unsubscribeStatus();
       unsubscribeComplete();
+    };
+  },
+
+  // Auto-resume methods for Grep It mode
+  saveAutoResumeState: async (sessionId) => {
+    if (!hasElectronAPI) return;
+
+    const state = get();
+    const isStreaming = state.isStreaming[sessionId];
+    const permissionMode = state.permissionMode[sessionId] || 'default';
+
+    // Only save state if we're in Grep It mode (bypassPermissions) and streaming
+    if (permissionMode !== 'bypassPermissions' || !isStreaming) {
+      return;
+    }
+
+    console.log('[SessionStore] Saving auto-resume state for Grep It session:', sessionId);
+    await window.electronAPI.claude.saveAutoResumeState({
+      sessionId,
+      wasStreaming: true,
+      permissionMode,
+    });
+  },
+
+  clearAutoResumeState: async () => {
+    if (!hasElectronAPI) return;
+    await window.electronAPI.claude.clearAutoResumeState();
+  },
+
+  checkAndAutoResume: async () => {
+    if (!hasElectronAPI) return;
+
+    try {
+      const resumeState = await window.electronAPI.claude.getAutoResumeState();
+
+      if (!resumeState) {
+        return;
+      }
+
+      console.log('[SessionStore] Found auto-resume state:', resumeState);
+
+      // Clear the state first to prevent re-triggering
+      await window.electronAPI.claude.clearAutoResumeState();
+
+      const { sessionId, wasStreaming, permissionMode } = resumeState;
+
+      // Only auto-resume for Grep It mode (bypassPermissions)
+      if (permissionMode !== 'bypassPermissions' || !wasStreaming) {
+        console.log('[SessionStore] Not auto-resuming - not Grep It mode or was not streaming');
+        return;
+      }
+
+      // Check if the session still exists
+      const state = get();
+      const session = state.sessions.find(s => s.id === sessionId);
+      if (!session) {
+        console.log('[SessionStore] Session not found for auto-resume:', sessionId);
+        return;
+      }
+
+      console.log('[SessionStore] Auto-resuming Grep It session:', sessionId);
+
+      // Set the session as active
+      state.setActiveSession(sessionId);
+
+      // Restore permission mode
+      set((s) => ({
+        permissionMode: { ...s.permissionMode, [sessionId]: 'bypassPermissions' },
+      }));
+
+      // Wait a moment for UI to settle, then send continuation message
+      setTimeout(() => {
+        const currentState = get();
+        // Make sure we're not already streaming
+        if (!currentState.isStreaming[sessionId]) {
+          console.log('[SessionStore] Sending auto-resume continuation message');
+          currentState.sendMessage(sessionId, 'Continue where you left off. The app was restarted mid-task. Please resume your work.');
+        }
+      }, 2000);
+
+    } catch (error) {
+      console.error('[SessionStore] Auto-resume check failed:', error);
+    }
+  },
+
+  setupAutoResumeOnClose: () => {
+    if (!hasElectronAPI || typeof window === 'undefined') return () => {};
+
+    const handleBeforeUnload = () => {
+      const state = get();
+      const activeSessionId = state.activeSessionId;
+
+      if (activeSessionId) {
+        // This is a sync-ish operation since we can't await in beforeunload
+        // The save will happen in the background
+        state.saveAutoResumeState(activeSessionId);
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
     };
   },
 }));

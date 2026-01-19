@@ -69,9 +69,9 @@ const PERMISSION_MODE_CONFIG: Record<PermissionMode, { prompt: string; label: st
   },
   bypassPermissions: {
     prompt: '>>>',
-    label: 'JUST VIBE IT!',
-    color: 'text-red-400',
-    description: 'Bypass all permissions (dangerous!)',
+    label: 'GREP IT!',
+    color: 'text-purple-400',
+    description: 'Autonomous mode with Ralph Loop',
   },
   plan: {
     prompt: '?',
@@ -1119,7 +1119,7 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
       {/* Input row - CLI style */}
       <div className={`flex items-center gap-2 transition-all duration-300 ${
         isVoiceModeActive || isPushToTalkActive
-          ? 'ring-2 ring-claude-accent/40 ring-inset shadow-[0_0_12px_rgba(179,136,255,0.25)] rounded-sm'
+          ? 'ring-2 ring-inset ring-claude-accent/50 shadow-[inset_0_0_20px_rgba(179,136,255,0.15)]'
           : ''
       }`}>
         {/* Permission mode selector - clickable prompt indicator */}
@@ -1141,19 +1141,22 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
             <div className="flex items-center gap-3 py-1 min-h-[24px]">
               {/* Voice visualization bars - Grep Purple */}
               <div className="flex items-center gap-0.5 h-5">
-                {[...Array(5)].map((_, i) => (
-                  <div
-                    key={i}
-                    className="w-1 bg-claude-accent rounded-full transition-all duration-150"
-                    style={{
-                      height: voiceState?.isSpeaking
-                        ? `${8 + Math.sin(Date.now() / 200 + i) * 8}px`
-                        : '4px',
-                      opacity: voiceState?.isSpeaking ? 1 : 0.5,
-                      animationDelay: `${i * 100}ms`,
-                    }}
-                  />
-                ))}
+                {[...Array(5)].map((_, i) => {
+                  const isActive = voiceState?.isSpeaking || voiceState?.isUserSpeaking;
+                  return (
+                    <div
+                      key={i}
+                      className="w-1 bg-claude-accent rounded-full transition-all duration-150"
+                      style={{
+                        height: isActive
+                          ? `${8 + Math.sin(Date.now() / 200 + i) * 8}px`
+                          : '4px',
+                        opacity: isActive ? 1 : 0.5,
+                        animationDelay: `${i * 100}ms`,
+                      }}
+                    />
+                  );
+                })}
               </div>
 
               {/* Agent response display - primary focus */}

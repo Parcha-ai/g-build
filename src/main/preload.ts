@@ -97,6 +97,16 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.GIT_PULL, sessionId),
     clone: (url: string, path: string): Promise<void> =>
       ipcRenderer.invoke(IPC_CHANNELS.GIT_CLONE, url, path),
+    // Branch watching
+    watchBranch: (sessionId: string): Promise<{ success: boolean; branch?: string; error?: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_WATCH_BRANCH, sessionId),
+    unwatchBranch: (sessionId: string): Promise<{ success: boolean }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_UNWATCH_BRANCH, sessionId),
+    onBranchChanged: (callback: (data: { sessionId: string; branch: string }) => void) => {
+      const handler = (_: IpcRendererEvent, data: { sessionId: string; branch: string }) => callback(data);
+      ipcRenderer.on(IPC_CHANNELS.GIT_BRANCH_CHANGED, handler);
+      return () => { ipcRenderer.removeListener(IPC_CHANNELS.GIT_BRANCH_CHANGED, handler); };
+    },
   },
 
   // Claude
@@ -180,6 +190,13 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.CLAUDE_PLAN_CONTENT, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.CLAUDE_PLAN_CONTENT, handler);
     },
+    // Auto-resume for Grep It mode
+    saveAutoResumeState: (state: { sessionId: string; wasStreaming: boolean; permissionMode: string; lastMessage?: string }): Promise<{ success: boolean }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.AUTO_RESUME_SAVE_STATE, state),
+    getAutoResumeState: (): Promise<{ sessionId: string; wasStreaming: boolean; permissionMode: string; lastMessage?: string; timestamp: number } | null> =>
+      ipcRenderer.invoke(IPC_CHANNELS.AUTO_RESUME_GET_STATE),
+    clearAutoResumeState: (): Promise<{ success: boolean }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.AUTO_RESUME_CLEAR_STATE),
   },
 
   // Browser Preview
@@ -315,7 +332,10 @@ const electronAPI = {
     createTeleportSession: (data: {
       sessionId: string;
       name: string;
+      cwd: string;
     }): Promise<Session> => ipcRenderer.invoke(IPC_CHANNELS.DEV_CREATE_TELEPORT_SESSION, data),
+    checkClaudeCli: (): Promise<{ installed: boolean; path: string | null; version: string | null }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.DEV_CHECK_CLAUDE_CLI),
     getActiveSession: (): Promise<string | null> =>
       ipcRenderer.invoke('dev:get-active-session'),
     setActiveSession: (sessionId: string | null): Promise<void> =>

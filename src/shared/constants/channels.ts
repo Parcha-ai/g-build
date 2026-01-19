@@ -40,6 +40,9 @@ export const IPC_CHANNELS = {
   GIT_PUSH: 'git:push',
   GIT_PULL: 'git:pull',
   GIT_CLONE: 'git:clone',
+  GIT_WATCH_BRANCH: 'git:watch-branch',
+  GIT_UNWATCH_BRANCH: 'git:unwatch-branch',
+  GIT_BRANCH_CHANGED: 'git:branch-changed',
 
   // Claude channels
   CLAUDE_SEND_MESSAGE: 'claude:send-message',
@@ -96,6 +99,7 @@ export const IPC_CHANNELS = {
   DEV_SAVE_WORKTREE_INSTRUCTIONS: 'dev:save-worktree-instructions',
   DEV_EXECUTE_WORKTREE_SETUP: 'dev:execute-worktree-setup',
   DEV_SETUP_PROGRESS: 'dev:setup-progress',
+  DEV_CHECK_CLAUDE_CLI: 'dev:check-claude-cli',
 
   // File system channels
   FS_LIST_FILES: 'fs:list-files',
@@ -138,6 +142,12 @@ export const IPC_CHANNELS = {
   EXTENSION_SCAN_SKILLS: 'extension:scan-skills',
   EXTENSION_SCAN_AGENTS: 'extension:scan-agents',
   EXTENSION_GET_COMMAND: 'extension:get-command',
+
+  // Auto-resume channels (for Ralph Loop/Grep It mode)
+  AUTO_RESUME_SAVE_STATE: 'auto-resume:save-state',
+  AUTO_RESUME_GET_STATE: 'auto-resume:get-state',
+  AUTO_RESUME_CLEAR_STATE: 'auto-resume:clear-state',
+  AUTO_RESUME_TRIGGER: 'auto-resume:trigger',
 
   // Voice mode channels (ElevenLabs Conversational AI)
   VOICE_CONNECT: 'voice:connect',

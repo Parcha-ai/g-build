@@ -74,6 +74,7 @@ export const MicrophoneButton = forwardRef<VoiceModeHandle, MicrophoneButtonProp
     setVoiceModeConnected,
     setVoiceModeDisconnected,
     setVoiceModeSpeaking,
+    setVoiceModeUserSpeaking,
     setVoiceModeTranscript,
     setVoiceModeAgentResponse,
     setVoiceModeError,
@@ -131,6 +132,8 @@ ${messageSummary || 'No messages yet'}`;
     onTranscript: (text, isFinal) => {
       // Update store with transcript for display
       setVoiceModeTranscript(sessionId, text);
+      // Track user speaking state for UI feedback (wave animation)
+      setVoiceModeUserSpeaking(sessionId, !isFinal && text.length > 0);
       // Note: We no longer send directly to Grep here.
       // ElevenLabs agent decides when to call the execute_grep_command tool.
       if (isFinal && text.trim()) {
@@ -257,6 +260,7 @@ ${messageSummary || 'No messages yet'}`;
         // Disconnect
         await disconnect();
         setVoiceModeDisconnected(sessionId);
+        setVoiceModeUserSpeaking(sessionId, false);
         setAudioMode(sessionId, false);
       } else if (!hookConnecting) {
         // Connect
@@ -278,12 +282,13 @@ ${messageSummary || 'No messages yet'}`;
       if (hookConnected) {
         await disconnect();
         setVoiceModeDisconnected(sessionId);
+        setVoiceModeUserSpeaking(sessionId, false);
         setAudioMode(sessionId, false);
       }
     },
     isConnected: hookConnected,
   }), [hookConnected, hookConnecting, connect, disconnect, startRecording, sessionId,
-      setVoiceModeConnecting, setVoiceModeDisconnected, setVoiceModeError, setAudioMode]);
+      setVoiceModeConnecting, setVoiceModeDisconnected, setVoiceModeUserSpeaking, setVoiceModeError, setAudioMode]);
 
   // Sync hook state to store
   useEffect(() => {
@@ -434,6 +439,7 @@ ${messageSummary || 'No messages yet'}`;
       // Disconnect voice mode
       await disconnect();
       setVoiceModeDisconnected(sessionId);
+      setVoiceModeUserSpeaking(sessionId, false);
       setAudioMode(sessionId, false);
     } else if (!isConnecting) {
       // Connect to voice mode
@@ -450,7 +456,7 @@ ${messageSummary || 'No messages yet'}`;
       }
     }
   }, [isConnected, isConnecting, connect, disconnect, startRecording, sessionId,
-      setVoiceModeConnecting, setVoiceModeDisconnected, setVoiceModeError, setAudioMode]);
+      setVoiceModeConnecting, setVoiceModeDisconnected, setVoiceModeUserSpeaking, setVoiceModeError, setAudioMode]);
 
   const getStatusColor = () => {
     if (error || voiceState?.error) return 'text-red-500';

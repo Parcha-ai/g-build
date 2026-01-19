@@ -8,10 +8,83 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
 import os from 'os';
-import { exec } from 'child_process';
+import crypto from 'crypto';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 
 const execAsync = promisify(exec);
+
+/**
+ * Check if Claude Code CLI is installed
+ */
+async function checkClaudeCli(): Promise<{ installed: boolean; path: string | null; version: string | null }> {
+  try {
+    // Try to get the version - this is the most reliable check
+    // We use shell: true so that aliases and PATH are properly resolved
+    const { stdout: versionOutput } = await execAsync('claude --version', { shell: '/bin/zsh' });
+    const version = versionOutput.trim();
+
+    if (!version) {
+      return { installed: false, path: null, version: null };
+    }
+
+    // Try to get the path using 'type' which works better with aliases
+    let cliPath = null;
+    try {
+      const { stdout: typeOutput } = await execAsync('type -p claude || which claude', { shell: '/bin/zsh' });
+      cliPath = typeOutput.trim().split('\n').pop() || null;
+      // Clean up zsh output like "claude: aliased to claude"
+      if (cliPath && cliPath.includes('aliased')) {
+        cliPath = 'alias';
+      }
+    } catch {
+      cliPath = 'resolved via shell';
+    }
+
+    return { installed: true, path: cliPath, version };
+  } catch (error) {
+    console.log('[CLI Check] Claude CLI not found:', error);
+    return { installed: false, path: null, version: null };
+  }
+}
+
+/**
+ * Resolve a path to its main git repository.
+ * If the path is inside a worktree, returns the main repo path.
+ * Otherwise returns the path as-is.
+ */
+async function getMainRepoPath(repoPath: string): Promise<string> {
+  const git = simpleGit(repoPath);
+  try {
+    // Check if this is a worktree by looking at the git dir
+    const gitDir = await git.raw(['rev-parse', '--git-dir']);
+    const trimmedGitDir = gitDir.trim();
+
+    // If git-dir contains '.git/worktrees/', this is a worktree
+    if (trimmedGitDir.includes('.git/worktrees/') || trimmedGitDir.includes('/.git/worktrees/')) {
+      // Get the common (main) git dir
+      const commonGitDir = await git.raw(['rev-parse', '--git-common-dir']);
+      const trimmedCommonDir = commonGitDir.trim();
+
+      // The main repo path is the parent of the .git directory
+      // commonGitDir returns something like "/path/to/main/repo/.git"
+      const mainRepoPath = path.dirname(trimmedCommonDir);
+      console.log(`[Worktree] Resolved worktree at ${repoPath} to main repo at ${mainRepoPath}`);
+      return mainRepoPath;
+    }
+  } catch (error) {
+    // Not a worktree or error - use as-is
+    console.log(`[Worktree] Path ${repoPath} is not a worktree, using as main repo`);
+  }
+  return repoPath;
+}
+
+/**
+ * Generate a stable hash for a path to use as directory name
+ */
+function getPathHash(repoPath: string): string {
+  return crypto.createHash('md5').update(repoPath).digest('hex').substring(0, 8);
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const store: any = new Store({ name: 'claudette-sessions' });
@@ -121,6 +194,11 @@ export function registerDevHandlers(ipcMain: IpcMain): void {
     settingsStore.set('isDevMode', enabled);
   });
 
+  // Check if Claude Code CLI is installed
+  ipcMain.handle(IPC_CHANNELS.DEV_CHECK_CLAUDE_CLI, async () => {
+    return checkClaudeCli();
+  });
+
   // Check if a folder is a git repository
   ipcMain.handle(IPC_CHANNELS.DEV_CHECK_GIT_REPO, async (_event, repoPath: string) => {
     try {
@@ -189,15 +267,23 @@ export function registerDevHandlers(ipcMain: IpcMain): void {
     // If creating a worktree, set up a new worktree directory
     if (data.createWorktree) {
       try {
-        const git = simpleGit(data.repoPath);
+        // IMPORTANT: Always resolve to the main repo to avoid nested worktrees
+        const mainRepoPath = await getMainRepoPath(data.repoPath);
+        const git = simpleGit(mainRepoPath);
         const isGit = await git.checkIsRepo();
 
         if (isGit) {
-          // Create worktree in a subdirectory of the repo
+          // Use central location: ~/.claudette/worktrees/{repo-hash}/worktree-{session-id}
+          const repoHash = getPathHash(mainRepoPath);
+          const centralWorktreesDir = path.join(os.homedir(), '.claudette', 'worktrees', repoHash);
           const worktreeName = `worktree-${sessionId.substring(0, 8)}`;
-          worktreePath = `${data.repoPath}/.claudette-worktrees/${worktreeName}`;
+          worktreePath = path.join(centralWorktreesDir, worktreeName);
 
-          // Create the worktree
+          // Ensure the central directory exists
+          await fs.mkdir(centralWorktreesDir, { recursive: true });
+
+          // Create the worktree FROM THE MAIN REPO (prevents nesting issues)
+          console.log(`[Worktree] Creating worktree at ${worktreePath} from main repo ${mainRepoPath}`);
           await git.raw(['worktree', 'add', worktreePath, data.branch]);
 
           // Execute worktree setup if configured
@@ -329,80 +415,168 @@ export function registerDevHandlers(ipcMain: IpcMain): void {
     }
   });
 
-  // Create a teleport session from a remote session ID
-  // NOTE: The Agent SDK's resume only works with local sessions (UUIDs).
-  // Web sessions (session_xxx format) need to be teleported first using:
-  // 1. Open Claude Code CLI: `claude`
-  // 2. Run `/teleport` and select the session
-  // 3. This downloads the session to ~/.claude/projects/
-  // 4. Then you can open that session in Grep
-  //
-  // This handler creates a placeholder session that will attempt to resume
-  // when you send the first message. If the transcript doesn't exist locally,
-  // you'll need to use the CLI teleport first.
+  // Create a teleport session by spawning Claude Code CLI with --teleport flag
+  // This downloads the web session from claude.ai to the local machine
   ipcMain.handle(IPC_CHANNELS.DEV_CREATE_TELEPORT_SESSION, async (_event, data: {
     sessionId: string;
     name: string;
-    cwd?: string;
+    cwd: string;
   }) => {
+    const remoteSessionId = data.sessionId;
+    const workingDir = data.cwd;
+
+    if (!workingDir) {
+      throw new Error('Project directory is required for teleport. Please select a directory.');
+    }
+
+    console.log('[Teleport] Starting teleport for session:', remoteSessionId, 'in', workingDir);
+
+    // First check if Claude CLI is installed
+    const cliCheck = await checkClaudeCli();
+    if (!cliCheck.installed) {
+      throw new Error('Claude Code CLI is not installed. Please install it first: https://docs.anthropic.com/claude-code');
+    }
+
+    console.log('[Teleport] Claude CLI found at:', cliCheck.path);
+
+    // Check if the directory is a clean git repo (no uncommitted changes)
     try {
-      const remoteSessionId = data.sessionId;
-      const workingDir = data.cwd || process.cwd();
+      const git = simpleGit(workingDir);
+      const isRepo = await git.checkIsRepo();
 
-      console.log('[Dev] Creating teleport session reference:', remoteSessionId);
+      if (isRepo) {
+        const status = await git.status();
+        const hasChanges = status.modified.length > 0 ||
+                          status.staged.length > 0 ||
+                          status.not_added.length > 0 ||
+                          status.deleted.length > 0;
 
-      // Check if this session already exists locally (was already teleported via CLI)
-      const claudeDir = path.join(os.homedir(), '.claude', 'projects');
-      const transcriptFilename = `${remoteSessionId}.jsonl`;
-      let foundLocally = false;
+        if (hasChanges) {
+          console.log('[Teleport] Directory has uncommitted changes:', status);
+          throw new Error(
+            `The selected directory has uncommitted changes.\n\n` +
+            `Please commit or stash your changes first, or select a clean directory/worktree.`
+          );
+        }
+        console.log('[Teleport] Git directory is clean');
+      } else {
+        console.log('[Teleport] Directory is not a git repo - proceeding anyway');
+      }
+    } catch (gitError: unknown) {
+      // Re-throw if it's our "uncommitted changes" error
+      if (gitError instanceof Error && gitError.message.includes('uncommitted changes')) {
+        throw gitError;
+      }
+      // Otherwise log and continue (might not be a git repo)
+      console.log('[Teleport] Git check failed, proceeding:', gitError);
+    }
 
-      if (fsSync.existsSync(claudeDir)) {
-        const projectDirs = fsSync.readdirSync(claudeDir);
-        for (const projectDir of projectDirs) {
-          const transcriptPath = path.join(claudeDir, projectDir, transcriptFilename);
-          if (fsSync.existsSync(transcriptPath)) {
-            console.log('[Dev] Found local transcript for teleported session:', transcriptPath);
-            foundLocally = true;
-            break;
-          }
+    // Check if this is a UUID (local session) or web session ID (session_xxx format)
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(remoteSessionId);
+    const isWebSession = remoteSessionId.startsWith('session_');
+
+    // Look for existing local transcript first
+    const claudeDir = path.join(os.homedir(), '.claude', 'projects');
+    let foundTranscript = false;
+
+    if (fsSync.existsSync(claudeDir)) {
+      const projectDirs = fsSync.readdirSync(claudeDir);
+      for (const projectDir of projectDirs) {
+        const candidatePath = path.join(claudeDir, projectDir, `${remoteSessionId}.jsonl`);
+        if (fsSync.existsSync(candidatePath)) {
+          foundTranscript = true;
+          console.log('[Teleport] Found existing local transcript:', candidatePath);
+          break;
         }
       }
-
-      if (!foundLocally) {
-        console.log('[Dev] No local transcript found. User may need to run /teleport in Claude CLI first.');
-      }
-
-      // Create a Grep session that references the remote session
-      const session: Session = {
-        id: remoteSessionId,
-        name: data.name,
-        repoPath: workingDir,
-        worktreePath: workingDir,
-        branch: 'main',
-        status: 'running',
-        ports: {
-          web: 3000,
-          api: 8080,
-          debug: 9229,
-        },
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        setupScript: '',
-        isDevMode: true,
-        isTeleported: true,
-      };
-
-      // Store the session
-      store.set(`sessions.${session.id}`, session);
-      store.set(`sdkSessionMappings.${session.id}`, remoteSessionId);
-
-      console.log('[Dev] Created teleport session:', session.id, foundLocally ? '(transcript found locally)' : '(no local transcript)');
-
-      return session;
-    } catch (error) {
-      console.error('[Dev] Failed to create teleport session:', error);
-      throw error;
     }
+
+    // If web session and no local transcript, run claude --teleport
+    if (isWebSession && !foundTranscript) {
+      console.log('[Teleport] Running: claude --teleport', remoteSessionId, '-p "status update"');
+
+      await new Promise<void>((resolve, reject) => {
+        // Format: claude --teleport <session-id> -p "prompt"
+        // The -p flag requires a prompt argument for non-interactive mode
+        // Note: Don't use shell: true to avoid quoting issues
+        const teleportProcess = spawn('claude', ['--teleport', remoteSessionId, '-p', 'status update'], {
+          cwd: workingDir,
+          shell: false,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        });
+
+        let stdout = '';
+        let stderr = '';
+
+        teleportProcess.stdout?.on('data', (chunk) => {
+          stdout += chunk.toString();
+          console.log('[Teleport stdout]', chunk.toString());
+        });
+
+        teleportProcess.stderr?.on('data', (chunk) => {
+          stderr += chunk.toString();
+          console.log('[Teleport stderr]', chunk.toString());
+        });
+
+        teleportProcess.on('close', (code) => {
+          console.log('[Teleport] Process exited with code:', code);
+          if (code === 0) {
+            resolve();
+          } else {
+            reject(new Error(`Teleport failed (exit code ${code}): ${stderr || stdout || 'Unknown error'}`));
+          }
+        });
+
+        teleportProcess.on('error', (err) => {
+          console.error('[Teleport] Process error:', err);
+          reject(new Error(`Failed to spawn Claude CLI: ${err.message}`));
+        });
+
+        // 5 minute timeout - teleport runs a full Claude conversation turn which can take a while
+        const timeout = setTimeout(() => {
+          teleportProcess.kill();
+          reject(new Error('Teleport timed out after 5 minutes. The session may be very large.'));
+        }, 300000);
+
+        teleportProcess.on('close', () => clearTimeout(timeout));
+      });
+
+      console.log('[Teleport] Teleport completed successfully');
+    } else if (!foundTranscript && !isUUID) {
+      // Unknown format and no local transcript
+      console.log('[Teleport] Unknown session format:', remoteSessionId);
+      throw new Error(`Invalid session ID format. Expected UUID or session_xxx format.`);
+    } else {
+      console.log('[Teleport] Using existing local session:', remoteSessionId);
+    }
+
+    // Create a Grep session that references the teleported session
+    const session: Session = {
+      id: remoteSessionId,
+      name: data.name,
+      repoPath: workingDir,
+      worktreePath: workingDir,
+      branch: 'main',
+      status: 'running',
+      ports: {
+        web: 3000,
+        api: 8080,
+        debug: 9229,
+      },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      setupScript: '',
+      isDevMode: true,
+      isTeleported: true,
+    };
+
+    // Store the session
+    store.set(`sessions.${session.id}`, session);
+    store.set(`sdkSessionMappings.${session.id}`, remoteSessionId);
+
+    console.log('[Teleport] Created Grep session for teleported conversation:', session.id);
+
+    return session;
   });
 
   // Debug: Get registered webviews

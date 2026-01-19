@@ -1,14 +1,32 @@
 import simpleGit, { SimpleGit, LogResult } from 'simple-git';
 import * as path from 'path';
+import * as fs from 'fs';
 import Store from 'electron-store';
 import type { Commit, Branch, FileChange, Session } from '../../shared/types';
+
+interface BranchWatcher {
+  watcher: fs.FSWatcher;
+  lastBranch: string | null;
+  headPath: string;
+}
+
+export type BranchChangeCallback = (sessionId: string, branch: string) => void;
 
 export class GitService {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private store: any;
+  private watchers: Map<string, BranchWatcher> = new Map();
+  private branchChangeCallback: BranchChangeCallback | null = null;
 
   constructor() {
     this.store = new Store({ name: 'claudette-sessions' });
+  }
+
+  /**
+   * Set callback for branch change events
+   */
+  onBranchChange(callback: BranchChangeCallback): void {
+    this.branchChangeCallback = callback;
   }
 
   private getWorktreePath(sessionId: string): string {
@@ -151,5 +169,118 @@ export class GitService {
   async stashPop(sessionId: string): Promise<void> {
     const git = this.getGit(sessionId);
     await git.stash(['pop']);
+  }
+
+  /**
+   * Get the .git/HEAD file path for a session
+   * Handles both regular repos and worktrees
+   */
+  private getHeadPath(sessionId: string): string {
+    const worktreePath = this.getWorktreePath(sessionId);
+    const gitPath = path.join(worktreePath, '.git');
+
+    // Check if .git is a file (worktree) or directory (regular repo)
+    try {
+      const stat = fs.statSync(gitPath);
+      if (stat.isFile()) {
+        // Worktree: .git file contains path to actual gitdir
+        const gitFileContent = fs.readFileSync(gitPath, 'utf-8').trim();
+        const match = gitFileContent.match(/^gitdir: (.+)$/);
+        if (match) {
+          return path.join(match[1], 'HEAD');
+        }
+      }
+    } catch {
+      // Fall through to default
+    }
+
+    // Regular repo or fallback
+    return path.join(gitPath, 'HEAD');
+  }
+
+  /**
+   * Read current branch from HEAD file
+   */
+  private readCurrentBranch(headPath: string): string | null {
+    try {
+      const content = fs.readFileSync(headPath, 'utf-8').trim();
+      // HEAD typically contains "ref: refs/heads/branch-name"
+      const match = content.match(/^ref: refs\/heads\/(.+)$/);
+      if (match) {
+        return match[1];
+      }
+      // Detached HEAD - just return the commit hash (truncated)
+      return content.substring(0, 8);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Start watching for branch changes on a session
+   */
+  watchBranch(sessionId: string): { success: boolean; branch?: string; error?: string } {
+    // Already watching
+    if (this.watchers.has(sessionId)) {
+      const existing = this.watchers.get(sessionId)!;
+      return { success: true, branch: existing.lastBranch || undefined };
+    }
+
+    try {
+      const headPath = this.getHeadPath(sessionId);
+      const initialBranch = this.readCurrentBranch(headPath);
+
+      // Watch the HEAD file
+      const watcher = fs.watch(headPath, (eventType) => {
+        if (eventType === 'change') {
+          const newBranch = this.readCurrentBranch(headPath);
+          const watcherData = this.watchers.get(sessionId);
+
+          if (watcherData && newBranch && newBranch !== watcherData.lastBranch) {
+            console.log(`[GitService] Branch changed: ${watcherData.lastBranch} → ${newBranch} (session: ${sessionId})`);
+            watcherData.lastBranch = newBranch;
+
+            if (this.branchChangeCallback) {
+              this.branchChangeCallback(sessionId, newBranch);
+            }
+          }
+        }
+      });
+
+      this.watchers.set(sessionId, {
+        watcher,
+        lastBranch: initialBranch,
+        headPath,
+      });
+
+      console.log(`[GitService] Started watching branch for session ${sessionId}: ${initialBranch}`);
+      return { success: true, branch: initialBranch || undefined };
+    } catch (error) {
+      console.error(`[GitService] Failed to watch branch for session ${sessionId}:`, error);
+      return { success: false, error: String(error) };
+    }
+  }
+
+  /**
+   * Stop watching for branch changes on a session
+   */
+  unwatchBranch(sessionId: string): void {
+    const watcherData = this.watchers.get(sessionId);
+    if (watcherData) {
+      watcherData.watcher.close();
+      this.watchers.delete(sessionId);
+      console.log(`[GitService] Stopped watching branch for session ${sessionId}`);
+    }
+  }
+
+  /**
+   * Clean up all watchers
+   */
+  dispose(): void {
+    for (const [sessionId, watcherData] of this.watchers) {
+      watcherData.watcher.close();
+      console.log(`[GitService] Disposed watcher for session ${sessionId}`);
+    }
+    this.watchers.clear();
   }
 }

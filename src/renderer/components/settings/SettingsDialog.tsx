@@ -20,6 +20,7 @@ export default function SettingsDialog() {
   const [voiceTriggerWord, setVoiceTriggerWord] = useState('please');
   const [elevenLabsAgentId, setElevenLabsAgentId] = useState('');
   const [voiceModeEnabled, setVoiceModeEnabled] = useState(false);
+  const [ralphLoopEnabled, setRalphLoopEnabled] = useState(false);
 
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
@@ -60,6 +61,7 @@ export default function SettingsDialog() {
       setVoiceTriggerWord(audioSettings.voiceTriggerWord || 'please');
       setElevenLabsAgentId(audioSettings.elevenLabsAgentId || '');
       setVoiceModeEnabled(audioSettings.voiceModeEnabled || false);
+      setRalphLoopEnabled(audioSettings.ralphLoopEnabled || false);
     }
   }, [audioSettings]);
 
@@ -81,13 +83,14 @@ export default function SettingsDialog() {
         window.electronAPI.audio.setOpenAiKey(openaiApiKey),
       ]);
 
-      // Save audio settings (voice selection, trigger word, agent ID, voice mode)
+      // Save audio settings (voice selection, trigger word, agent ID, voice mode, ralph loop)
       if (audioSettings) {
         await updateSettings({
           selectedVoice,
           voiceTriggerWord,
           elevenLabsAgentId,
           voiceModeEnabled,
+          ralphLoopEnabled,
           voiceSettings: {
             ...audioSettings.voiceSettings,
             voiceId: selectedVoice,
@@ -303,6 +306,39 @@ export default function SettingsDialog() {
               <p className="text-[10px] font-mono text-claude-text-secondary">
                 Say this word at the end of your message to auto-submit (e.g., "please", "send", "over")
               </p>
+            </div>
+          </div>
+
+          {/* Grep It Mode Section */}
+          <div className="space-y-4 pt-4 border-t border-claude-border">
+            <h3 className="text-xs font-mono text-claude-text uppercase tracking-wider">
+              Grep It Mode
+            </h3>
+
+            {/* Ralph Loop Toggle */}
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="block text-xs font-mono text-claude-text-secondary uppercase tracking-wider">
+                  Ralph Loop (Persistent Work)
+                </label>
+                <p className="text-[10px] font-mono text-claude-text-secondary mt-1">
+                  Agent keeps working until task is objectively complete
+                </p>
+              </div>
+              <button
+                onClick={() => setRalphLoopEnabled(!ralphLoopEnabled)}
+                disabled={isLoading}
+                className={`relative inline-flex h-6 w-11 items-center transition-colors ${
+                  ralphLoopEnabled ? 'bg-purple-500' : 'bg-claude-border'
+                } disabled:opacity-50`}
+                style={{ borderRadius: 0 }}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform bg-white transition-transform ${
+                    ralphLoopEnabled ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
             </div>
           </div>
 

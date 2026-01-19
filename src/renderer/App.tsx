@@ -119,7 +119,7 @@ function PreviewMode() {
 // Main App component that requires Electron
 function ElectronApp() {
   const { user, isLoading, isDevMode, checkAuth } = useAuthStore();
-  const { loadSessions, subscribeToSessionChanges, subscribeToSetupProgress, subscribeToCompaction } = useSessionStore();
+  const { loadSessions, subscribeToSessionChanges, subscribeToSetupProgress, subscribeToCompaction, setupAutoResumeOnClose, checkAndAutoResume } = useSessionStore();
   const {
     isSidebarOpen,
     isTerminalPanelOpen,
@@ -195,17 +195,22 @@ function ElectronApp() {
   useEffect(() => {
     // Load sessions when authenticated OR in dev mode
     if (user || isDevMode) {
-      loadSessions();
+      loadSessions().then(() => {
+        // After sessions are loaded, check for auto-resume (Grep It mode interrupted)
+        checkAndAutoResume();
+      });
       const unsubscribeSession = subscribeToSessionChanges();
       const unsubscribeSetup = subscribeToSetupProgress();
       const unsubscribeCompaction = subscribeToCompaction();
+      const unsubscribeAutoResume = setupAutoResumeOnClose();
       return () => {
         unsubscribeSession();
         unsubscribeSetup();
         unsubscribeCompaction();
+        unsubscribeAutoResume();
       };
     }
-  }, [user, isDevMode, loadSessions, subscribeToSessionChanges, subscribeToSetupProgress, subscribeToCompaction]);
+  }, [user, isDevMode, loadSessions, subscribeToSessionChanges, subscribeToSetupProgress, subscribeToCompaction, setupAutoResumeOnClose, checkAndAutoResume]);
 
   if (!isInitialized || isLoading) {
     return (

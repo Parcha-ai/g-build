@@ -50,6 +50,7 @@ export interface AudioSettings {
   transcriptionLanguage: string;
   voiceTriggerWord: string; // Word that triggers auto-submit when speaking
   voiceModeEnabled?: boolean; // Enable the new voice conversation mode
+  ralphLoopEnabled?: boolean; // Enable Ralph Loop in Grep It mode (agent keeps working until task complete)
 }
 
 // Default settings
@@ -67,4 +68,5 @@ export const DEFAULT_AUDIO_SETTINGS: AudioSettings = {
   voiceTriggerWord: 'please', // Default trigger word
   elevenLabsAgentId: 'agent_8101kf1x665ve49b9zy8jbtvhq12', // Default Grep voice agent
   voiceModeEnabled: true, // Enable voice mode by default
+  ralphLoopEnabled: false, // Ralph Loop disabled by default
 };
