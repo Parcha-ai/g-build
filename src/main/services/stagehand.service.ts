@@ -300,7 +300,7 @@ export class StagehandService {
 
       return {
         success: true,
-        actions: actions.map(a => ({
+        actions: actions.map((a: { selector: string; description: string }) => ({
           selector: a.selector,
           description: a.description,
           suggestedAction: 'click', // Default suggested action

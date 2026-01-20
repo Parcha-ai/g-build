@@ -7,7 +7,8 @@ import type { QuestionResponse, Attachment, PlanApprovalResponse } from '../../s
 import { DEFAULT_AUDIO_SETTINGS } from '../../shared/types/audio';
 
 // Settings store for Ralph Loop check
-const settingsStore = new Store({ name: 'claudette-settings' });
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const settingsStore = new Store({ name: 'claudette-settings' }) as any;
 
 // Ralph Loop completion marker
 const RALPH_LOOP_COMPLETION_MARKER = '<promise>COMPLETE</promise>';
