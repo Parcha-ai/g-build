@@ -259,9 +259,24 @@ export class ElevenLabsVoiceService extends EventEmitter {
         });
 
         this.ws.on('close', (code, reason) => {
-          console.log('[ElevenLabsVoice] WebSocket closed:', code, reason.toString());
+          const reasonStr = reason.toString();
+          console.log('[ElevenLabsVoice] WebSocket closed:', code, reasonStr);
           this.isConnected = false;
           this.ws = null;
+
+          // Check for quota/billing errors - don't retry these
+          const isQuotaError = reasonStr.toLowerCase().includes('quota') ||
+                              reasonStr.toLowerCase().includes('limit') ||
+                              reasonStr.toLowerCase().includes('billing') ||
+                              reasonStr.toLowerCase().includes('exceeded');
+
+          if (isQuotaError) {
+            console.log('[ElevenLabsVoice] Quota exceeded - not retrying');
+            this.emit('error', 'ElevenLabs quota exceeded. Please check your ElevenLabs account billing or wait for quota reset.');
+            this.emit('quota_exceeded');
+            this.emit('disconnected');
+            return;
+          }
 
           if (!this.intentionalDisconnect && this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
