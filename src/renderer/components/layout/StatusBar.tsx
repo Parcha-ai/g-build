@@ -31,7 +31,13 @@ export default function StatusBar() {
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [switchingBranch, setSwitchingBranch] = useState(false);
+  const [appVersion, setAppVersion] = useState('0.0.0');
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // Fetch app version on mount
+  useEffect(() => {
+    window.electronAPI?.app.getVersion().then(setAppVersion).catch(() => {});
+  }, []);
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
 
@@ -265,7 +271,7 @@ export default function StatusBar() {
         )}
 
         <div className="flex items-center gap-1.5">
-          <span style={{ letterSpacing: '0.05em' }}>GREP BUILD v0.0.2</span>
+          <span style={{ letterSpacing: '0.05em' }}>GREP BUILD v{appVersion}</span>
         </div>
       </div>
     </div>
