@@ -46,19 +46,22 @@ export default function MainContent() {
     }
   }, [isTerminalPanelOpen, terminalHeight, setTerminalHeight]);
 
-  // Intercept Cmd+R to refresh browser instead of the whole app
+  // Intercept Cmd+R to ALWAYS prevent app reload, and refresh browser if panel is open
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'r') {
-        // Only intercept if browser panel is open
+        // Always prevent Electron's default app reload
+        e.preventDefault();
+        e.stopPropagation();
+
+        // If browser panel is open, refresh the browser instead
         if (isBrowserPanelOpen && activeSessionId) {
-          e.preventDefault();
-          e.stopPropagation();
           // Dispatch custom event for BrowserPreview to handle
           window.dispatchEvent(new CustomEvent('grep-browser-refresh', {
             detail: { sessionId: activeSessionId }
           }));
         }
+        // Otherwise, just do nothing (CMD+R is disabled)
       }
     };
 

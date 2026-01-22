@@ -18,6 +18,7 @@ export interface Session {
   model?: string; // Selected Claude model for this session
   worktreeInstructions?: string; // Setup instructions to send to Claude when session starts
   worktreeInstructionsSent?: boolean; // Track if instructions have been sent
+  errorMessage?: string; // Error message when status is 'error'
 }
 
 export type SessionStatus = 'creating' | 'starting' | 'setup' | 'running' | 'stopping' | 'stopped' | 'error';
@@ -161,6 +162,7 @@ export interface PermissionResponse {
   requestId: string;
   approved: boolean;
   modifiedInput?: Record<string, unknown>;
+  alwaysApprove?: boolean; // If true, save permission pattern to project settings
 }
 
 // Question types for AskUserQuestion tool

@@ -1,5 +1,5 @@
 import { query, tool, createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk';
-import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage, SDKUserMessage, Query } from '@anthropic-ai/claude-agent-sdk';
 import type { ImageBlockParam, TextBlockParam } from '@anthropic-ai/sdk/resources';
 import { z } from 'zod';
 import Store from 'electron-store';
@@ -46,6 +46,7 @@ interface PendingQuestion {
 interface PendingPermission {
   resolve: (response: { approved: boolean; modifiedInput?: Record<string, unknown> }) => void;
   reject: (error: Error) => void;
+  sessionId: string;
   toolName: string;
   input: Record<string, unknown>;
 }
@@ -61,6 +62,7 @@ export class ClaudeService {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private sessionStore: any;
   private activeQueries: Map<string, AbortController> = new Map();
+  private activeQueryObjects: Map<string, Query> = new Map(); // Store Query objects for streamInput
   private pendingQuestions: Map<string, PendingQuestion> = new Map();
   private pendingPermissions: Map<string, PendingPermission> = new Map();
   private pendingPlanApprovals: Map<string, PendingPlanApproval> = new Map();
@@ -1013,15 +1015,90 @@ export class ClaudeService {
   }
 
   // Handle permission responses from the renderer
-  handlePermissionResponse(response: { requestId: string; approved: boolean; modifiedInput?: Record<string, unknown> }): void {
-    console.log('[Claude Service] handlePermissionResponse called:', response.requestId, 'approved:', response.approved);
+  handlePermissionResponse(response: { requestId: string; approved: boolean; modifiedInput?: Record<string, unknown>; alwaysApprove?: boolean }): void {
+    console.log('[Claude Service] handlePermissionResponse called:', response.requestId, 'approved:', response.approved, 'alwaysApprove:', response.alwaysApprove);
     const pending = this.pendingPermissions.get(response.requestId);
     if (pending) {
       console.log('[Claude Service] Found pending permission, resolving...');
+
+      // If "always approve" was selected, save the permission pattern
+      if (response.approved && response.alwaysApprove && pending.toolName === 'Bash') {
+        this.savePermissionPattern(pending.sessionId, pending.toolName, pending.input);
+      }
+
       pending.resolve({ approved: response.approved, modifiedInput: response.modifiedInput });
       this.pendingPermissions.delete(response.requestId);
     } else {
       console.warn('[Claude Service] No pending permission found for requestId:', response.requestId);
+    }
+  }
+
+  // Save a permission pattern to the project's .claude/settings.local.json
+  private async savePermissionPattern(sessionId: string, toolName: string, input: Record<string, unknown>): Promise<void> {
+    try {
+      // Get the session to find the worktree path
+      const session = this.sessionStore.get(`sessions.${sessionId}`) as Session | undefined;
+      if (!session) {
+        console.warn('[Claude Service] Could not find session for permission pattern save:', sessionId);
+        return;
+      }
+
+      const projectPath = session.worktreePath || session.repoPath;
+      if (!projectPath) {
+        console.warn('[Claude Service] No project path found for session:', sessionId);
+        return;
+      }
+
+      // Extract the command pattern for Bash tool
+      const command = input.command as string;
+      if (!command) {
+        console.warn('[Claude Service] No command found in Bash input');
+        return;
+      }
+
+      // Extract wildcard pattern: "gh pr list main" -> "gh pr *"
+      const parts = command.trim().split(/\s+/);
+      let pattern: string;
+      if (parts.length <= 2) {
+        pattern = parts[0] + ' *';
+      } else {
+        pattern = parts.slice(0, 2).join(' ') + ' *';
+      }
+
+      // Read existing settings.local.json or create new one
+      const settingsPath = path.join(projectPath, '.claude', 'settings.local.json');
+      const claudeDir = path.dirname(settingsPath);
+
+      // Ensure .claude directory exists
+      if (!fs.existsSync(claudeDir)) {
+        fs.mkdirSync(claudeDir, { recursive: true });
+      }
+
+      let settings: { allowedTools?: string[] } = {};
+      if (fs.existsSync(settingsPath)) {
+        const content = fs.readFileSync(settingsPath, 'utf-8');
+        settings = JSON.parse(content);
+      }
+
+      // Initialize allowedTools array if not present
+      if (!settings.allowedTools) {
+        settings.allowedTools = [];
+      }
+
+      // Add the pattern if not already present (format: "Bash(pattern)")
+      const permissionEntry = `Bash(${pattern})`;
+      if (!settings.allowedTools.includes(permissionEntry)) {
+        settings.allowedTools.push(permissionEntry);
+        console.log('[Claude Service] Adding permission pattern:', permissionEntry);
+
+        // Write back to settings.local.json
+        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+        console.log('[Claude Service] Saved permission to:', settingsPath);
+      } else {
+        console.log('[Claude Service] Permission pattern already exists:', permissionEntry);
+      }
+    } catch (error) {
+      console.error('[Claude Service] Failed to save permission pattern:', error);
     }
   }
 
@@ -1035,7 +1112,7 @@ export class ClaudeService {
 
     return new Promise((resolve, reject) => {
       // Store the promise resolve/reject functions
-      this.pendingPermissions.set(requestId, { resolve, reject, toolName, input });
+      this.pendingPermissions.set(requestId, { resolve, reject, sessionId, toolName, input });
 
       // Send permission request to renderer
       if (this.mainWindow) {
@@ -1471,6 +1548,9 @@ You are intelligent enough to determine what URLs to test based on the project s
           },
         },
       });
+
+      // Store the Query object so we can inject messages via streamInput
+      this.activeQueryObjects.set(sessionId, messages);
 
       let fullContent = '';
       const toolCalls: ToolCall[] = [];
@@ -1928,6 +2008,7 @@ You are intelligent enough to determine what URLs to test based on the project s
       yield { type: 'error', error: errorMessage };
     } finally {
       this.activeQueries.delete(sessionId);
+      this.activeQueryObjects.delete(sessionId);
     }
   }
 
@@ -1936,7 +2017,89 @@ You are intelligent enough to determine what URLs to test based on the project s
     if (controller) {
       controller.abort();
       this.activeQueries.delete(sessionId);
+      this.activeQueryObjects.delete(sessionId);
     }
+  }
+
+  /**
+   * Inject a message into an active query using streamInput.
+   * This allows sending follow-up messages without waiting for the current response to complete.
+   * The message will be processed after the next tool call completes.
+   */
+  async injectMessage(sessionId: string, message: string, attachments?: Attachment[]): Promise<boolean> {
+    const queryObj = this.activeQueryObjects.get(sessionId);
+    if (!queryObj) {
+      console.log('[Claude Service] injectMessage: No active query for session', sessionId);
+      return false;
+    }
+
+    console.log('[Claude Service] injectMessage: Injecting message into active query for session', sessionId);
+
+    try {
+      // Create an async generator that yields a single user message
+      async function* createMessageStream(): AsyncIterable<SDKUserMessage> {
+        // Build content with any image attachments
+        const imageAttachments = attachments?.filter(a => a.type === 'image') || [];
+        const hasImages = imageAttachments.length > 0;
+
+        if (hasImages) {
+          const content: Array<{ type: 'text'; text: string } | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }> = [
+            { type: 'text', text: message }
+          ];
+
+          for (const attachment of imageAttachments) {
+            const ext = attachment.name.split('.').pop()?.toLowerCase();
+            const mediaType = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+              : ext === 'gif' ? 'image/gif'
+              : ext === 'webp' ? 'image/webp'
+              : 'image/png';
+
+            content.push({
+              type: 'image',
+              source: {
+                type: 'base64',
+                media_type: mediaType,
+                data: attachment.content,
+              },
+            });
+          }
+
+          yield {
+            type: 'user',
+            message: {
+              role: 'user',
+              content: content as any,
+            },
+            parent_tool_use_id: null,
+            session_id: '',
+          } as SDKUserMessage;
+        } else {
+          yield {
+            type: 'user',
+            message: {
+              role: 'user',
+              content: message,
+            },
+            parent_tool_use_id: null,
+            session_id: '',
+          } as SDKUserMessage;
+        }
+      }
+
+      await queryObj.streamInput(createMessageStream());
+      console.log('[Claude Service] injectMessage: Message injected successfully');
+      return true;
+    } catch (error) {
+      console.error('[Claude Service] injectMessage: Failed to inject message:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Check if there's an active query for the given session
+   */
+  hasActiveQuery(sessionId: string): boolean {
+    return this.activeQueryObjects.has(sessionId);
   }
 
   /**

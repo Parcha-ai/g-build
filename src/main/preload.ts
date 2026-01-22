@@ -117,8 +117,8 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.CLAUDE_GET_MESSAGES, sessionId),
     getModels: (): Promise<Array<{ id: string; name: string; description: string }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.CLAUDE_GET_MODELS),
-    cancel: (sessionId: string): void =>
-      ipcRenderer.send(IPC_CHANNELS.CLAUDE_CANCEL, sessionId),
+    cancel: (sessionId: string): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CLAUDE_CANCEL, sessionId),
     onStreamChunk: (callback: (chunk: { sessionId: string; content: string }) => void) => {
       const handler = (_: IpcRendererEvent, chunk: { sessionId: string; content: string }) => callback(chunk);
       ipcRenderer.on(IPC_CHANNELS.CLAUDE_STREAM_CHUNK, handler);
@@ -161,7 +161,7 @@ const electronAPI = {
       return () => ipcRenderer.removeListener(IPC_CHANNELS.CLAUDE_PERMISSION_REQUEST, handler);
     },
     // Send permission response
-    respondToPermission: (response: { requestId: string; approved: boolean; modifiedInput?: Record<string, unknown> }): Promise<void> =>
+    respondToPermission: (response: { requestId: string; approved: boolean; modifiedInput?: Record<string, unknown>; alwaysApprove?: boolean }): Promise<void> =>
       ipcRenderer.invoke(IPC_CHANNELS.CLAUDE_PERMISSION_RESPONSE, response),
     // Question request listener
     onQuestionRequest: (callback: (request: any) => void) => {
@@ -206,6 +206,12 @@ const electronAPI = {
     // Send plan approval response
     respondToPlanApproval: (response: { requestId: string; approved: boolean }): Promise<void> =>
       ipcRenderer.invoke(IPC_CHANNELS.CLAUDE_PLAN_APPROVAL_RESPONSE, response),
+    // Inject message into active query (for async queue processing)
+    injectMessage: (sessionId: string, message: string, attachments?: unknown[]): Promise<boolean> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CLAUDE_INJECT_MESSAGE, sessionId, message, attachments),
+    // Check if session has an active query
+    hasActiveQuery: (sessionId: string): Promise<boolean> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CLAUDE_HAS_ACTIVE_QUERY, sessionId),
   },
 
   // Browser Preview

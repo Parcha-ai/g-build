@@ -65,6 +65,8 @@ export const IPC_CHANNELS = {
   CLAUDE_PLAN_CONTENT: 'claude:plan-content',
   CLAUDE_PLAN_APPROVAL_REQUEST: 'claude:plan-approval-request',
   CLAUDE_PLAN_APPROVAL_RESPONSE: 'claude:plan-approval-response',
+  CLAUDE_INJECT_MESSAGE: 'claude:inject-message', // Inject message into active query via streamInput
+  CLAUDE_HAS_ACTIVE_QUERY: 'claude:has-active-query', // Check if session has active query
 
   // Browser preview channels
   BROWSER_NAVIGATE: 'browser:navigate',

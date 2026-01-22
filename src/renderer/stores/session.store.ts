@@ -93,7 +93,7 @@ interface SessionState {
   subscribeToClaude: () => () => void;
   // Permission handling
   setPendingPermission: (sessionId: string, request: PermissionRequest | null) => void;
-  approvePermission: (sessionId: string, modifiedInput?: Record<string, unknown>) => Promise<void>;
+  approvePermission: (sessionId: string, modifiedInput?: Record<string, unknown>, alwaysApprove?: boolean) => Promise<void>;
   denyPermission: (sessionId: string) => Promise<void>;
   // Question handling
   setPendingQuestion: (sessionId: string, request: QuestionRequest | null) => void;
@@ -216,8 +216,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return;
     }
     try {
-      const sessions = await window.electronAPI.sessions.list();
+      const allSessions = await window.electronAPI.sessions.list();
       const activeSessionId = await window.electronAPI.dev.getActiveSession();
+
+      // Limit to 10 most recently updated sessions to keep sidebar clean
+      const sessions = allSessions
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+        .slice(0, 10);
 
       // Verify the active session still exists
       const sessionExists = sessions.some((s) => s.id === activeSessionId);
@@ -656,6 +661,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const mode = permissionMode[sessionId] || 'acceptEdits';
     const thinking = thinkingMode[sessionId] || 'thinking';
     const model = selectedModel[sessionId]; // undefined = use default
+    console.log('[SessionStore] sendMessage - sessionId:', sessionId, 'permissionMode:', mode, 'raw:', permissionMode[sessionId]);
 
     // Update session's updatedAt timestamp for recent activity
     set((state) => ({
@@ -724,7 +730,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       addToolCall(sessionId, tc);
     });
 
-    const unsubToolResult = window.electronAPI.claude.onToolResult(({ sessionId, toolCall }) => {
+    const unsubToolResult = window.electronAPI.claude.onToolResult(async ({ sessionId, toolCall }) => {
       if (!toolCall) return;
       const tc = toolCall as ToolCall;
       console.log('[SessionStore] onToolResult received:', tc.name, 'input:', JSON.stringify(tc.input || {}));
@@ -735,6 +741,43 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         result: tc.result,
         completedAt: tc.completedAt,
       });
+
+      // Check if there are queued messages to inject after this tool completes
+      const currentState = get();
+      const queue = currentState.messageQueue[sessionId] || [];
+      if (queue.length > 0) {
+        const nextMessage = queue[0];
+        console.log(`[SessionStore] Tool completed, injecting queued message: "${nextMessage.message.slice(0, 50)}..."`);
+
+        // Remove the message from the queue
+        set((state) => ({
+          messageQueue: {
+            ...state.messageQueue,
+            [sessionId]: (state.messageQueue[sessionId] || []).slice(1),
+          },
+        }));
+
+        // Add the user message to the chat
+        const userMessage: ChatMessage = {
+          id: nextMessage.id,
+          role: 'user',
+          content: nextMessage.message,
+          timestamp: new Date(nextMessage.timestamp),
+        };
+        addMessage(sessionId, userMessage);
+
+        // Inject into the active query via streamInput
+        try {
+          const success = await window.electronAPI.claude.injectMessage(
+            sessionId,
+            nextMessage.message,
+            nextMessage.attachments as any[]
+          );
+          console.log(`[SessionStore] Message injection result:`, success);
+        } catch (error) {
+          console.error('[SessionStore] Failed to inject message:', error);
+        }
+      }
     });
 
     const unsubSystemInfo = window.electronAPI.claude.onSystemInfo(({ sessionId, systemInfo }) => {
@@ -836,7 +879,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }));
   },
 
-  approvePermission: async (sessionId, modifiedInput) => {
+  approvePermission: async (sessionId, modifiedInput, alwaysApprove) => {
     if (!hasElectronAPI) return;
     const { pendingPermission, setPendingPermission } = get();
     const request = pendingPermission[sessionId];
@@ -850,9 +893,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       requestId: request.requestId,
       approved: true,
       modifiedInput,
+      alwaysApprove,
     };
 
-    console.log('[Session Store] Approving permission:', request.requestId);
+    console.log('[Session Store] Approving permission:', request.requestId, alwaysApprove ? '(always approve)' : '');
     await window.electronAPI.claude.respondToPermission(response);
     setPendingPermission(sessionId, null);
   },
@@ -1047,40 +1091,47 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   interruptAndSend: async (sessionId, message, attachments) => {
     const state = get();
+    const isCurrentlyStreaming = state.isStreaming[sessionId] || false;
 
-    // Cancel current streaming
-    window.electronAPI.claude.cancel(sessionId);
+    // Only interrupt if actually streaming
+    if (isCurrentlyStreaming) {
+      console.log(`[interruptAndSend] Cancelling current stream for session ${sessionId}`);
 
-    // Save partial content as an interrupted message before clearing
-    const partialContent = state.currentStreamContent[sessionId] || '';
-    const partialToolCalls = state.currentToolCalls[sessionId] || [];
+      // Cancel current streaming and wait for confirmation
+      await window.electronAPI.claude.cancel(sessionId);
+      console.log(`[interruptAndSend] Cancel confirmed by backend`);
 
-    if (partialContent || partialToolCalls.length > 0) {
-      // Create an interrupted message with whatever content we had
-      const interruptedMessage: ChatMessage = {
-        id: `interrupted-${Date.now()}`,
-        role: 'assistant',
-        content: partialContent || '(interrupted)',
-        toolCalls: partialToolCalls.length > 0 ? partialToolCalls : undefined,
-        timestamp: new Date(),
-        interrupted: true,
-      };
-      state.addMessage(sessionId, interruptedMessage);
-      console.log(`Saved interrupted message with ${partialContent.length} chars of content`);
+      // Save partial content as an interrupted message before clearing
+      const partialContent = state.currentStreamContent[sessionId] || '';
+      const partialToolCalls = state.currentToolCalls[sessionId] || [];
+
+      if (partialContent || partialToolCalls.length > 0) {
+        // Create an interrupted message with whatever content we had
+        const interruptedMessage: ChatMessage = {
+          id: `interrupted-${Date.now()}`,
+          role: 'assistant',
+          content: partialContent || '(interrupted)',
+          toolCalls: partialToolCalls.length > 0 ? partialToolCalls : undefined,
+          timestamp: new Date(),
+          interrupted: true,
+        };
+        state.addMessage(sessionId, interruptedMessage);
+        console.log(`[interruptAndSend] Saved interrupted message with ${partialContent.length} chars of content`);
+      }
+
+      // Clear current streaming state
+      set((state) => ({
+        isStreaming: { ...state.isStreaming, [sessionId]: false },
+        streamEvents: { ...state.streamEvents, [sessionId]: [] },
+        currentStreamContent: { ...state.currentStreamContent, [sessionId]: '' },
+        currentThinkingContent: { ...state.currentThinkingContent, [sessionId]: '' },
+        currentToolCalls: { ...state.currentToolCalls, [sessionId]: [] },
+      }));
+
+      console.log(`[interruptAndSend] Streaming state cleared, sending new message`);
     }
 
-    // Clear current streaming state
-    set((state) => ({
-      isStreaming: { ...state.isStreaming, [sessionId]: false },
-      streamEvents: { ...state.streamEvents, [sessionId]: [] },
-      currentStreamContent: { ...state.currentStreamContent, [sessionId]: '' },
-      currentThinkingContent: { ...state.currentThinkingContent, [sessionId]: '' },
-      currentToolCalls: { ...state.currentToolCalls, [sessionId]: [] },
-    }));
-
-    console.log(`Interrupted current message, sending priority message`);
-
-    // Send new message immediately (will bypass queue since isStreaming is now false)
+    // Send new message
     state.sendMessage(sessionId, message, attachments);
   },
 

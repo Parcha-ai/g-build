@@ -29,6 +29,7 @@ export interface VoiceModeState {
   isConnecting: boolean;
   isSpeaking: boolean;
   isUserSpeaking: boolean;  // True when user is actively talking (mic input detected)
+  audioLevel: number;  // 0-1, representing mic input volume level
   transcript: string;
   agentResponse: string;
   error: string | null;
@@ -57,6 +58,7 @@ interface AudioState {
   setVoiceModeDisconnected: (sessionId: string) => void;
   setVoiceModeSpeaking: (sessionId: string, speaking: boolean) => void;
   setVoiceModeUserSpeaking: (sessionId: string, speaking: boolean) => void;
+  setVoiceModeAudioLevel: (sessionId: string, level: number) => void;
   setVoiceModeTranscript: (sessionId: string, transcript: string) => void;
   setVoiceModeAgentResponse: (sessionId: string, response: string) => void;
   setVoiceModeError: (sessionId: string, error: string | null) => void;
@@ -117,6 +119,7 @@ const defaultVoiceModeState: VoiceModeState = {
   isConnecting: false,
   isSpeaking: false,
   isUserSpeaking: false,
+  audioLevel: 0,
   transcript: '',
   agentResponse: '',
   error: null,
@@ -218,6 +221,16 @@ export const useAudioStore = create<AudioState>((set, get) => ({
       [sessionId]: {
         ...(state.voiceModeStates[sessionId] || defaultVoiceModeState),
         isUserSpeaking: speaking,
+      },
+    },
+  })),
+
+  setVoiceModeAudioLevel: (sessionId, level) => set((state) => ({
+    voiceModeStates: {
+      ...state.voiceModeStates,
+      [sessionId]: {
+        ...(state.voiceModeStates[sessionId] || defaultVoiceModeState),
+        audioLevel: level,
       },
     },
   })),

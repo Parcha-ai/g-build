@@ -316,17 +316,22 @@ export default function QuickSearch() {
 
   // Load files when opened
   useEffect(() => {
+    console.log('[QuickSearch] Effect triggered - isOpen:', isQuickSearchOpen, 'activeSessionId:', activeSessionId);
     if (isQuickSearchOpen && activeSessionId) {
       setIsLoading(true);
+      console.log('[QuickSearch] Loading files for session:', activeSessionId);
       window.electronAPI.fs.listFiles(activeSessionId)
         .then((files) => {
+          console.log('[QuickSearch] Loaded', files.length, 'files');
           setAllFiles(files);
           setIsLoading(false);
         })
         .catch((error) => {
-          console.error('Failed to load files:', error);
+          console.error('[QuickSearch] Failed to load files:', error);
           setIsLoading(false);
         });
+    } else if (isQuickSearchOpen && !activeSessionId) {
+      console.log('[QuickSearch] No active session - file search will be empty');
     }
   }, [isQuickSearchOpen, activeSessionId]);
 

@@ -33,7 +33,7 @@ const IGNORED_DIRS = new Set([
 async function listFilesRecursive(
   dirPath: string,
   basePath: string,
-  maxDepth: number = 4,
+  maxDepth: number = 30,  // Deep traversal for complex project structures
   currentDepth: number = 0
 ): Promise<FileEntry[]> {
   if (currentDepth >= maxDepth) return [];
@@ -85,12 +85,16 @@ async function listFilesRecursive(
 export function registerFsHandlers(ipcMain: IpcMain): void {
   // List files in session working directory
   ipcMain.handle(IPC_CHANNELS.FS_LIST_FILES, async (_event, sessionId: string, query?: string) => {
+    console.log('[FS] listFiles called for session:', sessionId, 'query:', query);
     const session = await sessionService.getSession(sessionId);
+    console.log('[FS] Session found:', session?.id, 'worktreePath:', session?.worktreePath);
     if (!session?.worktreePath) {
+      console.log('[FS] No worktreePath - returning empty array');
       return [];
     }
 
     const files = await listFilesRecursive(session.worktreePath, session.worktreePath);
+    console.log('[FS] Found', files.length, 'files');
 
     // Filter by query if provided
     if (query && query.trim()) {
@@ -99,10 +103,11 @@ export function registerFsHandlers(ipcMain: IpcMain): void {
         (f) =>
           f.name.toLowerCase().includes(lowerQuery) ||
           f.relativePath.toLowerCase().includes(lowerQuery)
-      ).slice(0, 20); // Limit results
+      ).slice(0, 50); // Limit filtered results
     }
 
-    return files.slice(0, 100); // Limit initial list
+    // Return all files (the UI will handle filtering)
+    return files;
   });
 
   // Read file content

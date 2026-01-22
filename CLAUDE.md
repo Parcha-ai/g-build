@@ -41,9 +41,15 @@ Never build a production version (`npm run make`) without:
 
 ### /build
 Build the production application. This command:
-1. Kills any running dev/electron processes
-2. Runs `npm run make` to create the distributable
-3. Opens the built application from `out/Grep Build-darwin-arm64/Grep Build.app`
+1. **BUMP THE VERSION** in `package.json` (increment patch version, e.g., 0.0.3 → 0.0.4)
+2. Kill any running dev/electron processes
+3. Run `npm run make` to create the distributable
+4. **CREATE A RELEASE TAG** with `git tag v{version}` (e.g., `git tag v0.0.4`)
+5. Open the built application from `out/v{version}/Grep Build-darwin-arm64/Grep Build.app`
+
+**CRITICAL: Always bump the version number before building!** The version is displayed in the bottom right of the app's status bar. Users need to see the new version to confirm they're running the updated build.
+
+**CRITICAL: Always create a git tag after building!** This marks the release point in git history.
 
 Usage: User says `/build` when ready to create a production build after dev testing is complete.
 

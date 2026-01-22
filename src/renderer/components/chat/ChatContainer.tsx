@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useSessionStore } from '../../stores/session.store';
 import { useAudioStore } from '../../stores/audio.store';
+import { useUIStore } from '../../stores/ui.store';
 import MessageList from './MessageList';
 import InputArea from './InputArea';
 import PermissionDialog from './PermissionDialog';
@@ -31,8 +32,10 @@ export default function ChatContainer({ session }: ChatContainerProps) {
     answerQuestion,
     subscribeToClaude,
     compactionStatus,
+    setPermissionMode,
   } = useSessionStore();
   const { audioModeActive, ttsStates } = useAudioStore();
+  const { toggleTerminalPanel, isTerminalPanelOpen } = useUIStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -124,6 +127,14 @@ export default function ChatContainer({ session }: ChatContainerProps) {
               ACTIVE
             </span>
           )}
+          {session.status === 'error' && (
+            <span
+              className="ml-2 px-1.5 py-0.5 text-xs font-bold uppercase bg-red-500/20 text-red-500"
+              style={{ borderRadius: 0, letterSpacing: '0.05em' }}
+            >
+              ERROR
+            </span>
+          )}
         </div>
 
         {/* Audio visualization - shows when in audio mode and working/speaking */}
@@ -140,6 +151,58 @@ export default function ChatContainer({ session }: ChatContainerProps) {
           </div>
         )}
       </div>
+
+      {/* Error banner for sessions with error status */}
+      {session.status === 'error' && (
+        <div className="p-4 bg-red-500/10 border-b border-red-500/30">
+          <div className="flex items-start gap-3">
+            <div className="text-red-500 text-xl">⚠</div>
+            <div className="flex-1">
+              <h3 className="text-sm font-bold text-red-400 mb-1">Session Creation Failed</h3>
+              {session.errorMessage ? (
+                <div className="mb-3">
+                  <p className="text-xs text-red-300/80 mb-2">Error details:</p>
+                  <pre className="text-[10px] text-red-300 bg-red-500/10 p-2 border border-red-500/20 overflow-x-auto whitespace-pre-wrap font-mono">
+                    {session.errorMessage}
+                  </pre>
+                </div>
+              ) : (
+                <p className="text-xs text-red-300/80 mb-3">
+                  There was an error setting up this session. This usually happens when cloning a repository fails
+                  (e.g., invalid URL, no access, or network issues).
+                </p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    // Open the terminal panel in Grep
+                    if (!isTerminalPanelOpen) {
+                      toggleTerminalPanel();
+                    }
+                  }}
+                  className="px-3 py-1.5 text-[10px] font-bold bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30"
+                  style={{ borderRadius: 0 }}
+                >
+                  OPEN TERMINAL
+                </button>
+                <button
+                  onClick={async () => {
+                    // Delete the error session
+                    await window.electronAPI.sessions.delete(session.id);
+                    // Reload sessions
+                    const { loadSessions } = useSessionStore.getState();
+                    loadSessions();
+                  }}
+                  className="px-3 py-1.5 text-[10px] font-bold bg-claude-bg hover:bg-claude-surface text-claude-text-secondary border border-claude-border"
+                  style={{ borderRadius: 0 }}
+                >
+                  DELETE SESSION
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Messages */}
       <div ref={messagesContainerRef} className="flex-1 overflow-y-auto overflow-x-hidden min-w-0 relative">
@@ -191,8 +254,13 @@ export default function ChatContainer({ session }: ChatContainerProps) {
         <div className="border-t border-claude-border px-4 py-3 bg-claude-surface">
           <PermissionDialog
             request={currentPermissionRequest}
-            onApprove={(modifiedInput) => approvePermission(session.id, modifiedInput)}
+            onApprove={(modifiedInput, alwaysApprove) => approvePermission(session.id, modifiedInput, alwaysApprove)}
             onDeny={() => denyPermission(session.id)}
+            onGrepIt={() => {
+              // Switch to bypass permissions mode and approve the current request
+              setPermissionMode(session.id, 'bypassPermissions');
+              approvePermission(session.id);
+            }}
           />
         </div>
       )}

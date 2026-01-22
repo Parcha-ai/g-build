@@ -169,6 +169,7 @@ function ElectronApp() {
       // Cmd+K: Quick Search
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
+        console.log('[App] CMD+K pressed - toggling QuickSearch');
         toggleQuickSearch();
         return;
       }

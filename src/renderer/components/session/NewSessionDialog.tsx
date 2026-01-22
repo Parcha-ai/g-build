@@ -34,6 +34,8 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
   const [claudeCliVersion, setClaudeCliVersion] = useState<string | null>(null);
   const [availableBranches, setAvailableBranches] = useState<Array<{ name: string; current: boolean }>>([]);
   const [isBranchDropdownOpen, setIsBranchDropdownOpen] = useState(false);
+  const [branchFilter, setBranchFilter] = useState('');
+  const [manualRepoUrl, setManualRepoUrl] = useState('');
 
   // Check if Claude CLI is installed when dialog opens
   useEffect(() => {
@@ -96,6 +98,15 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
     );
   }, [repos, searchQuery]);
 
+  // Filter branches by search query
+  const filteredBranches = useMemo(() => {
+    if (!branchFilter) return availableBranches;
+    const query = branchFilter.toLowerCase();
+    return availableBranches.filter(
+      (b) => b.name.toLowerCase().includes(query)
+    );
+  }, [availableBranches, branchFilter]);
+
   const handleSelectSource = (source: 'github' | 'local' | 'teleport') => {
     if (source === 'github') {
       setStep('repo');
@@ -144,6 +155,39 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
     setStep('config');
   };
 
+  // Handle manual repo URL entry
+  const handleManualRepoUrl = () => {
+    if (!manualRepoUrl.trim()) return;
+
+    // Extract repo name from URL (e.g., https://github.com/owner/repo.git -> repo)
+    const url = manualRepoUrl.trim();
+    let repoName = 'Repository';
+    let fullName = url;
+
+    // Parse GitHub URL patterns
+    const githubMatch = url.match(/github\.com[/:]([\w-]+)\/([\w.-]+?)(?:\.git)?$/i);
+    if (githubMatch) {
+      repoName = githubMatch[2];
+      fullName = `${githubMatch[1]}/${githubMatch[2]}`;
+    }
+
+    // Create a synthetic repo object
+    const syntheticRepo = {
+      id: Date.now(),
+      name: repoName,
+      fullName,
+      description: '',
+      private: false,
+      defaultBranch: 'main',
+      cloneUrl: url.endsWith('.git') ? url : `${url}.git`,
+    };
+
+    setSelectedRepo(syntheticRepo);
+    setSessionName(repoName);
+    setBranch('main');
+    setStep('config');
+  };
+
   const handleSelectScriptFile = async () => {
     const result = await window.electronAPI.dev.openLocalRepo();
     if (result.success && result.repoPath) {
@@ -159,6 +203,7 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
   };
 
   const [teleportError, setTeleportError] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const handleTeleport = async () => {
     console.log('[Teleport UI] handleTeleport called', { teleportSessionId, teleportDirectory });
@@ -200,6 +245,7 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
     if (!selectedRepo && !selectedFolder) return;
 
     setIsCreating(true);
+    setCreateError(null);
     try {
       let session;
       if (selectedFolder) {
@@ -245,6 +291,27 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
       }
     } catch (error) {
       console.error('Failed to create session:', error);
+      // Even on error, the session may have been created with error status
+      // Reload sessions to show it in the sidebar
+      try {
+        const sessions = await window.electronAPI.sessions.list();
+        // Find the most recent error session that matches our name
+        const errorSession = sessions
+          .filter(s => s.status === 'error' && s.name === sessionName)
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+
+        if (errorSession) {
+          addSession(errorSession);
+          setActiveSession(errorSession.id);
+          handleClose();
+          return;
+        }
+      } catch (reloadError) {
+        console.error('Failed to reload sessions:', reloadError);
+      }
+
+      const errorMessage = error instanceof Error ? error.message : 'Failed to create session';
+      setCreateError(errorMessage);
     } finally {
       setIsCreating(false);
     }
@@ -261,6 +328,9 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
     setIsGitRepo(false);
     setAvailableBranches([]);
     setIsBranchDropdownOpen(false);
+    setBranchFilter('');
+    setManualRepoUrl('');
+    setCreateError(null);
     setTeleportSessionId('');
     setTeleportDirectory('');
     onClose();
@@ -494,6 +564,43 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
               </>
             ) : step === 'repo' ? (
               <>
+                {/* Manual URL input */}
+                <div className="mb-4 p-3 bg-claude-bg border border-claude-border">
+                  <label
+                    className="block text-[10px] font-bold mb-1.5 text-claude-text-secondary"
+                    style={{ letterSpacing: '0.1em' }}
+                  >
+                    ENTER REPO URL
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={manualRepoUrl}
+                      onChange={(e) => setManualRepoUrl(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleManualRepoUrl()}
+                      placeholder="https://github.com/owner/repo"
+                      className="flex-1 px-3 py-2 text-sm font-mono focus:outline-none focus:border-claude-accent bg-claude-surface border border-claude-border text-claude-text"
+                      style={{ borderRadius: 0 }}
+                      autoFocus
+                    />
+                    <button
+                      onClick={handleManualRepoUrl}
+                      disabled={!manualRepoUrl.trim()}
+                      className="px-4 py-2 text-[10px] font-bold bg-claude-accent hover:bg-claude-accent-hover text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                      style={{ borderRadius: 0 }}
+                    >
+                      USE
+                    </button>
+                  </div>
+                </div>
+
+                {/* Divider */}
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="flex-1 h-px bg-claude-border" />
+                  <span className="text-[10px] text-claude-text-secondary">OR SELECT FROM LIST</span>
+                  <div className="flex-1 h-px bg-claude-border" />
+                </div>
+
                 {/* Search - brutalist */}
                 <div className="relative mb-3">
                   <Search
@@ -507,12 +614,11 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
                     placeholder="Search repositories..."
                     className="w-full pl-9 pr-4 py-2 text-sm focus:outline-none focus:border-claude-accent bg-claude-bg border border-claude-border text-claude-text"
                     style={{ borderRadius: 0 }}
-                    autoFocus
                   />
                 </div>
 
                 {/* Repo list - brutalist */}
-                <div className="max-h-[350px] overflow-y-auto space-y-0.5">
+                <div className="max-h-[250px] overflow-y-auto space-y-0.5">
                   {filteredRepos.map((repo) => (
                     <button
                       key={repo.id}
@@ -546,7 +652,7 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
 
                   {filteredRepos.length === 0 && (
                     <div
-                      className="py-8 text-center text-xs text-claude-text-secondary"
+                      className="py-6 text-center text-xs text-claude-text-secondary"
                       style={{ letterSpacing: '0.05em' }}
                     >
                       NO REPOSITORIES FOUND
@@ -587,7 +693,11 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
                       <div className="relative">
                         <button
                           type="button"
-                          onClick={() => setIsBranchDropdownOpen(!isBranchDropdownOpen)}
+                          onClick={() => {
+                            const newState = !isBranchDropdownOpen;
+                            setIsBranchDropdownOpen(newState);
+                            if (!newState) setBranchFilter('');
+                          }}
                           className="w-full px-3 py-2 text-sm font-mono text-left flex items-center justify-between focus:outline-none focus:border-claude-accent bg-claude-bg border border-claude-border text-claude-text"
                           style={{ borderRadius: 0 }}
                         >
@@ -598,26 +708,55 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
                           <ChevronDown size={14} className={`text-claude-text-secondary transition-transform ${isBranchDropdownOpen ? 'rotate-180' : ''}`} />
                         </button>
                         {isBranchDropdownOpen && (
-                          <div className="absolute z-50 w-full mt-1 bg-claude-surface border border-claude-border shadow-lg max-h-48 overflow-y-auto">
-                            {availableBranches.map((b) => (
-                              <button
-                                key={b.name}
-                                type="button"
-                                onClick={() => {
-                                  setBranch(b.name);
-                                  setIsBranchDropdownOpen(false);
-                                }}
-                                className={`w-full px-3 py-2 text-left text-sm font-mono flex items-center gap-2 hover:bg-claude-bg transition-colors ${
-                                  branch === b.name ? 'bg-claude-accent/20 text-claude-accent' : 'text-claude-text'
-                                }`}
-                              >
-                                <GitBranch size={12} className={b.current ? 'text-green-400' : 'text-claude-text-secondary'} />
-                                <span className="truncate">{b.name}</span>
-                                {b.current && (
-                                  <span className="ml-auto text-[9px] text-green-400 font-bold">CURRENT</span>
-                                )}
-                              </button>
-                            ))}
+                          <div className="absolute z-50 w-full mt-1 bg-claude-surface border border-claude-border shadow-lg">
+                            {/* Branch search input */}
+                            <div className="p-2 border-b border-claude-border">
+                              <div className="relative">
+                                <Search
+                                  size={12}
+                                  className="absolute left-2 top-1/2 -translate-y-1/2 text-claude-text-secondary"
+                                />
+                                <input
+                                  type="text"
+                                  value={branchFilter}
+                                  onChange={(e) => setBranchFilter(e.target.value)}
+                                  placeholder="Search branches..."
+                                  className="w-full pl-7 pr-2 py-1.5 text-xs font-mono focus:outline-none bg-claude-bg border border-claude-border text-claude-text"
+                                  style={{ borderRadius: 0 }}
+                                  autoFocus
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              </div>
+                            </div>
+                            {/* Branch list */}
+                            <div className="max-h-40 overflow-y-auto">
+                              {filteredBranches.length > 0 ? (
+                                filteredBranches.map((b) => (
+                                  <button
+                                    key={b.name}
+                                    type="button"
+                                    onClick={() => {
+                                      setBranch(b.name);
+                                      setIsBranchDropdownOpen(false);
+                                      setBranchFilter('');
+                                    }}
+                                    className={`w-full px-3 py-2 text-left text-sm font-mono flex items-center gap-2 hover:bg-claude-bg transition-colors ${
+                                      branch === b.name ? 'bg-claude-accent/20 text-claude-accent' : 'text-claude-text'
+                                    }`}
+                                  >
+                                    <GitBranch size={12} className={b.current ? 'text-green-400' : 'text-claude-text-secondary'} />
+                                    <span className="truncate">{b.name}</span>
+                                    {b.current && (
+                                      <span className="ml-auto text-[9px] text-green-400 font-bold">CURRENT</span>
+                                    )}
+                                  </button>
+                                ))
+                              ) : (
+                                <div className="px-3 py-4 text-center text-xs text-claude-text-secondary">
+                                  No branches match "{branchFilter}"
+                                </div>
+                              )}
+                            </div>
                           </div>
                         )}
                       </div>
@@ -776,6 +915,15 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
                     <div className="p-3 bg-claude-accent/10 border border-claude-accent">
                       <p className="text-[10px] text-claude-text-secondary leading-relaxed">
                         This project already has worktree setup configured in .claudette/. It will run automatically when the worktree is created.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Error display */}
+                  {createError && (
+                    <div className="p-3 bg-red-500/20 border border-red-500/50">
+                      <p className="text-[10px] text-red-400 font-mono whitespace-pre-wrap">
+                        {createError}
                       </p>
                     </div>
                   )}

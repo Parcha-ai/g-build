@@ -98,9 +98,6 @@ export class ElevenLabsVoiceService extends EventEmitter {
   private ws: WebSocket | null = null;
   private isConnected = false;
   private agentId: string | null = null;
-  private reconnectAttempts = 0;
-  private maxReconnectAttempts = 3;
-  private intentionalDisconnect = false;
 
   constructor() {
     super();
@@ -190,7 +187,6 @@ export class ElevenLabsVoiceService extends EventEmitter {
   async connect(config: VoiceSessionConfig): Promise<void> {
     const { agentId, systemPrompt, sessionContext } = config;
     this.agentId = agentId;
-    this.intentionalDisconnect = false;
 
     return new Promise(async (resolve, reject) => {
       try {
@@ -211,7 +207,6 @@ export class ElevenLabsVoiceService extends EventEmitter {
         this.ws.on('open', () => {
           console.log('[ElevenLabsVoice] WebSocket connected');
           this.isConnected = true;
-          this.reconnectAttempts = 0;
 
           // Send conversation initiation data with optional config
           const initData: ConversationInitClientData = {
@@ -264,41 +259,21 @@ export class ElevenLabsVoiceService extends EventEmitter {
           this.isConnected = false;
           this.ws = null;
 
-          // Check for quota/billing errors - don't retry these
+          // Check for quota/billing errors
           const isQuotaError = reasonStr.toLowerCase().includes('quota') ||
                               reasonStr.toLowerCase().includes('limit') ||
                               reasonStr.toLowerCase().includes('billing') ||
                               reasonStr.toLowerCase().includes('exceeded');
 
           if (isQuotaError) {
-            console.log('[ElevenLabsVoice] Quota exceeded - not retrying');
+            console.log('[ElevenLabsVoice] Quota exceeded');
             this.emit('error', 'ElevenLabs quota exceeded. Please check your ElevenLabs account billing or wait for quota reset.');
             this.emit('quota_exceeded');
-            this.emit('disconnected');
-            return;
           }
 
-          if (!this.intentionalDisconnect && this.reconnectAttempts < this.maxReconnectAttempts) {
-            this.reconnectAttempts++;
-            const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), 5000);
-            console.log(`[ElevenLabsVoice] Attempting reconnection ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${delay}ms`);
-            this.emit('reconnecting', { attempt: this.reconnectAttempts, maxAttempts: this.maxReconnectAttempts });
-
-            setTimeout(async () => {
-              try {
-                await this.connect(config);
-                this.emit('reconnected');
-              } catch (error) {
-                console.error('[ElevenLabsVoice] Reconnection failed:', error);
-                if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-                  this.emit('reconnect_failed');
-                  this.emit('disconnected');
-                }
-              }
-            }, delay);
-          } else {
-            this.emit('disconnected');
-          }
+          // NEVER auto-reconnect - user must explicitly click mic button to reconnect
+          // Auto-reconnection was causing voice mode to accidentally trigger
+          this.emit('disconnected');
         });
 
       } catch (error) {
@@ -491,9 +466,6 @@ export class ElevenLabsVoiceService extends EventEmitter {
    * Disconnect from the service
    */
   disconnect(): void {
-    this.intentionalDisconnect = true;
-    this.reconnectAttempts = 0;
-
     if (this.ws) {
       console.log('[ElevenLabsVoice] Disconnecting...');
       this.ws.close();

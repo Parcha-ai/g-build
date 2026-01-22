@@ -75,6 +75,7 @@ export const MicrophoneButton = forwardRef<VoiceModeHandle, MicrophoneButtonProp
     setVoiceModeDisconnected,
     setVoiceModeSpeaking,
     setVoiceModeUserSpeaking,
+    setVoiceModeAudioLevel,
     setVoiceModeTranscript,
     setVoiceModeAgentResponse,
     setVoiceModeError,
@@ -97,6 +98,7 @@ export const MicrophoneButton = forwardRef<VoiceModeHandle, MicrophoneButtonProp
   const currentThinkingContent = useSessionStore((state) => state.currentThinkingContent[sessionId] || '');
   const currentStreamContent = useSessionStore((state) => state.currentStreamContent[sessionId] || '');
   const currentToolCalls = useSessionStore((state) => state.currentToolCalls[sessionId] || EMPTY_TOOL_CALLS);
+  const pendingPermission = useSessionStore((state) => state.pendingPermission[sessionId]);
 
   // Generate context summary for ElevenLabs agent
   const generateContextSummary = useCallback(() => {
@@ -117,6 +119,7 @@ ${messageSummary || 'No messages yet'}`;
     isConnected: hookConnected,
     isConnecting: hookConnecting,
     isSpeaking,
+    audioLevel,
     currentTranscript,
     error,
     connect,
@@ -181,13 +184,42 @@ ${messageSummary || 'No messages yet'}`;
         let currentAction = 'Processing';
         if (latestToolCall) {
           const toolName = latestToolCall.name?.toLowerCase() || '';
-          if (toolName.includes('read')) currentAction = `Reading ${latestToolCall.input?.file_path || 'a file'}`;
-          else if (toolName.includes('write')) currentAction = `Writing to ${latestToolCall.input?.file_path || 'a file'}`;
-          else if (toolName.includes('edit')) currentAction = `Editing ${latestToolCall.input?.file_path || 'a file'}`;
-          else if (toolName.includes('bash')) currentAction = 'Running a command';
-          else if (toolName.includes('glob') || toolName.includes('grep')) currentAction = 'Searching the codebase';
-          else if (toolName.includes('task')) currentAction = 'Working with a sub-agent';
-          else currentAction = `Using ${toolName}`;
+          const input = latestToolCall.input || {};
+          // Extract file path, getting just the filename for brevity
+          const filePath = input.file_path as string | undefined;
+          const fileName = filePath ? filePath.split('/').pop() : undefined;
+
+          if (toolName.includes('read')) {
+            currentAction = fileName ? `Reading ${fileName}` : 'Reading a file';
+          } else if (toolName.includes('write')) {
+            currentAction = fileName ? `Writing ${fileName}` : 'Writing a file';
+          } else if (toolName.includes('edit')) {
+            currentAction = fileName ? `Editing ${fileName}` : 'Editing a file';
+          } else if (toolName.includes('bash')) {
+            // Include the command being run (truncated)
+            const command = input.command as string | undefined;
+            const description = input.description as string | undefined;
+            if (description) {
+              currentAction = description.slice(0, 60);
+            } else if (command) {
+              // Extract first part of command for context
+              const cmdPreview = command.split(/\s+/).slice(0, 4).join(' ');
+              currentAction = `Running: ${cmdPreview.slice(0, 50)}`;
+            } else {
+              currentAction = 'Running a command';
+            }
+          } else if (toolName.includes('glob')) {
+            const pattern = input.pattern as string | undefined;
+            currentAction = pattern ? `Searching for ${pattern}` : 'Searching files';
+          } else if (toolName.includes('grep')) {
+            const pattern = input.pattern as string | undefined;
+            currentAction = pattern ? `Searching for "${pattern}"` : 'Searching code';
+          } else if (toolName.includes('task')) {
+            const desc = input.description as string | undefined;
+            currentAction = desc ? `Sub-agent: ${desc.slice(0, 40)}` : 'Working with a sub-agent';
+          } else {
+            currentAction = `Using ${toolName}`;
+          }
         }
 
         // Extract latest thinking sentence
@@ -195,29 +227,29 @@ ${messageSummary || 'No messages yet'}`;
         const latestThinking = thinkingSentences.length > 0 ? thinkingSentences[thinkingSentences.length - 1].slice(0, 100) : '';
 
         if (sessionIsStreaming) {
+          // Include raw tool call data for the agent to summarize
+          const recentToolCalls = toolCalls.slice(-3).map(tc => ({
+            tool: tc.name,
+            input: tc.input,
+          }));
+
           return JSON.stringify({
             status: 'working',
-            currentAction: currentAction,
-            latestThought: latestThinking,
             toolCallCount: toolCalls.length,
-            message: `Grep is currently ${currentAction.toLowerCase()}. ${latestThinking ? `Thinking: "${latestThinking}..."` : ''}`
+            recentToolCalls: recentToolCalls,
+            latestThought: latestThinking,
           });
         } else {
           // Task complete - get last assistant message
           const lastMessage = sessionMessages[sessionMessages.length - 1];
-          let completionSummary = 'Task completed';
+          let completionContent = '';
           if (lastMessage?.role === 'assistant' && typeof lastMessage.content === 'string') {
-            // Extract first meaningful sentence
-            const content = lastMessage.content;
-            const firstSentence = content.split(/[.!?]\s+/)[0]?.slice(0, 150) || 'Task completed';
-            completionSummary = firstSentence;
+            completionContent = lastMessage.content.slice(0, 500);
           }
 
           return JSON.stringify({
             status: 'complete',
-            currentAction: 'Finished',
-            completionSummary: completionSummary,
-            message: `Done! ${completionSummary}`
+            completionContent: completionContent,
           });
         }
       }
@@ -302,13 +334,22 @@ ${messageSummary || 'No messages yet'}`;
       setVoiceModeConnected(sessionId);
       setAudioMode(sessionId, true);
     } else if (!hookConnected && isConnected) {
+      // Voice mode disconnected (could be unexpected WebSocket close)
+      // Clear audioMode to prevent legacy TTS from running ("ghost mode")
       setVoiceModeDisconnected(sessionId);
+      setAudioMode(sessionId, false);
+      setVoiceModeUserSpeaking(sessionId, false);
     }
-  }, [hookConnected, isConnected, sessionId, setVoiceModeConnected, setVoiceModeDisconnected, setAudioMode]);
+  }, [hookConnected, isConnected, sessionId, setVoiceModeConnected, setVoiceModeDisconnected, setAudioMode, setVoiceModeUserSpeaking]);
 
   useEffect(() => {
     setVoiceModeSpeaking(sessionId, isSpeaking);
   }, [isSpeaking, sessionId, setVoiceModeSpeaking]);
+
+  // Sync audio level to store for wave visualization
+  useEffect(() => {
+    setVoiceModeAudioLevel(sessionId, audioLevel);
+  }, [audioLevel, sessionId, setVoiceModeAudioLevel]);
 
   useEffect(() => {
     if (currentTranscript) {
@@ -377,13 +418,19 @@ ${messageSummary || 'No messages yet'}`;
 
         // If streaming just ended, this is the COMPLETION - announce it clearly
         if (!isStreaming && prevStreamingRef.current) {
-          console.log('[MicrophoneButton] Streaming ended, announcing completion:', summary);
-          // Send clear completion context update
-          updateContext(`TASK COMPLETE: ${summary}\nGrep has finished. Ready for next request.`);
-          // Have the agent announce completion in first person
-          speak(`Here's an update: ${summary}. Please summarize what was just accomplished in the first person, briefly.`);
+          console.log('[MicrophoneButton] Streaming ended, announcing completion');
+
+          // Send raw completion data as JSON context
+          const completionData = JSON.stringify({
+            type: 'task_complete',
+            assistantResponse: typeof lastMessage.content === 'string' ? lastMessage.content.slice(0, 1000) : 'Task completed',
+          });
+          updateContext(completionData);
+
+          // Ask for verbal summary
+          speak('Grep has completed the task. Please provide a brief verbal summary of what was accomplished based on the response I just sent you.');
         } else {
-          // Still streaming - just a progress update
+          // Still streaming - just a progress update (no speak needed)
           updateContext(`Grep progress: ${summary}\nStatus: Still working...`);
         }
       } else {
@@ -429,6 +476,75 @@ ${messageSummary || 'No messages yet'}`;
       }
     };
   }, [hookConnected, isStreaming]);
+
+  // Event-driven status updates - send tool changes to agent for summary
+  const prevToolCallCountRef = useRef<number>(0);
+
+  useEffect(() => {
+    if (!hookConnected || !isStreaming) {
+      prevToolCallCountRef.current = 0;
+      return;
+    }
+
+    // When new tool calls come in, send raw JSON to agent for summarization
+    const currentCount = currentToolCalls.length;
+    if (currentCount > prevToolCallCountRef.current && currentCount > 0) {
+      // Get the new tool calls since last update
+      const newTools = currentToolCalls.slice(prevToolCallCountRef.current);
+
+      // Send raw tool call data as JSON
+      const rawToolData = newTools.map(tool => ({
+        tool: tool.name,
+        input: tool.input,
+      }));
+
+      const contextJson = JSON.stringify({
+        type: 'tool_update',
+        toolCalls: rawToolData,
+      });
+
+      console.log('[MicrophoneButton] Tool update, sending raw JSON:', contextJson.slice(0, 200));
+
+      // First send the raw data as context
+      updateContext(contextJson);
+
+      // Then ask for a verbal update
+      speak('Please provide a brief verbal update based on the tool calls I just sent you.');
+    }
+    prevToolCallCountRef.current = currentCount;
+  }, [hookConnected, isStreaming, currentToolCalls, speak, updateContext]);
+
+  // Announce permission requests vocally
+  const prevPermissionRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!hookConnected || !pendingPermission) {
+      prevPermissionRef.current = null;
+      return;
+    }
+
+    // Only announce if this is a new permission request
+    const permissionId = pendingPermission.requestId;
+    if (permissionId !== prevPermissionRef.current) {
+      prevPermissionRef.current = permissionId;
+
+      // Build a descriptive announcement
+      let announcement = 'Permission needed.';
+      if (pendingPermission.toolName === 'Bash') {
+        const command = pendingPermission.toolInput?.command as string;
+        if (command) {
+          // Extract the main command (first few words)
+          const cmdPreview = command.split(/\s+/).slice(0, 3).join(' ');
+          announcement = `Permission needed to run: ${cmdPreview}`;
+        }
+      } else {
+        announcement = `Permission needed for ${pendingPermission.toolName}`;
+      }
+
+      console.log('[MicrophoneButton] Permission request, announcing:', announcement);
+      speak(`Please provide an update to me. ${announcement}. Tell me that Grep needs permission to proceed.`);
+    }
+  }, [hookConnected, pendingPermission, speak]);
 
   // NOTE: Push-based speech updates removed in favor of polling model.
   // The ElevenLabs agent now calls get_task_status tool to poll for updates.

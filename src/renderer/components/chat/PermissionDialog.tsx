@@ -1,14 +1,27 @@
 import React from 'react';
-import { AlertTriangle, Check, X } from 'lucide-react';
+import { AlertTriangle, Check, X, ShieldCheck, Zap } from 'lucide-react';
 import type { PermissionRequest } from '../../../shared/types';
 
 interface PermissionDialogProps {
   request: PermissionRequest;
-  onApprove: (modifiedInput?: Record<string, unknown>) => void;
+  onApprove: (modifiedInput?: Record<string, unknown>, alwaysApprove?: boolean) => void;
   onDeny: () => void;
+  onGrepIt: () => void;
 }
 
-export default function PermissionDialog({ request, onApprove, onDeny }: PermissionDialogProps) {
+// Extract a wildcard pattern from a command for "always approve"
+// e.g., "gh pr list main" -> "gh pr *"
+// e.g., "npm run build" -> "npm run *"
+function extractCommandPattern(command: string): string {
+  const parts = command.trim().split(/\s+/);
+  if (parts.length <= 2) {
+    return parts[0] + ' *';
+  }
+  // Use first two words + wildcard
+  return parts.slice(0, 2).join(' ') + ' *';
+}
+
+export default function PermissionDialog({ request, onApprove, onDeny, onGrepIt }: PermissionDialogProps) {
   const formatInput = () => {
     const input = request.toolInput || {};
     if (request.toolName === 'Bash') {
@@ -16,6 +29,19 @@ export default function PermissionDialog({ request, onApprove, onDeny }: Permiss
     }
     return JSON.stringify(input, null, 2);
   };
+
+  // Get pattern for "always approve" display
+  const getAlwaysApprovePattern = (): string | null => {
+    if (request.toolName === 'Bash') {
+      const command = request.toolInput?.command as string;
+      if (command) {
+        return extractCommandPattern(command);
+      }
+    }
+    return null;
+  };
+
+  const pattern = getAlwaysApprovePattern();
 
   return (
     <div className="border-2 border-amber-500 bg-amber-500/10 p-4 font-mono">
@@ -68,7 +94,32 @@ export default function PermissionDialog({ request, onApprove, onDeny }: Permiss
           <Check size={14} />
           APPROVE
         </button>
+        {pattern && (
+          <button
+            onClick={() => onApprove(undefined, true)}
+            className="px-4 py-2 text-xs font-bold uppercase bg-blue-900/40 text-blue-400 hover:bg-blue-900/60 transition-colors flex items-center gap-1.5"
+            style={{ letterSpacing: '0.05em', borderRadius: 0 }}
+            title={`Always allow: ${pattern}`}
+          >
+            <ShieldCheck size={14} />
+            ALWAYS APPROVE
+          </button>
+        )}
+        <button
+          onClick={onGrepIt}
+          className="px-4 py-2 text-xs font-bold uppercase bg-purple-900/40 text-purple-400 hover:bg-purple-900/60 transition-colors flex items-center gap-1.5"
+          style={{ letterSpacing: '0.05em', borderRadius: 0 }}
+          title="Switch to autonomous mode - approve all permissions automatically"
+        >
+          <Zap size={14} />
+          GREP IT!
+        </button>
       </div>
+      {pattern && (
+        <div className="mt-2 text-xs text-claude-text-secondary">
+          <span className="text-blue-400">Always approve</span> will allow: <code className="bg-claude-bg px-1">{pattern}</code>
+        </div>
+      )}
     </div>
   );
 }

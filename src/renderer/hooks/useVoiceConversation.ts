@@ -23,6 +23,7 @@ interface VoiceConversationState {
   isSpeaking: boolean;
   currentTranscript: string;
   error: string | null;
+  audioLevel: number;  // 0-1, representing input volume level
 }
 
 /**
@@ -51,6 +52,7 @@ export const useVoiceConversation = ({
     isSpeaking: false,
     currentTranscript: '',
     error: null,
+    audioLevel: 0,
   });
 
   // Audio context and stream refs
@@ -340,6 +342,17 @@ export const useVoiceConversation = ({
         if (!isConnectedRef.current) return;
 
         const inputData = event.inputBuffer.getChannelData(0);
+
+        // Calculate RMS audio level (0-1)
+        let sum = 0;
+        for (let i = 0; i < inputData.length; i++) {
+          sum += inputData[i] * inputData[i];
+        }
+        const rms = Math.sqrt(sum / inputData.length);
+        // Amplify and clamp to 0-1 (RMS values are typically very small)
+        const level = Math.min(1, rms * 3);
+        setState(s => ({ ...s, audioLevel: level }));
+
         const resampled = resample(inputData, audioContext.sampleRate, 16000);
         const int16Data = float32ToInt16(resampled);
 
@@ -420,6 +433,7 @@ export const useVoiceConversation = ({
       isSpeaking: false,
       currentTranscript: '',
       error: null,
+      audioLevel: 0,
     });
   }, [stopRecording, stopPlayback, cleanupListeners]);
 

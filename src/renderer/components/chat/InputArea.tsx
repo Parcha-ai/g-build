@@ -148,12 +148,7 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
   const containerRef = useRef<HTMLDivElement>(null);
   const voiceModeRef = useRef<VoiceModeHandle>(null);
 
-  // Push-to-talk (CMD hotkey) state
-  const [isPushToTalkActive, setIsPushToTalkActive] = useState(false);
-
-  // Double-tap CMD detection for voice mode toggle
-  const lastCmdTapRef = useRef<number>(0);
-  const DOUBLE_TAP_THRESHOLD = 300; // ms
+  // Voice mode state (CMD shortcuts disabled - users click microphone button)
   const { sendMessage, interruptAndSend, isStreaming, permissionMode, cyclePermissionMode, thinkingMode, cycleThinkingMode, currentToolCalls, messages, sessions, messageQueue, selectedModel, setSelectedModel, availableModels, loadAvailableModels } = useSessionStore();
   const { selectedElement, setSelectedElement, sessionInspectorActive, setSessionInspectorActive, toggleBrowserPanel } = useUIStore();
   const { settings: audioSettings, setAudioMode, voiceModeStates } = useAudioStore();
@@ -161,6 +156,16 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
   // Voice mode state for this session
   const voiceState = voiceModeStates[sessionId];
   const isVoiceModeActive = voiceState?.isConnected || false;
+
+  // Animation time for wave visualization
+  const [waveTime, setWaveTime] = useState(0);
+  useEffect(() => {
+    if (!isVoiceModeActive) return;
+    const interval = setInterval(() => {
+      setWaveTime(Date.now() / 200);  // Update ~60fps worth of animation time
+    }, 50);  // 20fps is enough for smooth wave animation
+    return () => clearInterval(interval);
+  }, [isVoiceModeActive]);
 
   // Command/Skill/Agent autocomplete state
   const [showCommands, setShowCommands] = useState(false);
@@ -907,95 +912,9 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
     }
   }, [message]);
 
-  // Voice mode hotkeys:
-  // - Hold CMD: Push-to-talk (start recording while held, stop on release)
-  // - Double-tap CMD: Toggle voice mode on/off
-  useEffect(() => {
-    let cmdHoldTimeout: NodeJS.Timeout | null = null;
-    let isHolding = false;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Only handle CMD key when textarea is focused
-      if (e.key !== 'Meta' || document.activeElement !== textareaRef.current) {
-        return;
-      }
-
-      // Check for double-tap (quick tap-tap)
-      const now = Date.now();
-      const timeSinceLastTap = now - lastCmdTapRef.current;
-
-      if (timeSinceLastTap < DOUBLE_TAP_THRESHOLD && !isPushToTalkActive && !isHolding) {
-        // Double-tap detected - toggle voice mode
-        console.log('[InputArea] Double-tap CMD: toggling voice mode');
-        e.preventDefault();
-        lastCmdTapRef.current = 0; // Reset to prevent triple-tap issues
-        voiceModeRef.current?.toggleVoiceMode();
-        return;
-      }
-
-      // Start hold detection - wait a bit to distinguish from double-tap
-      if (!isPushToTalkActive && !disabled && !isHolding) {
-        cmdHoldTimeout = setTimeout(() => {
-          if (!isPushToTalkActive) {
-            console.log('[InputArea] CMD hold: starting push-to-talk');
-            isHolding = true;
-            setIsPushToTalkActive(true);
-            voiceModeRef.current?.startPushToTalk();
-          }
-        }, 150); // Wait 150ms to distinguish from double-tap
-      }
-    };
-
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key !== 'Meta') return;
-
-      // Clear hold timeout if CMD released quickly (potential double-tap)
-      if (cmdHoldTimeout) {
-        clearTimeout(cmdHoldTimeout);
-        cmdHoldTimeout = null;
-      }
-
-      // Record tap time for double-tap detection
-      if (!isHolding && !isPushToTalkActive) {
-        lastCmdTapRef.current = Date.now();
-      }
-
-      // Stop push-to-talk if it was active
-      if (isPushToTalkActive) {
-        console.log('[InputArea] CMD release: stopping push-to-talk');
-        setIsPushToTalkActive(false);
-        isHolding = false;
-        voiceModeRef.current?.stopPushToTalk();
-      }
-      isHolding = false;
-    };
-
-    // Also handle blur to stop push-to-talk if user clicks away
-    const handleBlur = () => {
-      if (isPushToTalkActive) {
-        console.log('[InputArea] Push-to-talk: stopping due to blur');
-        setIsPushToTalkActive(false);
-        voiceModeRef.current?.stopPushToTalk();
-      }
-      if (cmdHoldTimeout) {
-        clearTimeout(cmdHoldTimeout);
-        cmdHoldTimeout = null;
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    document.addEventListener('keyup', handleKeyUp);
-    textareaRef.current?.addEventListener('blur', handleBlur);
-
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-      document.removeEventListener('keyup', handleKeyUp);
-      textareaRef.current?.removeEventListener('blur', handleBlur);
-      if (cmdHoldTimeout) {
-        clearTimeout(cmdHoldTimeout);
-      }
-    };
-  }, [isPushToTalkActive, disabled, DOUBLE_TAP_THRESHOLD]);
+  // Voice mode hotkeys: DISABLED
+  // CMD shortcuts were causing accidental voice mode triggers
+  // Users should click the microphone button to toggle voice mode
 
   const getAttachmentIcon = (attachment: Attachment) => {
     switch (attachment.type) {
@@ -1117,11 +1036,7 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
       )}
 
       {/* Input row - CLI style */}
-      <div className={`flex items-center gap-2 transition-all duration-300 ${
-        isVoiceModeActive || isPushToTalkActive
-          ? 'ring-2 ring-inset ring-claude-accent/50 shadow-[inset_0_0_20px_rgba(179,136,255,0.15)]'
-          : ''
-      }`}>
+      <div className="flex items-center gap-2">
         {/* Permission mode selector - clickable prompt indicator */}
         {!isVoiceModeActive && (
           <button
@@ -1137,57 +1052,94 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
         {/* Voice Mode UI or Textarea */}
         <div className="flex-1 relative">
           {isVoiceModeActive ? (
-            /* Voice Mode Active - Grep Purple themed display */
+            /* Voice Mode Active - Clean display with animated audio visualization */
             <div className="flex items-center gap-3 py-1 min-h-[24px]">
-              {/* Voice visualization bars - Grep Purple */}
-              <div className="flex items-center gap-0.5 h-5">
-                {[...Array(5)].map((_, i) => {
-                  const isActive = voiceState?.isSpeaking || voiceState?.isUserSpeaking;
+              {/* Audio wave visualization - reacts to voice input */}
+              <div className="flex items-center gap-[2px] h-6">
+                {[...Array(12)].map((_, i) => {
+                  const isAgentTalking = voiceState?.isSpeaking;
+                  const audioLevel = voiceState?.audioLevel || 0;
+                  // Create wave pattern - each bar has slightly different phase
+                  const phase = Math.sin(waveTime + i * 0.5);
+                  // When user is speaking (audioLevel > 0), use audio level to scale
+                  // When idle, use a gentle wave animation
+                  const dynamicScale = isAgentTalking
+                    ? 0.6 + phase * 0.4  // Agent speaking: moderate animated wave
+                    : audioLevel > 0.05
+                      ? 0.3 + audioLevel * 0.7 * (0.8 + Math.abs(phase) * 0.2)  // User speaking: audio-reactive
+                      : 0.25 + Math.abs(phase) * 0.15;  // Idle: gentle pulse
                   return (
                     <div
                       key={i}
-                      className="w-1 bg-claude-accent rounded-full transition-all duration-150"
+                      className={`w-[2px] rounded-full transition-all duration-75 ${
+                        isAgentTalking ? 'bg-claude-accent' : 'bg-green-400'
+                      }`}
                       style={{
-                        height: isActive
-                          ? `${8 + Math.sin(Date.now() / 200 + i) * 8}px`
-                          : '4px',
-                        opacity: isActive ? 1 : 0.5,
-                        animationDelay: `${i * 100}ms`,
+                        height: '16px',
+                        transform: `scaleY(${dynamicScale})`,
+                        opacity: isAgentTalking ? 1 : (audioLevel > 0.05 ? 0.8 + audioLevel * 0.2 : 0.5 + Math.abs(phase) * 0.2),
                       }}
                     />
                   );
                 })}
               </div>
 
-              {/* Agent response display - primary focus */}
+              {/* Status text */}
               <div className="flex-1 overflow-hidden">
                 {voiceState?.agentResponse ? (
-                  <span className="font-mono text-base text-claude-accent truncate block">
+                  <span className={`font-mono text-sm truncate block ${
+                    voiceState?.isSpeaking ? 'grep-speaking-shimmer' : 'text-claude-text'
+                  }`}>
                     {voiceState.agentResponse}
                   </span>
                 ) : voiceState?.isSpeaking ? (
-                  <span className="font-mono text-base text-claude-accent animate-pulse">
+                  <span className="font-mono text-sm text-claude-accent grep-speaking-shimmer">
                     Speaking...
                   </span>
+                ) : voiceState?.transcript ? (
+                  <span className="font-mono text-sm text-green-400">
+                    {voiceState.transcript}
+                  </span>
                 ) : (
-                  <span className="font-mono text-base text-claude-text-secondary italic">
+                  <span className="font-mono text-sm text-green-400/70">
                     Listening...
                   </span>
                 )}
               </div>
+              {/* Shimmer effect for Grep speaking */}
+              <style>{`
+                @keyframes grepShimmer {
+                  0% {
+                    background-position: -200% center;
+                  }
+                  100% {
+                    background-position: 200% center;
+                  }
+                }
+                .grep-speaking-shimmer {
+                  background: linear-gradient(
+                    90deg,
+                    #8B5CF6 0%,
+                    #A78BFA 25%,
+                    #C4B5FD 50%,
+                    #A78BFA 75%,
+                    #8B5CF6 100%
+                  );
+                  background-size: 200% auto;
+                  background-clip: text;
+                  -webkit-background-clip: text;
+                  color: transparent;
+                  animation: grepShimmer 2s linear infinite;
+                }
+              `}</style>
 
-              {/* Voice status indicator - Grep Purple */}
+              {/* Simple status indicator */}
               <div className="flex items-center gap-1.5 text-xs font-mono">
-                <span className="flex h-2 w-2">
-                  <span className={`animate-ping absolute inline-flex h-2 w-2 rounded-full opacity-75 ${
-                    voiceState?.isSpeaking ? 'bg-claude-accent' : 'bg-claude-accent/50'
-                  }`} />
-                  <span className={`relative inline-flex rounded-full h-2 w-2 ${
-                    voiceState?.isSpeaking ? 'bg-claude-accent' : 'bg-claude-accent/70'
-                  }`} />
-                </span>
-                <span className="text-claude-accent uppercase">
-                  {voiceState?.isSpeaking ? 'SPEAKING' : 'VOICE'}
+                <span className={`h-2 w-2 rounded-full ${
+                  voiceState?.isSpeaking ? 'bg-claude-accent' : 'bg-green-400'
+                }`} />
+                <span className={voiceState?.isSpeaking ? 'text-claude-accent' : 'text-green-400'}>
+                  {voiceState?.isSpeaking ? 'SPEAKING' : 'LISTENING'}
                 </span>
               </div>
             </div>
@@ -1384,9 +1336,6 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
             <span>@ FILE</span>
             <span>ENTER SEND</span>
             <span>⌘↵ FORCE</span>
-            <span className={isPushToTalkActive || isVoiceModeActive ? 'text-claude-accent' : ''}>
-              {isPushToTalkActive ? '⌘ LISTENING...' : isVoiceModeActive ? '⌘⌘ EXIT VOICE' : '⌘⌘ VOICE'}
-            </span>
           </>
         )}
         {isStreamingProp && (

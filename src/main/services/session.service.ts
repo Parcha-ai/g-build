@@ -118,13 +118,12 @@ Only return the title, nothing else.`
     // Clone repo to sessions directory
     const repoName = config.repoUrl.split('/').pop()?.replace('.git', '') || sessionId;
     const repoPath = path.join(this.sessionsPath, sessionId, repoName);
-    const worktreePath = path.join(this.sessionsPath, sessionId, 'worktrees', config.branch);
 
     const session: Session = {
       id: sessionId,
       name: config.name,
       repoPath,
-      worktreePath,
+      worktreePath: repoPath, // Will use cloned repo directly (no separate worktree for GitHub clones)
       branch: config.branch,
       status: 'creating',
       ports,
@@ -139,15 +138,33 @@ Only return the title, nothing else.`
 
     try {
       // Clone the repository
+      console.log(`[Session] Cloning repository: ${config.repoUrl} to ${repoPath}`);
       await fs.mkdir(path.dirname(repoPath), { recursive: true });
       await this.gitService.clone(config.repoUrl, repoPath);
+      console.log(`[Session] Clone completed successfully`);
 
-      // Create worktree for the branch
-      await fs.mkdir(path.dirname(worktreePath), { recursive: true });
-      await this.gitService.createWorktree(repoPath, worktreePath, config.branch);
+      // For GitHub clones, use the cloned repo directly (no separate worktree needed)
+      // The cloned repo is already on the default branch
+      // Update session to use repoPath as worktreePath
+      session.worktreePath = repoPath;
+
+      // If a specific branch was requested and it's different from current, check it out
+      const git = require('simple-git').default(repoPath);
+      const currentBranch = await git.revparse(['--abbrev-ref', 'HEAD']);
+      if (config.branch !== currentBranch.trim()) {
+        console.log(`[Session] Checking out branch: ${config.branch}`);
+        try {
+          await git.checkout(config.branch);
+        } catch (checkoutError) {
+          // Branch might not exist remotely, try creating it
+          console.log(`[Session] Branch ${config.branch} not found, creating new branch`);
+          await git.checkoutLocalBranch(config.branch);
+        }
+      }
+      console.log(`[Session] Using repo at: ${repoPath}`);
 
       // Create .grep directory with setup script
-      const grepDir = path.join(worktreePath, '.grep');
+      const grepDir = path.join(repoPath, '.grep');
       await fs.mkdir(grepDir, { recursive: true });
       await fs.writeFile(
         path.join(grepDir, 'setup.sh'),
@@ -155,10 +172,23 @@ Only return the title, nothing else.`
         { mode: 0o755 }
       );
 
+      // Update session in store with correct worktreePath
+      this.store.set(`sessions.${session.id}`, session);
+
       this.updateSessionStatus(session, 'stopped');
       return session;
     } catch (error) {
-      this.updateSessionStatus(session, 'error');
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error(`[Session] Failed to create session: ${errorMessage}`);
+      console.error(`[Session] Full error:`, error);
+
+      // Store error message in session
+      session.errorMessage = errorMessage;
+      session.status = 'error';
+      session.updatedAt = new Date();
+      this.store.set(`sessions.${session.id}`, session);
+      this.emit('statusChanged', session);
+
       throw error;
     }
   }

@@ -113,7 +113,7 @@ export function registerClaudeHandlers(ipcMain: IpcMain): void {
       // Ensure claudeService has the mainWindow reference for browser updates
       claudeService.setMainWindow(mainWindow);
 
-      console.log('[Claude IPC] sendMessage received with attachments:', attachments?.length || 0, 'model:', model);
+      console.log('[Claude IPC] sendMessage received with attachments:', attachments?.length || 0, 'model:', model, 'permissionMode:', permissionMode);
       if (attachments) {
         attachments.forEach((a, i) => {
           console.log(`[Claude IPC] Attachment ${i}: type=${a?.type}, name=${a?.name}, content length=${a?.content?.length || 0}`);
@@ -255,8 +255,10 @@ export function registerClaudeHandlers(ipcMain: IpcMain): void {
     }
   );
 
-  ipcMain.on(IPC_CHANNELS.CLAUDE_CANCEL, (_, sessionId: string) => {
+  ipcMain.handle(IPC_CHANNELS.CLAUDE_CANCEL, async (_, sessionId: string) => {
     claudeService.cancelQuery(sessionId);
+    // Small delay to ensure the abort signal has propagated through the generator
+    await new Promise(resolve => setTimeout(resolve, 50));
   });
 
   ipcMain.handle(IPC_CHANNELS.CLAUDE_GET_MESSAGES, async (_, sessionId: string) => {
@@ -264,8 +266,8 @@ export function registerClaudeHandlers(ipcMain: IpcMain): void {
   });
 
   // Handle permission responses from user
-  ipcMain.handle(IPC_CHANNELS.CLAUDE_PERMISSION_RESPONSE, async (_, response: { requestId: string; approved: boolean; modifiedInput?: Record<string, unknown> }) => {
-    console.log('[Claude IPC] Permission response received:', response.requestId, 'approved:', response.approved);
+  ipcMain.handle(IPC_CHANNELS.CLAUDE_PERMISSION_RESPONSE, async (_, response: { requestId: string; approved: boolean; modifiedInput?: Record<string, unknown>; alwaysApprove?: boolean }) => {
+    console.log('[Claude IPC] Permission response received:', response.requestId, 'approved:', response.approved, 'alwaysApprove:', response.alwaysApprove);
     claudeService.handlePermissionResponse(response);
   });
 
@@ -329,6 +331,17 @@ export function registerClaudeHandlers(ipcMain: IpcMain): void {
   ipcMain.handle(IPC_CHANNELS.CLAUDE_PLAN_APPROVAL_RESPONSE, async (_, response: PlanApprovalResponse) => {
     console.log('[Claude IPC] Plan approval response:', response);
     claudeService.handlePlanApprovalResponse(response);
+  });
+
+  // Inject message into active query (for async queue processing)
+  ipcMain.handle(IPC_CHANNELS.CLAUDE_INJECT_MESSAGE, async (_, sessionId: string, message: string, attachments?: Attachment[]) => {
+    console.log('[Claude IPC] Inject message request for session:', sessionId);
+    return claudeService.injectMessage(sessionId, message, attachments);
+  });
+
+  // Check if session has an active query
+  ipcMain.handle(IPC_CHANNELS.CLAUDE_HAS_ACTIVE_QUERY, async (_, sessionId: string) => {
+    return claudeService.hasActiveQuery(sessionId);
   });
 }
 
