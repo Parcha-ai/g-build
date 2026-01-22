@@ -18,7 +18,7 @@ export default function SessionList() {
   const [newSessionDialogOpen, setNewSessionDialogOpen] = useState(false);
   const [newSessionInitialPath, setNewSessionInitialPath] = useState<string>('');
   const [newSessionInitialName, setNewSessionInitialName] = useState<string>('');
-  const [showAllActiveSessions, setShowAllActiveSessions] = useState(false);
+  const [showAllRecentSessions, setShowAllRecentSessions] = useState(false);
 
   // Track sessions that have been visited during this app instance
   const [visitedSessionIds, setVisitedSessionIds] = useState<Set<string>>(new Set());
@@ -88,9 +88,9 @@ export default function SessionList() {
     return sorted;
   }, [sessions.map(s => s.id).join(',')]); // Only re-sort when session IDs change (add/remove)
 
-  // Get active sessions (running sessions + recently used)
-  // Show discovered Claude Code sessions by default
-  const activeSessions = useMemo(() => {
+  // Get recent sessions (running sessions + recently used)
+  // Limited to 10 most recent for the "Recent Sessions" section
+  const recentSessions = useMemo(() => {
     // Get running sessions and recently updated sessions (within last 7 days)
     const sevenDaysAgo = Date.now() - (7 * 24 * 60 * 60 * 1000);
 
@@ -106,7 +106,8 @@ export default function SessionList() {
         if (b.id === activeSessionId) return 1;
         // Then sort by most recently used
         return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-      });
+      })
+      .slice(0, 10); // Limit to 10 most recent
   }, [sessions, visitedSessionIds, activeSessionId]);
 
   const handleCreateSessionInFolder = (projectPath: string, projectName: string) => {
@@ -158,17 +159,17 @@ export default function SessionList() {
 
   return (
     <div className="pb-2">
-      {/* Active Sessions section */}
-      {activeSessions.length > 0 && (
+      {/* Recent Sessions section */}
+      {recentSessions.length > 0 && (
         <div className="mb-3">
           <div className="px-3 py-1.5 flex items-center gap-2">
             <Zap size={12} className="text-amber-400" />
             <span className="text-[10px] font-bold text-claude-text-secondary uppercase tracking-wider">
-              Active Sessions {activeSessions.length > 5 && `(${activeSessions.length})`}
+              Recent Sessions {recentSessions.length > 5 && `(${recentSessions.length})`}
             </span>
           </div>
           <div>
-            {activeSessions.slice(0, showAllActiveSessions ? undefined : 5).map((session) => (
+            {recentSessions.slice(0, showAllRecentSessions ? undefined : 5).map((session) => (
               <SessionCard
                 key={session.id}
                 session={session}
@@ -178,13 +179,13 @@ export default function SessionList() {
             ))}
 
             {/* Show more/less button */}
-            {activeSessions.length > 5 && (
+            {recentSessions.length > 5 && (
               <button
-                onClick={() => setShowAllActiveSessions(!showAllActiveSessions)}
+                onClick={() => setShowAllRecentSessions(!showAllRecentSessions)}
                 className="w-full px-3 py-1.5 text-[10px] font-bold text-claude-accent hover:bg-claude-surface-hover transition-colors uppercase"
                 style={{ letterSpacing: '0.05em' }}
               >
-                {showAllActiveSessions ? '▲ SHOW LESS' : `▼ SHOW ${activeSessions.length - 5} MORE`}
+                {showAllRecentSessions ? '▲ SHOW LESS' : `▼ SHOW ${recentSessions.length - 5} MORE`}
               </button>
             )}
           </div>

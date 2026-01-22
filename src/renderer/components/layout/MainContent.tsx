@@ -11,7 +11,7 @@ import ExtensionsExplorer from '../extensions/ExtensionsExplorer';
 import PlanPanel from '../plan/PlanPanel';
 import SetupProgress from '../session/SetupProgress';
 import EmptyState from './EmptyState';
-import { X, GripVertical, PanelLeftClose, PanelRightClose, Columns2 } from 'lucide-react';
+import { X, GripVertical, Smartphone, Monitor } from 'lucide-react';
 
 export default function MainContent() {
   const { activeSessionId, sessions, setupProgress } = useSessionStore();
@@ -28,7 +28,8 @@ export default function MainContent() {
     togglePlanPanel,
     setTerminalHeight,
     splitRatio,
-    cycleSplitRatio,
+    viewportMode,
+    toggleViewportMode,
     // Multi-session browser support
     sessionBrowsersEnabled,
     enableSessionBrowser,
@@ -106,30 +107,14 @@ export default function MainContent() {
 
   const flexBasis = getFlexBasis();
 
-  // Get the icon for the current split ratio
-  const getSplitIcon = () => {
-    switch (splitRatio) {
-      case 'main-focus':
-        return <PanelRightClose size={14} />;
-      case 'side-focus':
-        return <PanelLeftClose size={14} />;
-      case 'equal':
-      default:
-        return <Columns2 size={14} />;
-    }
+  // Get the icon for viewport mode
+  const getViewportIcon = () => {
+    return viewportMode === 'mobile' ? <Smartphone size={14} /> : <Monitor size={14} />;
   };
 
-  // Get tooltip text for current split ratio
-  const getSplitTooltip = () => {
-    switch (splitRatio) {
-      case 'main-focus':
-        return 'Main 2/3, Side 1/3';
-      case 'side-focus':
-        return 'Main 1/3, Side 2/3';
-      case 'equal':
-      default:
-        return 'Equal split';
-    }
+  // Get tooltip text for viewport mode
+  const getViewportTooltip = () => {
+    return viewportMode === 'mobile' ? 'Mobile view (375px) - Click for Desktop' : 'Desktop view - Click for Mobile';
   };
 
   // Handle panel horizontal resize
@@ -205,9 +190,18 @@ export default function MainContent() {
       {/* Main panel area */}
       <div className="flex-1 flex overflow-hidden">
         {/* Primary content - chat or setup progress */}
+        {/* In mobile browser mode, use flex-grow to take remaining space */}
         <div
           className="flex flex-col overflow-hidden min-w-0 transition-all duration-200"
-          style={{ flexBasis: hasSidePanel ? flexBasis.main : '100%', flexShrink: 0, flexGrow: 0 }}
+          style={{
+            flexBasis: hasSidePanel
+              ? (viewportMode === 'mobile' && isBrowserPanelOpen && !isGitPanelOpen && !isEditorOpen && !isExtensionsPanelOpen && !isPlanPanelOpen)
+                ? 'auto'  // Let it grow to fill remaining space
+                : flexBasis.main
+              : '100%',
+            flexShrink: 0,
+            flexGrow: (viewportMode === 'mobile' && isBrowserPanelOpen && !isGitPanelOpen && !isEditorOpen && !isExtensionsPanelOpen && !isPlanPanelOpen) ? 1 : 0,
+          }}
         >
           {isSessionSetup ? (
             <SetupProgress session={activeSession} progress={activeSetupProgress} />
@@ -226,17 +220,16 @@ export default function MainContent() {
               }`}
               onMouseDown={handlePanelResizeMouseDown}
             >
-              {/* Split toggle button - appears on hover */}
+              {/* Viewport toggle button - appears on hover */}
               <button
                 onClick={(e) => {
                   e.stopPropagation();
-                  setCustomSplitRatio(null); // Reset custom ratio
-                  cycleSplitRatio();
+                  toggleViewportMode();
                 }}
                 className="p-0.5 my-1 rounded hover:bg-claude-surface-hover text-claude-text-secondary hover:text-claude-accent transition-colors opacity-0 group-hover:opacity-100"
-                title={getSplitTooltip()}
+                title={getViewportTooltip()}
               >
-                {getSplitIcon()}
+                {getViewportIcon()}
               </button>
 
               {/* Drag handle visual */}
@@ -246,9 +239,16 @@ export default function MainContent() {
             </div>
 
             {/* Side panel container - horizontal layout for browser + extensions */}
+            {/* In mobile mode with only browser panel, use fixed width for mobile device frame */}
             <div
               className="flex overflow-hidden bg-claude-surface transition-all duration-200"
-              style={{ flexBasis: flexBasis.side, flexShrink: 0, flexGrow: 0 }}
+              style={{
+                flexBasis: (viewportMode === 'mobile' && isBrowserPanelOpen && !isGitPanelOpen && !isEditorOpen && !isExtensionsPanelOpen && !isPlanPanelOpen)
+                  ? '420px'  // 375px device + padding + border
+                  : flexBasis.side,
+                flexShrink: 0,
+                flexGrow: 0,
+              }}
             >
               {/* Left side of side panel: Browser, Git, Editor (stacked vertically) */}
               <div className={`flex flex-col overflow-hidden ${isExtensionsPanelOpen && isBrowserPanelOpen ? 'flex-1' : 'w-full'}`}>
@@ -258,6 +258,11 @@ export default function MainContent() {
                     <div className="h-10 flex items-center justify-between px-3 border-b border-claude-border bg-claude-surface">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium">Browser Preview</span>
+                        {viewportMode === 'mobile' && (
+                          <span className="text-xs text-purple-400 font-medium">
+                            375 × 667
+                          </span>
+                        )}
                         {sessionsWithBrowsers.length > 1 && (
                           <span className="text-xs text-claude-text-secondary">
                             ({sessionsWithBrowsers.length} browsers)
@@ -271,25 +276,32 @@ export default function MainContent() {
                         <X size={14} />
                       </button>
                     </div>
-                    <div className="flex-1 overflow-hidden relative">
-                      {/* Render a BrowserPreview for each session with browser enabled */}
-                      {/* Only the active session's browser is visible, others stay mounted but hidden */}
-                      {sessionsWithBrowsers.map(session => (
-                        <div
-                          key={session.id}
-                          className="absolute inset-0"
-                          style={{ display: session.id === activeSessionId ? 'block' : 'none' }}
-                        >
-                          <BrowserPreview
-                            session={session}
-                            isVisible={session.id === activeSessionId}
-                          />
-                        </div>
-                      ))}
-                      {/* Fallback for active session if not in sessionsWithBrowsers yet */}
-                      {activeSession && !sessionBrowsersEnabled[activeSession.id] && (
-                        <BrowserPreview session={activeSession} isVisible={true} />
-                      )}
+                    {/* Browser content area - centred mobile viewport when in mobile mode */}
+                    <div className={`flex-1 overflow-hidden relative ${viewportMode === 'mobile' ? 'bg-gray-900 flex items-start justify-center pt-4' : ''}`}>
+                      {/* Mobile device frame when in mobile mode */}
+                      <div
+                        className={`relative ${viewportMode === 'mobile' ? 'rounded-xl overflow-hidden shadow-2xl border-4 border-gray-700' : 'absolute inset-0'}`}
+                        style={viewportMode === 'mobile' ? { width: 375, height: 667 } : undefined}
+                      >
+                        {/* Render a BrowserPreview for each session with browser enabled */}
+                        {/* Only the active session's browser is visible, others stay mounted but hidden */}
+                        {sessionsWithBrowsers.map(session => (
+                          <div
+                            key={session.id}
+                            className="absolute inset-0"
+                            style={{ display: session.id === activeSessionId ? 'block' : 'none' }}
+                          >
+                            <BrowserPreview
+                              session={session}
+                              isVisible={session.id === activeSessionId}
+                            />
+                          </div>
+                        ))}
+                        {/* Fallback for active session if not in sessionsWithBrowsers yet */}
+                        {activeSession && !sessionBrowsersEnabled[activeSession.id] && (
+                          <BrowserPreview session={activeSession} isVisible={true} />
+                        )}
+                      </div>
                     </div>
                   </div>
                 )}

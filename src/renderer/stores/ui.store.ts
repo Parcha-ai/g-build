@@ -3,6 +3,9 @@ import { create } from 'zustand';
 // Split ratio: 'equal' = 50/50, 'main-focus' = 2/3 main, 'side-focus' = 2/3 side panel
 type SplitRatio = 'equal' | 'main-focus' | 'side-focus';
 
+// Browser viewport mode: 'desktop' = full width, 'mobile' = 375px width (iPhone)
+type ViewportMode = 'desktop' | 'mobile';
+
 interface UIState {
   isSidebarOpen: boolean;
   sidebarWidth: number;
@@ -18,6 +21,7 @@ interface UIState {
   hasApiKey: boolean | null; // null = not checked yet, false = missing, true = present
   selectedElement: unknown | null;
   splitRatio: SplitRatio;
+  viewportMode: ViewportMode;
 
   // Multi-session browser support: track which sessions have browsers enabled
   sessionBrowsersEnabled: Record<string, boolean>;
@@ -41,6 +45,8 @@ interface UIState {
   setSelectedElement: (element: unknown | null) => void;
   cycleSplitRatio: () => void;
   setSplitRatio: (ratio: SplitRatio) => void;
+  toggleViewportMode: () => void;
+  setViewportMode: (mode: ViewportMode) => void;
   openSettings: () => void;
   closeSettings: () => void;
   checkApiKey: () => Promise<boolean>;
@@ -73,6 +79,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   hasApiKey: null,
   selectedElement: null,
   splitRatio: 'equal',
+  viewportMode: 'desktop',
 
   // Multi-session browser state
   sessionBrowsersEnabled: {},
@@ -98,6 +105,10 @@ export const useUIStore = create<UIState>((set, get) => ({
     return { splitRatio: order[nextIndex] };
   }),
   setSplitRatio: (ratio) => set({ splitRatio: ratio }),
+  toggleViewportMode: () => set((state) => ({
+    viewportMode: state.viewportMode === 'desktop' ? 'mobile' : 'desktop',
+  })),
+  setViewportMode: (mode) => set({ viewportMode: mode }),
   openSettings: () => set({ isSettingsOpen: true }),
   closeSettings: () => set({ isSettingsOpen: false }),
   checkApiKey: async () => {
