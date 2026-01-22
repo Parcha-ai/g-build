@@ -180,6 +180,8 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
       private: false,
       defaultBranch: 'main',
       cloneUrl: url.endsWith('.git') ? url : `${url}.git`,
+      sshUrl: '', // Not needed for HTTPS clone
+      updatedAt: new Date().toISOString(),
     };
 
     setSelectedRepo(syntheticRepo);
