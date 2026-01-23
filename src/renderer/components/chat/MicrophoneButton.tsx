@@ -427,8 +427,8 @@ ${messageSummary || 'No messages yet'}`;
           });
           updateContext(completionData);
 
-          // Ask for verbal summary
-          speak('Grep has completed the task. Please provide a brief verbal summary of what was accomplished based on the response I just sent you.');
+          // Ask for verbal summary with specific details
+          speak('Grep has completed the task. Provide a SPECIFIC summary of what was done - mention exact files modified, functions created, or actions taken. For example: "Grep updated the login component to add validation" not just "the task is done". Be concrete.');
         } else {
           // Still streaming - just a progress update (no speak needed)
           updateContext(`Grep progress: ${summary}\nStatus: Still working...`);
@@ -597,8 +597,8 @@ ${messageSummary || 'No messages yet'}`;
       console.log('[MicrophoneButton] Thinking update (sentence + 10s):', recentThinking.slice(0, 100));
       updateContext(contextJson);
 
-      // Ask for update but remind not to repeat
-      speak('Thinking update received. Briefly summarize what Grep is considering. Do not repeat yourself if you already mentioned this.');
+      // Ask for update with specific details - not high-level summaries
+      speak('Thinking update received. Provide a SPECIFIC update on what Grep is doing - mention the exact approach, specific files, function names, or steps being taken. For example: "Grep is now reading the config file to find the database settings" not "Grep is thinking about the configuration". Be concrete and detailed. Do not repeat yourself.');
 
       // Track what we sent and when
       lastSpokenThoughtRef.current = recentThinking;
