@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Brain, Loader2, ChevronRight, ChevronDown } from 'lucide-react';
+import { Brain, Loader2, ChevronRight, ChevronDown, Zap } from 'lucide-react';
 
 interface ThinkingBlockProps {
   content: string;
   isStreaming?: boolean;
+  isCompacting?: boolean;
 }
 
-export default function ThinkingBlock({ content, isStreaming }: ThinkingBlockProps) {
+export default function ThinkingBlock({ content, isStreaming, isCompacting }: ThinkingBlockProps) {
   // Start collapsed by default - user can expand if they want to see full thinking
   const [isExpanded, setIsExpanded] = useState(false);
   const expandedRef = useRef<HTMLDivElement>(null);
@@ -20,14 +21,19 @@ export default function ThinkingBlock({ content, isStreaming }: ThinkingBlockPro
 
   // Get last 2-3 lines for collapsed preview (shows latest updates)
   const previewLines = (() => {
+    if (isCompacting) return 'Summarizing conversation context...';
     if (!content) return 'Processing...';
     const lines = content.split('\n').filter(l => l.trim());
     const lastLines = lines.slice(-3); // Last 3 lines
     return lastLines.join('\n');
   })();
 
-  // Status dot color - same pattern as ToolCallCard
-  const dotColor = isStreaming ? 'bg-purple-500' : 'bg-purple-500';
+  // Colors change based on compacting state
+  const accentColor = isCompacting ? 'text-blue-400' : 'text-purple-400';
+  const dotColor = isCompacting ? 'bg-blue-500' : 'bg-purple-500';
+  const borderColor = isCompacting ? 'border-blue-500/30' : 'border-purple-500/30';
+  const label = isCompacting ? 'Compacting' : 'Thinking';
+  const Icon = isCompacting ? Zap : Brain;
 
   return (
     <div className="font-mono text-sm">
@@ -38,29 +44,29 @@ export default function ThinkingBlock({ content, isStreaming }: ThinkingBlockPro
       >
         {/* Expand/collapse chevron */}
         {isExpanded ? (
-          <ChevronDown size={12} className="text-purple-400 flex-shrink-0" />
+          <ChevronDown size={12} className={`${accentColor} flex-shrink-0`} />
         ) : (
-          <ChevronRight size={12} className="text-purple-400 flex-shrink-0" />
+          <ChevronRight size={12} className={`${accentColor} flex-shrink-0`} />
         )}
 
         {/* Status dot */}
         <span
-          className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor} ${isStreaming ? 'animate-pulse' : ''}`}
+          className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor} ${isStreaming || isCompacting ? 'animate-pulse' : ''}`}
         />
 
-        {/* Brain icon and label */}
-        <Brain size={14} className="text-purple-400 flex-shrink-0" />
-        <span className="font-semibold text-purple-400">Thinking</span>
+        {/* Icon and label */}
+        <Icon size={14} className={`${accentColor} flex-shrink-0`} />
+        <span className={`font-semibold ${accentColor}`}>{label}</span>
 
-        {/* Loading spinner for active thinking */}
-        {isStreaming && (
-          <Loader2 size={12} className="text-purple-500 animate-spin flex-shrink-0" />
+        {/* Loading spinner for active thinking/compacting */}
+        {(isStreaming || isCompacting) && (
+          <Loader2 size={12} className={`${accentColor} animate-spin flex-shrink-0`} />
         )}
       </button>
 
       {/* Preview (collapsed) - shows last 2-3 lines streaming in */}
-      {!isExpanded && content && (
-        <div className="ml-6 mt-1 p-2 bg-claude-surface/30 border-l-2 border-purple-500/30">
+      {!isExpanded && (content || isCompacting) && (
+        <div className={`ml-6 mt-1 p-2 bg-claude-surface/30 border-l-2 ${borderColor}`}>
           <pre className="whitespace-pre-wrap text-xs text-claude-text-secondary/80 leading-relaxed overflow-hidden">
             {previewLines}
           </pre>
@@ -68,13 +74,13 @@ export default function ThinkingBlock({ content, isStreaming }: ThinkingBlockPro
       )}
 
       {/* Expanded content - fixed height with scroll, won't push input down */}
-      {isExpanded && content && (
+      {isExpanded && (content || isCompacting) && (
         <div
           ref={expandedRef}
-          className="ml-6 mt-1 p-2 bg-claude-surface/30 border-l-2 border-purple-500/30 max-h-64 overflow-y-auto scroll-smooth"
+          className={`ml-6 mt-1 p-2 bg-claude-surface/30 border-l-2 ${borderColor} max-h-64 overflow-y-auto scroll-smooth`}
         >
           <pre className="whitespace-pre-wrap text-sm text-claude-text-secondary leading-relaxed overflow-x-auto">
-            {content}
+            {isCompacting ? 'Summarizing conversation context to optimize token usage...' : content}
           </pre>
         </div>
       )}

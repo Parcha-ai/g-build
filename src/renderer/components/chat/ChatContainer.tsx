@@ -7,7 +7,7 @@ import InputArea from './InputArea';
 import PermissionDialog from './PermissionDialog';
 import QuestionDialog from './QuestionDialog';
 import ThinkingBlock from './ThinkingBlock';
-import CompactionBar from './CompactionBar';
+// CompactionBar removed - compaction status now shown in ThinkingBlock
 import { SoundVisualization } from './SoundVisualization';
 import { ArrowDown } from 'lucide-react';
 import type { Session } from '../../../shared/types';
@@ -233,16 +233,15 @@ export default function ChatContainer({ session }: ChatContainerProps) {
         )}
       </div>
 
-      {/* Active thinking section - separate from message history */}
-      {isSessionStreaming && thinkingContent && (
+      {/* Active thinking/compacting section - separate from message history */}
+      {((isSessionStreaming && thinkingContent) || (currentCompactionStatus?.isCompacting)) && (
         <div className="border-t border-claude-border bg-claude-surface/30 px-4 py-2">
-          <ThinkingBlock content={thinkingContent} isStreaming={true} />
+          <ThinkingBlock
+            content={thinkingContent}
+            isStreaming={isSessionStreaming && !!thinkingContent}
+            isCompacting={currentCompactionStatus?.isCompacting}
+          />
         </div>
-      )}
-
-      {/* Smart Compact / Compaction status bar */}
-      {currentCompactionStatus && currentCompactionStatus.isCompacting && (
-        <CompactionBar status={currentCompactionStatus} />
       )}
 
       {/* Permission request - prominent above input */}
