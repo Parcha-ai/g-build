@@ -220,23 +220,16 @@ export default function ChatContainer({ session }: ChatContainerProps) {
 
         <div ref={messagesEndRef} />
 
-        {/* Floating action button to scroll to bottom - brutalist terminal style */}
+        {/* Scroll to bottom button - simple square in bottom right */}
         {showScrollButton && (
-          <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-50">
-            <button
-              onClick={scrollToBottom}
-              className={`px-4 py-2 border-2 border-claude-accent bg-claude-surface hover:bg-claude-surface-hover text-claude-accent transition-all flex items-center gap-2 ${
-                hasNewContent ? 'animate-pulse shadow-lg shadow-claude-accent/50' : ''
-              }`}
-              style={{ borderRadius: 0 }}
-              title="Scroll to bottom"
-            >
-              <span className="text-xs font-bold uppercase" style={{ letterSpacing: '0.05em' }}>
-                {hasNewContent ? 'NEW' : '▼'}
-              </span>
-              <ArrowDown size={14} />
-            </button>
-          </div>
+          <button
+            onClick={scrollToBottom}
+            className="absolute bottom-2 right-2 z-50 w-7 h-7 flex items-center justify-center bg-claude-bg-secondary border border-claude-border hover:bg-claude-accent hover:border-claude-accent hover:text-black text-claude-accent transition-colors"
+            style={{ borderRadius: 0 }}
+            title="Scroll to bottom"
+          >
+            <ArrowDown size={14} />
+          </button>
         )}
       </div>
 

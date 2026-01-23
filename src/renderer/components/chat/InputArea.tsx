@@ -1141,130 +1141,131 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
         </div>
       )}
 
-      {/* Input row - CLI style */}
-      <div className="flex items-center gap-2">
-        {/* Permission mode selector - clickable prompt indicator */}
-        {!isVoiceModeActive && (
-          <button
-            onClick={() => cyclePermissionMode(sessionId)}
-            disabled={disabled || isSending}
-            className={`font-bold text-base select-none transition-colors hover:opacity-80 disabled:opacity-40 ${modeConfig.color}`}
-            title={`${modeConfig.description} (click to change)`}
-          >
-            {modeConfig.prompt}
-          </button>
-        )}
+      {/* Voice Mode Status Bar - shown above input when voice mode is active */}
+      {isVoiceModeActive && (
+        <div className="mb-2 px-2 py-1.5 bg-claude-bg-secondary/50 border border-claude-border flex items-center gap-3 min-w-0">
+          {/* Audio wave visualization - reacts to voice input */}
+          <div className="flex items-center gap-[2px] h-5 flex-shrink-0">
+            {[...Array(12)].map((_, i) => {
+              const isAgentTalking = voiceState?.isSpeaking;
+              const audioLevel = voiceState?.audioLevel || 0;
+              const phase = Math.sin(waveTime + i * 0.5);
+              const dynamicScale = isAgentTalking
+                ? 0.6 + phase * 0.4
+                : audioLevel > 0.05
+                  ? 0.3 + audioLevel * 0.7 * (0.8 + Math.abs(phase) * 0.2)
+                  : 0.25 + Math.abs(phase) * 0.15;
+              return (
+                <div
+                  key={i}
+                  className={`w-[2px] rounded-full transition-all duration-75 ${
+                    isAgentTalking ? 'bg-claude-accent' : 'bg-green-400'
+                  }`}
+                  style={{
+                    height: '14px',
+                    transform: `scaleY(${dynamicScale})`,
+                    opacity: isAgentTalking ? 1 : (audioLevel > 0.05 ? 0.8 + audioLevel * 0.2 : 0.5 + Math.abs(phase) * 0.2),
+                  }}
+                />
+              );
+            })}
+          </div>
 
-        {/* Voice Mode UI or Textarea */}
-        <div className="flex-1 relative min-w-0">
-          {isVoiceModeActive ? (
-            /* Voice Mode Active - Clean display with animated audio visualization */
-            <div className="flex items-start gap-3 py-1 min-h-[24px] min-w-0">
-              {/* Audio wave visualization - reacts to voice input */}
-              <div className="flex items-center gap-[2px] h-6">
-                {[...Array(12)].map((_, i) => {
-                  const isAgentTalking = voiceState?.isSpeaking;
-                  const audioLevel = voiceState?.audioLevel || 0;
-                  // Create wave pattern - each bar has slightly different phase
-                  const phase = Math.sin(waveTime + i * 0.5);
-                  // When user is speaking (audioLevel > 0), use audio level to scale
-                  // When idle, use a gentle wave animation
-                  const dynamicScale = isAgentTalking
-                    ? 0.6 + phase * 0.4  // Agent speaking: moderate animated wave
-                    : audioLevel > 0.05
-                      ? 0.3 + audioLevel * 0.7 * (0.8 + Math.abs(phase) * 0.2)  // User speaking: audio-reactive
-                      : 0.25 + Math.abs(phase) * 0.15;  // Idle: gentle pulse
-                  return (
-                    <div
-                      key={i}
-                      className={`w-[2px] rounded-full transition-all duration-75 ${
-                        isAgentTalking ? 'bg-claude-accent' : 'bg-green-400'
-                      }`}
-                      style={{
-                        height: '16px',
-                        transform: `scaleY(${dynamicScale})`,
-                        opacity: isAgentTalking ? 1 : (audioLevel > 0.05 ? 0.8 + audioLevel * 0.2 : 0.5 + Math.abs(phase) * 0.2),
-                      }}
-                    />
-                  );
-                })}
-              </div>
-
-              {/* Status text - wraps to multiple lines */}
-              <div className="flex-1 min-w-0">
-                {voiceState?.agentResponse ? (
-                  <span className={`font-mono text-sm block ${
-                    voiceState?.isSpeaking ? 'grep-speaking-shimmer' : 'text-claude-text'
-                  }`}>
-                    {voiceState.agentResponse}
-                  </span>
-                ) : voiceState?.isSpeaking ? (
-                  <span className="font-mono text-sm text-claude-accent grep-speaking-shimmer block">
-                    Speaking...
-                  </span>
-                ) : voiceState?.transcript ? (
-                  <span className="font-mono text-sm text-green-400 block">
-                    {voiceState.transcript}
-                  </span>
-                ) : (
-                  <span className="font-mono text-sm text-green-400/70 block">
-                    Listening...
-                  </span>
-                )}
-              </div>
-              {/* Shimmer effect for Grep speaking */}
-              <style>{`
-                @keyframes grepShimmer {
-                  0% {
-                    background-position: -200% center;
-                  }
-                  100% {
-                    background-position: 200% center;
-                  }
-                }
-                .grep-speaking-shimmer {
-                  background: linear-gradient(
-                    90deg,
-                    #8B5CF6 0%,
-                    #A78BFA 25%,
-                    #C4B5FD 50%,
-                    #A78BFA 75%,
-                    #8B5CF6 100%
-                  );
-                  background-size: 200% auto;
-                  background-clip: text;
-                  -webkit-background-clip: text;
-                  color: transparent;
-                  animation: grepShimmer 2s linear infinite;
-                }
-              `}</style>
-
-              {/* Simple status indicator */}
-              <div className="flex items-center gap-1.5 text-xs font-mono">
-                <span className={`h-2 w-2 rounded-full ${
-                  voiceState?.isSpeaking ? 'bg-claude-accent' : 'bg-green-400'
-                }`} />
-                <span className={voiceState?.isSpeaking ? 'text-claude-accent' : 'text-green-400'}>
-                  {voiceState?.isSpeaking ? 'SPEAKING' : 'LISTENING'}
+          {/* Status text - shows agent response or listening state, scrolls to end */}
+          <div className="flex-1 min-w-0 overflow-hidden">
+            {voiceState?.agentResponse ? (
+              <div
+                className="overflow-x-auto hide-scrollbar"
+                ref={(el) => { if (el) el.scrollLeft = el.scrollWidth; }}
+              >
+                <span className={`font-mono text-sm whitespace-nowrap inline-block ${
+                  voiceState?.isSpeaking ? 'grep-speaking-shimmer' : 'text-claude-text'
+                }`}>
+                  {voiceState.agentResponse}
                 </span>
               </div>
-            </div>
-          ) : (
-            /* Regular Textarea */
-            <textarea
-              ref={textareaRef}
-              value={message}
-              onChange={handleInputChange}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              placeholder={disabled ? 'session inactive...' : isSending ? `type to queue message${hasQueuedMessages ? ` (${queuedMessages.length} queued)` : ''}...` : 'type here... (@ to mention, paste images)'}
-              disabled={disabled}
-              className={`w-full py-0 resize-none focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed min-h-[24px] max-h-[200px] font-mono bg-transparent text-base text-claude-text placeholder:text-claude-text-secondary leading-6 caret-claude-accent ${
-                useAudioStore.getState().recordingStates[sessionId]?.isRecording ? 'border-l-2 border-red-500 pl-2' : ''
-              } ${isSending ? 'opacity-60' : ''}`}
-              rows={1}
-            />
-          )}
+            ) : voiceState?.isSpeaking ? (
+              <span className="font-mono text-sm text-claude-accent grep-speaking-shimmer block">
+                Speaking...
+              </span>
+            ) : voiceState?.transcript ? (
+              <div
+                className="overflow-x-auto hide-scrollbar"
+                ref={(el) => { if (el) el.scrollLeft = el.scrollWidth; }}
+              >
+                <span className="font-mono text-sm text-green-400 whitespace-nowrap inline-block">
+                  {voiceState.transcript}
+                </span>
+              </div>
+            ) : (
+              <span className="font-mono text-sm text-green-400/70 block">
+                Listening...
+              </span>
+            )}
+          </div>
+
+          {/* Shimmer effect and hide scrollbar */}
+          <style>{`
+            .hide-scrollbar {
+              -ms-overflow-style: none;
+              scrollbar-width: none;
+            }
+            .hide-scrollbar::-webkit-scrollbar {
+              display: none;
+            }
+            @keyframes grepShimmer {
+              0% { background-position: -200% center; }
+              100% { background-position: 200% center; }
+            }
+            .grep-speaking-shimmer {
+              background: linear-gradient(90deg, #8B5CF6 0%, #A78BFA 25%, #C4B5FD 50%, #A78BFA 75%, #8B5CF6 100%);
+              background-size: 200% auto;
+              background-clip: text;
+              -webkit-background-clip: text;
+              color: transparent;
+              animation: grepShimmer 2s linear infinite;
+            }
+          `}</style>
+
+          {/* Status indicator */}
+          <div className="flex items-center gap-1.5 text-xs font-mono flex-shrink-0">
+            <span className={`h-2 w-2 rounded-full ${
+              voiceState?.isSpeaking ? 'bg-claude-accent' : 'bg-green-400'
+            }`} />
+            <span className={voiceState?.isSpeaking ? 'text-claude-accent' : 'text-green-400'}>
+              {voiceState?.isSpeaking ? 'SPEAKING' : 'LISTENING'}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Input row - CLI style - always visible */}
+      <div className="flex items-center gap-2">
+        {/* Permission mode selector - clickable prompt indicator */}
+        <button
+          onClick={() => cyclePermissionMode(sessionId)}
+          disabled={disabled || isSending}
+          className={`font-bold text-base select-none transition-colors hover:opacity-80 disabled:opacity-40 ${modeConfig.color}`}
+          title={`${modeConfig.description} (click to change)`}
+        >
+          {modeConfig.prompt}
+        </button>
+
+        {/* Textarea - always available for text input */}
+        <div className="flex-1 relative min-w-0">
+          <textarea
+            ref={textareaRef}
+            value={message}
+            onChange={handleInputChange}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            placeholder={disabled ? 'session inactive...' : isVoiceModeActive ? 'add context or type message...' : isSending ? `type to queue message${hasQueuedMessages ? ` (${queuedMessages.length} queued)` : ''}...` : 'type here... (@ to mention, paste images)'}
+            disabled={disabled}
+            className={`w-full py-0 resize-none focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed min-h-[24px] max-h-[200px] font-mono bg-transparent text-base text-claude-text placeholder:text-claude-text-secondary leading-6 caret-claude-accent ${
+              useAudioStore.getState().recordingStates[sessionId]?.isRecording ? 'border-l-2 border-red-500 pl-2' : ''
+            } ${isSending ? 'opacity-60' : ''}`}
+            rows={1}
+          />
         </div>
 
         {/* Compact attachment buttons */}

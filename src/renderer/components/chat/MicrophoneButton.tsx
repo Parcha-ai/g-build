@@ -427,8 +427,14 @@ ${messageSummary || 'No messages yet'}`;
           });
           updateContext(completionData);
 
-          // Ask for verbal summary with specific details
-          speak('Grep has completed the task. Provide a SPECIFIC summary of what was done - mention exact files modified, functions created, or actions taken. For example: "Grep updated the login component to add validation" not just "the task is done". Be concrete.');
+          // Ask for verbal summary - delay if agent is currently speaking to avoid overlap
+          const completionMessage = 'Grep has completed the task. Provide a SPECIFIC summary of what was done - mention exact files modified, functions created, or actions taken. For example: "Grep updated the login component to add validation" not just "the task is done". Be concrete.';
+          if (!isSpeaking) {
+            speak(completionMessage);
+          } else {
+            // Delay speak request to allow current speech to finish
+            setTimeout(() => speak(completionMessage), 3000);
+          }
         } else {
           // Still streaming - just a progress update (no speak needed)
           updateContext(`Grep progress: ${summary}\nStatus: Still working...`);
@@ -547,10 +553,21 @@ ${messageSummary || 'No messages yet'}`;
   }, [hookConnected, pendingPermission, speak]);
 
   // Push thinking content updates - triggered on sentence completion with 10s minimum interval
+  // IMPORTANT: Don't call speak() while agent is already speaking to avoid overlap
   const prevThinkingContentRef = useRef<string>('');
   const lastSpokenThoughtRef = useRef<string>('');
   const lastUpdateTimeRef = useRef<number>(0);
   const prevSentenceCountRef = useRef<number>(0);
+  const pendingSpeakRef = useRef<boolean>(false);
+
+  // When agent finishes speaking, check if we have a pending speak request
+  useEffect(() => {
+    if (!isSpeaking && pendingSpeakRef.current && hookConnected) {
+      console.log('[MicrophoneButton] Agent finished speaking, sending queued speak request');
+      pendingSpeakRef.current = false;
+      speak('You have new thinking updates. Provide a SPECIFIC update on what Grep is doing - mention exact files, functions, or steps. Be concrete. Do not repeat yourself.');
+    }
+  }, [isSpeaking, hookConnected, speak]);
 
   useEffect(() => {
     if (!hookConnected || !isStreaming || !currentThinkingContent) {
@@ -560,6 +577,7 @@ ${messageSummary || 'No messages yet'}`;
         lastSpokenThoughtRef.current = '';
         lastUpdateTimeRef.current = 0;
         prevSentenceCountRef.current = 0;
+        pendingSpeakRef.current = false;
       }
       return;
     }
@@ -595,23 +613,32 @@ ${messageSummary || 'No messages yet'}`;
       });
 
       console.log('[MicrophoneButton] Thinking update (sentence + 10s):', recentThinking.slice(0, 100));
+
+      // Always send context update
       updateContext(contextJson);
 
-      // Ask for update with specific details - not high-level summaries
-      speak('Thinking update received. Provide a SPECIFIC update on what Grep is doing - mention the exact approach, specific files, function names, or steps being taken. For example: "Grep is now reading the config file to find the database settings" not "Grep is thinking about the configuration". Be concrete and detailed. Do not repeat yourself.');
+      // Only call speak() if agent is NOT currently speaking
+      if (!isSpeaking) {
+        speak('Thinking update received. Provide a SPECIFIC update on what Grep is doing - mention the exact approach, specific files, function names, or steps being taken. For example: "Grep is now reading the config file to find the database settings" not "Grep is thinking about the configuration". Be concrete and detailed. Do not repeat yourself.');
+      } else {
+        // Queue the speak request for when agent finishes
+        console.log('[MicrophoneButton] Agent is speaking, queueing speak request');
+        pendingSpeakRef.current = true;
+      }
 
       // Track what we sent and when
       lastSpokenThoughtRef.current = recentThinking;
       prevThinkingContentRef.current = currentThinkingContent;
       lastUpdateTimeRef.current = now;
     }
-  }, [hookConnected, isStreaming, currentThinkingContent, updateContext, speak]);
+  }, [hookConnected, isStreaming, currentThinkingContent, isSpeaking, updateContext, speak]);
 
-  // NOTE: Thinking updates are the PRIMARY verbal communication channel.
-  // - Thinking updates: Triggered on sentence completion, minimum 10s between updates
-  // - Tool calls: Sent as silent context only (no verbal prompt, reduces chattiness)
-  // - Permission requests: Still announced verbally (important for user action)
-  // The agent should prioritize thinking content and avoid repeating itself.
+  // NOTE: Speech debouncing to avoid overlapping audio:
+  // - Thinking updates: Only speak() if agent is NOT speaking, otherwise queue for later
+  // - Tool calls: Silent context only (no speak)
+  // - Permission requests: Speak immediately (important, can interrupt)
+  // - Task completion: Speak immediately if not speaking, otherwise delay 3s
+  // Context updates are always sent regardless of speaking state.
 
   const handleClick = useCallback(async () => {
     if (isConnected) {
