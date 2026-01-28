@@ -24,9 +24,10 @@ export class AuthService {
   private readonly REDIRECT_URI = 'grep://oauth/callback';
 
   constructor() {
+    // Note: We don't use encryptionKey as it triggers macOS Keychain prompts
+    // The data is still protected by file system permissions and app sandboxing
     this.store = new Store({
       name: 'grep-auth',
-      encryptionKey: 'grep-secure-v1',
     });
   }
 
