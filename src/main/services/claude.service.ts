@@ -15,6 +15,7 @@ import { documentService } from './document.service';
 import { sshService } from './ssh.service';
 import { memoryService, MemoryCategory } from './memory.service';
 import { qmdService } from './qmd.service';
+import { mcpService } from './mcp.service';
 
 interface StreamEvent {
   type: 'text_delta' | 'thinking_delta' | 'tool_use' | 'tool_result' | 'message_complete' | 'error' | 'system' | 'permission_request' | 'compaction_status' | 'compaction_complete' | 'plan_content';
@@ -71,6 +72,7 @@ export class ClaudeService {
   private pendingQuestions: Map<string, PendingQuestion> = new Map();
   private pendingPermissions: Map<string, PendingPermission> = new Map();
   private pendingPlanApprovals: Map<string, PendingPlanApproval> = new Map();
+  private sessionPlanFiles: Map<string, { content: string; filePath: string }> = new Map(); // Cache plan content per session
   private mainWindow: BrowserWindow | null = null;
   private browserMcpServers: Map<string, any> = new Map();
 
@@ -1759,6 +1761,16 @@ ${memoriesPrompt}
         'claudette-browser': this.getBrowserMcpServer(sessionId),
       };
 
+      // Load user-installed MCP servers from Claudette's electron-store
+      // This runs on EVERY message, so new MCP servers are picked up automatically
+      try {
+        const userMcpServers = mcpService.getUserMcpServersConfig();
+        Object.assign(mcpServersConfig, userMcpServers);
+        console.log('[Claude Service] Loaded user MCP servers:', Object.keys(userMcpServers));
+      } catch (error) {
+        console.error('[Claude Service] Error loading user MCP servers:', error);
+      }
+
       // Check if QMD is available for semantic codebase search
       // Only add for local sessions (not SSH) since QMD runs locally
       // Requires: 1) Global setting enabled, 2) Project preference enabled
@@ -1879,28 +1891,38 @@ ${memoriesPrompt}
               try {
                 console.log('[Claude Service] ExitPlanMode called, requesting user approval');
 
-                // Find the plan file that was written most recently
-                const plansDir = path.join(os.homedir(), '.claude', 'plans');
+                // Use the cached plan content for this session (set when plan file was written)
+                const cachedPlan = this.sessionPlanFiles.get(sessionId);
                 let planContent = '';
                 let planFilePath = '';
 
-                if (fs.existsSync(plansDir)) {
-                  const planFiles = fs.readdirSync(plansDir)
-                    .filter(f => f.endsWith('.md'))
-                    .map(f => ({
-                      name: f,
-                      path: path.join(plansDir, f),
-                      mtime: fs.statSync(path.join(plansDir, f)).mtime.getTime(),
-                    }))
-                    .sort((a, b) => b.mtime - a.mtime);
+                if (cachedPlan) {
+                  planContent = cachedPlan.content;
+                  planFilePath = cachedPlan.filePath;
+                  console.log('[Claude Service] Using cached plan from:', planFilePath);
+                } else {
+                  // Fallback: Find the plan file that was written most recently
+                  console.log('[Claude Service] No cached plan found, scanning directory (this should not happen)');
+                  const plansDir = path.join(os.homedir(), '.claude', 'plans');
 
-                  if (planFiles.length > 0) {
-                    planFilePath = planFiles[0].path;
-                    planContent = fs.readFileSync(planFilePath, 'utf-8');
+                  if (fs.existsSync(plansDir)) {
+                    const planFiles = fs.readdirSync(plansDir)
+                      .filter(f => f.endsWith('.md'))
+                      .map(f => ({
+                        name: f,
+                        path: path.join(plansDir, f),
+                        mtime: fs.statSync(path.join(plansDir, f)).mtime.getTime(),
+                      }))
+                      .sort((a, b) => b.mtime - a.mtime);
+
+                    if (planFiles.length > 0) {
+                      planFilePath = planFiles[0].path;
+                      planContent = fs.readFileSync(planFilePath, 'utf-8');
+                    }
                   }
                 }
 
-                // If no plan file found, use a placeholder message
+                // If still no plan content, use a placeholder message
                 if (!planContent) {
                   planContent = 'Plan content not found. The assistant wants to proceed with the implementation.';
                 }
@@ -1913,6 +1935,9 @@ ${memoriesPrompt}
 
                 if (approved) {
                   console.log('[Claude Service] Plan approved by user');
+                  // Clean up cached plan content
+                  this.sessionPlanFiles.delete(sessionId);
+
                   // Restore the pre-plan permission mode so the agent can execute its plan
                   const prePlanMode = this.prePlanPermissionModes.get(sessionId) || 'acceptEdits';
                   this.sessionPermissionModes.set(sessionId, prePlanMode);
@@ -1930,6 +1955,9 @@ ${memoriesPrompt}
                   return { behavior: 'allow' as const, updatedInput: input };
                 } else {
                   console.log('[Claude Service] Plan rejected by user');
+                  // Clean up cached plan content
+                  this.sessionPlanFiles.delete(sessionId);
+
                   return {
                     behavior: 'deny' as const,
                     message: 'Plan was not approved by the user. Please revise the plan based on user feedback.',
@@ -2352,6 +2380,9 @@ ${memoriesPrompt}
                         try {
                           const planContent = fs.readFileSync(filePath, 'utf-8');
                           console.log(`[Claude Service] Plan file written: ${filePath}`);
+
+                          // Cache the plan content for this session (for later ExitPlanMode use)
+                          this.sessionPlanFiles.set(sessionId, { content: planContent, filePath });
 
                           // Emit to renderer via IPC
                           if (this.mainWindow) {

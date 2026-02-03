@@ -7,6 +7,7 @@ import MentionAutocomplete, { type Mention } from './MentionAutocomplete';
 import CommandAutocomplete from './CommandAutocomplete';
 import { MicrophoneButton, type VoiceModeHandle } from './MicrophoneButton';
 import { MessageQueuePanel } from './MessageQueuePanel';
+import { VoiceModeErrorBoundary } from './VoiceModeErrorBoundary';
 
 // Permission mode config for UI - using terminal-style prompts
 const PERMISSION_MODE_CONFIG: Record<PermissionMode, { prompt: string; label: string; color: string; description: string }> = {
@@ -1184,32 +1185,33 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
               <Square size={14} fill="currentColor" />
             </button>
           )}
-          <MicrophoneButton
-            ref={voiceModeRef}
-            sessionId={sessionId}
-            onInterimTranscript={(text) => {
-              // Stream real-time transcript into the input box
-              setMessage(text);
-            }}
-            onTranscriptionComplete={async (text) => {
-              console.log('[InputArea] onTranscriptionComplete called with:', text, 'voiceModeActive:', isVoiceModeActive);
+          <VoiceModeErrorBoundary>
+            <MicrophoneButton
+              ref={voiceModeRef}
+              sessionId={sessionId}
+              onInterimTranscript={(text) => {
+                // Stream real-time transcript into the input box
+                setMessage(text);
+              }}
+              onTranscriptionComplete={async (text) => {
+                console.log('[InputArea] onTranscriptionComplete called with:', text, 'voiceModeActive:', isVoiceModeActive);
 
-              // In voice mode (ElevenLabs), send directly without trigger word
-              // This enables the hybrid flow where transcripts go straight to Grep
-              if (isVoiceModeActive && !disabled && !isSending && text.trim()) {
-                console.log('[InputArea] Voice mode active - sending directly to Grep');
+                // In voice mode (ElevenLabs), send directly without trigger word
+                // This enables the hybrid flow where transcripts go straight to Grep
+                if (isVoiceModeActive && !disabled && !isSending && text.trim()) {
+                  console.log('[InputArea] Voice mode active - sending directly to Grep');
 
-                // Activate audio mode for auto-play TTS on response
-                setAudioMode(sessionId, true);
+                  // Activate audio mode for auto-play TTS on response
+                  setAudioMode(sessionId, true);
 
-                // Clear input and send
-                setMessage('');
+                  // Clear input and send
+                  setMessage('');
 
-                // Build message with file context if there are attachments
-                let messageToSend = text.trim();
-                const fileMentions = attachments.filter((a) => a.type === 'mention');
-                if (fileMentions.length > 0) {
-                  const fileContext = fileMentions.map((m) => `@${m.name}`).join(', ');
+                  // Build message with file context if there are attachments
+                  let messageToSend = text.trim();
+                  const fileMentions = attachments.filter((a) => a.type === 'mention');
+                  if (fileMentions.length > 0) {
+                    const fileContext = fileMentions.map((m) => `@${m.name}`).join(', ');
                   messageToSend = `[Files: ${fileContext}]\n\n${messageToSend}`;
                 }
 
@@ -1274,6 +1276,7 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
             }}
             disabled={disabled}
           />
+          </VoiceModeErrorBoundary>
         </div>
       </div>
 

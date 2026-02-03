@@ -296,5 +296,130 @@ export interface PlanApprovalResponse {
   approved: boolean;
 }
 
+// MCP Server types for display and management
+export interface MCPServerTool {
+  name: string;
+  description: string;
+}
+
+export interface MCPServerInfo {
+  id: string;
+  name: string;
+  description: string;
+  version: string;
+  status: 'active' | 'inactive' | 'error';
+  type: 'sdk' | 'stdio' | 'http';
+  tools: MCPServerTool[];
+  errorMessage?: string;
+  projectEnabled?: boolean;
+}
+
+// Marketplace types for browsing and installing MCP servers (from MCP Registry)
+export interface MCPRegistryAuthField {
+  key: string;
+  label: string;
+  secret: boolean;
+}
+
+export interface MCPRegistryPackage {
+  registry_name: string; // 'npm' or 'docker'
+  name: string;
+  version?: string;
+  runtime?: string;
+  transport?: Array<{ type: string }>;
+  environment_variables?: Array<{
+    name: string;
+    description?: string;
+    required?: boolean;
+    isSecret?: boolean;
+  }>;
+}
+
+export interface MCPRegistryRemote {
+  transport_type: string; // 'streamable-http', 'sse', etc.
+  url: string;
+  headers?: Array<{
+    name: string;
+    required?: boolean;
+    isSecret?: boolean;
+  }>;
+}
+
+export interface MarketplaceMCPServer {
+  // Core identifiers
+  id: string; // e.g., "ai.exa/exa"
+  name: string; // Display name (from title or derived from id)
+  description: string;
+  version: string;
+
+  // Source info
+  repositoryUrl?: string;
+  websiteUrl?: string;
+  license?: string;
+
+  // Installation methods
+  packages?: MCPRegistryPackage[];
+  remotes?: MCPRegistryRemote[];
+
+  // Auth configuration (extracted from packages/remotes)
+  authFields: MCPRegistryAuthField[];
+  requiresAuth: boolean;
+
+  // Display metadata
+  icon?: string;
+  keywords?: string[];
+  isLatest?: boolean;
+  publishedAt?: string;
+}
+
+// Plugin marketplace types
+export interface PopularMarketplace {
+  name: string;
+  repo: string;
+  description: string;
+  official: boolean;
+}
+
+export interface PluginMarketplace {
+  name: string;
+  source: {
+    source: 'github' | 'git' | 'local';
+    repo?: string; // For github source
+    url?: string; // For git source
+    path?: string; // For local source
+  };
+  installLocation: string;
+  lastUpdated?: string;
+}
+
+export interface InstalledPlugin {
+  id: string; // e.g., "code-review@claude-plugins-official"
+  name: string;
+  version: string;
+  scope: 'user' | 'project';
+  enabled: boolean;
+  marketplace: string;
+}
+
+export interface MarketplacePlugin {
+  id: string; // Plugin name (e.g., "code-review")
+  name: string; // Display name
+  description: string;
+  marketplace: string; // Marketplace name (e.g., "claude-plugins-official")
+  marketplaceRepo?: string; // GitHub repo (e.g., "anthropics/claude-plugins-official")
+
+  // Content types
+  hasCommands?: boolean;
+  hasSkills?: boolean;
+  hasAgents?: boolean;
+  hasHooks?: boolean;
+  hasMcpServers?: boolean;
+
+  // Status
+  installed?: boolean;
+  enabled?: boolean;
+  installedVersion?: string;
+}
+
 // Export audio types
 export * from './audio';

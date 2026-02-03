@@ -52,4 +52,8 @@ export function registerSessionHandlers(ipcMain: IpcMain): void {
   ipcMain.handle(IPC_CHANNELS.SESSION_UPDATE, async (_, sessionId: string, updates) => {
     return sessionService.updateSession(sessionId, updates);
   });
+
+  ipcMain.handle(IPC_CHANNELS.SESSION_REWIND_FORK, async (_, sessionId: string, rewindToMessageId: string) => {
+    return sessionService.rewindAndForkSession(sessionId, rewindToMessageId);
+  });
 }

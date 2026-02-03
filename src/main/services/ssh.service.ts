@@ -1815,6 +1815,90 @@ SETTINGS_EOF`);
     } catch (err) {
       console.warn('[SSH Service] Could not read local settings:', err);
     }
+
+    // Sync MCP server configs to remote ~/.claude/config.json
+    try {
+      const { mcpService } = await import('./mcp.service');
+      const mcpServers = mcpService.getUserMcpServersConfig();
+
+      if (Object.keys(mcpServers).length > 0) {
+        console.log('[SSH Service] Syncing MCP servers to remote:', Object.keys(mcpServers));
+
+        // Read existing remote config or create new one
+        let remoteConfig: any = {};
+        try {
+          const stdout = await this.execCommand(client, 'cat ~/.claude/config.json 2>/dev/null || echo "{}"');
+          remoteConfig = JSON.parse(stdout.trim() || '{}');
+        } catch {
+          remoteConfig = {};
+        }
+
+        // Merge MCP servers into remote config
+        remoteConfig.mcpServers = mcpServers;
+
+        // Write config to remote
+        const configJson = JSON.stringify(remoteConfig, null, 2);
+        const escapedConfig = configJson.replace(/'/g, "'\\''");
+        await this.execCommand(client, `cat > ~/.claude/config.json << 'CONFIG_EOF'
+${configJson}
+CONFIG_EOF`);
+
+        console.log('[SSH Service] MCP servers synced to remote ~/.claude/config.json');
+      }
+    } catch (err) {
+      console.warn('[SSH Service] Could not sync MCP servers to remote:', err);
+    }
+  }
+
+  /**
+   * Sync MCP servers to a specific SSH session's remote machine
+   * Used when MCP servers are installed while SSH session is active
+   */
+  async syncMcpServersToSession(sessionId: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const connection = this.connections.get(sessionId);
+      if (!connection) {
+        return { success: false, error: 'Session not found' };
+      }
+
+      const client = connection.client;
+      const { mcpService } = await import('./mcp.service');
+      const mcpServers = mcpService.getUserMcpServersConfig();
+
+      if (Object.keys(mcpServers).length === 0) {
+        console.log('[SSH Service] No MCP servers to sync');
+        return { success: true };
+      }
+
+      console.log('[SSH Service] Syncing MCP servers to session:', sessionId, Object.keys(mcpServers));
+
+      // Read existing remote config or create new one
+      let remoteConfig: any = {};
+      try {
+        const stdout = await this.execCommand(client, 'cat ~/.claude/config.json 2>/dev/null || echo "{}"');
+        remoteConfig = JSON.parse(stdout.trim() || '{}');
+      } catch {
+        remoteConfig = {};
+      }
+
+      // Merge MCP servers into remote config
+      remoteConfig.mcpServers = mcpServers;
+
+      // Write config to remote
+      const configJson = JSON.stringify(remoteConfig, null, 2);
+      await this.execCommand(client, `cat > ~/.claude/config.json << 'CONFIG_EOF'
+${configJson}
+CONFIG_EOF`);
+
+      console.log('[SSH Service] MCP servers synced to remote for session:', sessionId);
+      return { success: true };
+    } catch (error) {
+      console.error('[SSH Service] Error syncing MCP servers:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
   }
 }
 

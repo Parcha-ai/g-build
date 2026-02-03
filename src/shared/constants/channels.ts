@@ -16,6 +16,7 @@ export const IPC_CHANNELS = {
   SESSION_LIST: 'session:list',
   SESSION_GET: 'session:get',
   SESSION_UPDATE: 'session:update',
+  SESSION_REWIND_FORK: 'session:rewind-fork',
   SESSION_STATUS_CHANGED: 'session:status-changed',
   SESSION_LIST_UPDATED: 'session:list-updated',
 
@@ -206,6 +207,26 @@ export const IPC_CHANNELS = {
   MEMORY_FORGET: 'memory:forget',
   MEMORY_LIST: 'memory:list',
   MEMORY_SYNC: 'memory:sync',
+
+  // MCP channels (MCP server management)
+  MCP_GET_SERVERS: 'mcp:get-servers',
+  MCP_GET_MARKETPLACE: 'mcp:get-marketplace',
+  MCP_INSTALL_SERVER: 'mcp:install-server',
+  MCP_INSTALL_SERVER_RAW: 'mcp:install-server-raw',
+  MCP_UNINSTALL_SERVER: 'mcp:uninstall-server',
+
+  // Plugin channels (plugin marketplace management)
+  PLUGIN_GET_POPULAR_MARKETPLACES: 'plugin:get-popular-marketplaces',
+  PLUGIN_GET_MARKETPLACES: 'plugin:get-marketplaces',
+  PLUGIN_GET_INSTALLED: 'plugin:get-installed',
+  PLUGIN_GET_AVAILABLE: 'plugin:get-available',
+  PLUGIN_INSTALL: 'plugin:install',
+  PLUGIN_UNINSTALL: 'plugin:uninstall',
+  PLUGIN_ENABLE: 'plugin:enable',
+  PLUGIN_DISABLE: 'plugin:disable',
+  PLUGIN_ADD_MARKETPLACE: 'plugin:add-marketplace',
+  PLUGIN_REMOVE_MARKETPLACE: 'plugin:remove-marketplace',
+  PLUGIN_UPDATE_MARKETPLACE: 'plugin:update-marketplace',
 
   // QMD channels (semantic codebase search)
   QMD_GET_STATUS: 'qmd:get-status',

@@ -596,6 +596,17 @@ export const useVoiceConversation = ({
     };
   }, [cleanupListeners]);
 
+  /**
+   * Send user activity signal (for keeping agent responsive)
+   */
+  const sendUserActivity = useCallback(() => {
+    if (!isConnectedRef.current) {
+      return;
+    }
+    // Send via IPC to main process
+    window.electronAPI.voice.sendUserActivity?.();
+  }, []);
+
   return {
     ...state,
     connect,
@@ -604,5 +615,6 @@ export const useVoiceConversation = ({
     stopRecording,
     speak,
     updateContext,
+    sendUserActivity,
   };
 };

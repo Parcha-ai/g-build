@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal, Sparkles, Bot, ChevronDown, ChevronRight, Copy, ExternalLink, User, FolderGit, Edit3, Plus, X, Loader2, Check, AlertCircle, FileText, Github } from 'lucide-react';
-import type { Command, Skill, AgentDefinition } from '../../../shared/types';
+import { Terminal, Sparkles, Bot, ChevronDown, ChevronRight, Copy, User, FolderGit, Edit3, Plus, X, Loader2, Check, AlertCircle, FileText, Github, Server, Store, Wrench } from 'lucide-react';
+import type { Command, Skill, AgentDefinition, MCPServerInfo } from '../../../shared/types';
+import UnifiedMarketplace from './UnifiedMarketplace';
 
 // Default template for new skills
 const SKILL_TEMPLATE = `# My Skill
@@ -29,15 +30,21 @@ interface ExtensionsExplorerProps {
   projectPath?: string;
 }
 
-type ExtensionType = 'commands' | 'skills' | 'agents';
+type ExtensionType = 'commands' | 'skills' | 'agents' | 'mcpServers';
+type TabType = 'installed' | 'marketplace';
 
 export default function ExtensionsExplorer({ sessionId, projectPath }: ExtensionsExplorerProps) {
+  // Tab state
+  const [activeTab, setActiveTab] = useState<TabType>('installed');
+
+  // Extension data
   const [commands, setCommands] = useState<Command[]>([]);
   const [skills, setSkills] = useState<Skill[]>([]);
   const [agents, setAgents] = useState<AgentDefinition[]>([]);
+  const [mcpServers, setMcpServers] = useState<MCPServerInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedType, setExpandedType] = useState<ExtensionType | null>('commands');
-  const [selectedItem, setSelectedItem] = useState<Command | Skill | AgentDefinition | null>(null);
+  const [selectedItem, setSelectedItem] = useState<Command | Skill | AgentDefinition | MCPServerInfo | null>(null);
   const [viewingContent, setViewingContent] = useState(false);
 
   // Skill action menu state (shown when + is clicked)
@@ -63,25 +70,39 @@ export default function ExtensionsExplorer({ sessionId, projectPath }: Extension
 
   // Load extensions (supports SSH sessions via sessionId)
   useEffect(() => {
+    loadExtensions();
+  }, [sessionId, projectPath]);
+
+  const loadExtensions = async () => {
     setLoading(true);
     const scanOptions = { sessionId, projectPath };
-    Promise.all([
-      window.electronAPI.extensions.scanCommands(scanOptions),
-      window.electronAPI.extensions.scanSkills(scanOptions),
-      window.electronAPI.extensions.scanAgents(scanOptions),
-    ])
-      .then(([cmds, skls, agts]) => {
-        setCommands(cmds);
-        setSkills(skls);
-        setAgents(agts);
-      })
-      .catch(err => {
-        console.error('[Extensions Explorer] Error loading:', err);
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  }, [sessionId, projectPath]);
+    try {
+      const [cmds, skls, agts, servers] = await Promise.all([
+        window.electronAPI.extensions.scanCommands(scanOptions),
+        window.electronAPI.extensions.scanSkills(scanOptions),
+        window.electronAPI.extensions.scanAgents(scanOptions),
+        window.electronAPI.mcp.getServers(sessionId, projectPath),
+      ]);
+      setCommands(cmds);
+      setSkills(skls);
+      setAgents(agts);
+      setMcpServers(servers);
+    } catch (err) {
+      console.error('[Extensions Explorer] Error loading:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Refresh MCP servers after installation
+  const refreshMcpServers = async () => {
+    try {
+      const servers = await window.electronAPI.mcp.getServers(sessionId, projectPath);
+      setMcpServers(servers);
+    } catch (err) {
+      console.error('[Extensions Explorer] Error refreshing MCP servers:', err);
+    }
+  };
 
   const toggleType = (type: ExtensionType) => {
     setExpandedType(expandedType === type ? null : type);
@@ -89,7 +110,7 @@ export default function ExtensionsExplorer({ sessionId, projectPath }: Extension
     setViewingContent(false);
   };
 
-  const handleItemClick = (item: Command | Skill | AgentDefinition) => {
+  const handleItemClick = (item: Command | Skill | AgentDefinition | MCPServerInfo) => {
     setSelectedItem(item);
     setViewingContent(true);
   };
@@ -358,13 +379,133 @@ export default function ExtensionsExplorer({ sessionId, projectPath }: Extension
     ));
   };
 
+  const renderMcpServerList = () => {
+    if (mcpServers.length === 0) {
+      return (
+        <div className="px-3 py-2 text-xs text-claude-text-secondary">
+          No MCP servers active. Install from the Marketplace tab.
+        </div>
+      );
+    }
+
+    return mcpServers.map(server => (
+      <button
+        key={server.id}
+        onClick={() => handleItemClick(server)}
+        className={`w-full px-3 py-2 text-left hover:bg-claude-surface transition-colors ${
+          selectedItem === server ? 'bg-claude-surface' : ''
+        }`}
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-mono text-green-400">{server.name}</span>
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${
+              server.status === 'active'
+                ? 'bg-green-500'
+                : server.status === 'error'
+                ? 'bg-red-500'
+                : 'bg-gray-500'
+            }`}
+          />
+          {server.type === 'sdk' && (
+            <span className="text-[10px] text-claude-text-secondary bg-claude-surface px-1">SDK</span>
+          )}
+        </div>
+        <p className="text-xs text-claude-text-secondary mt-1 truncate">{server.description}</p>
+        {server.tools.length > 0 && (
+          <p className="text-[10px] text-claude-text-secondary mt-1">
+            {server.tools.length} tool{server.tools.length !== 1 ? 's' : ''}
+          </p>
+        )}
+      </button>
+    ));
+  };
+
   const renderItemDetails = () => {
     if (!selectedItem || !viewingContent) return null;
 
+    // Check what type of item we have
+    const isMcpServer = 'tools' in selectedItem && 'status' in selectedItem;
     const isAgent = 'systemPrompt' in selectedItem;
     // Commands have .md path, Skills have directory path (content in both now)
-    const isCommand = !isAgent && 'content' in selectedItem && (selectedItem as Command).path.endsWith('.md');
-    const isSkill = !isAgent && !isCommand;
+    const isCommand = !isMcpServer && !isAgent && 'content' in selectedItem && (selectedItem as Command).path.endsWith('.md');
+    const isSkill = !isMcpServer && !isAgent && !isCommand;
+
+    // MCP Server details
+    if (isMcpServer) {
+      const server = selectedItem as MCPServerInfo;
+      return (
+        <div className="flex-1 overflow-y-auto border-l border-claude-border">
+          <div className="p-4">
+            {/* Header */}
+            <div className="flex items-start justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Server size={16} className="text-green-400" />
+                <div>
+                  <h3 className="text-sm font-mono text-claude-text">{server.name}</h3>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span
+                      className={`text-xs px-1.5 py-0.5 ${
+                        server.status === 'active'
+                          ? 'bg-green-500/20 text-green-400'
+                          : server.status === 'error'
+                          ? 'bg-red-500/20 text-red-400'
+                          : 'bg-gray-500/20 text-gray-400'
+                      }`}
+                    >
+                      {server.status}
+                    </span>
+                    <span className="text-xs text-claude-text-secondary">{server.type}</span>
+                    <span className="text-xs text-claude-text-secondary">v{server.version}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Description */}
+            <div className="mb-4">
+              <h4 className="text-xs font-mono text-claude-text-secondary uppercase mb-2">Description</h4>
+              <p className="text-sm text-claude-text">{server.description}</p>
+            </div>
+
+            {/* Error Message */}
+            {server.errorMessage && (
+              <div className="mb-4 p-3 bg-red-500/10 border border-red-500/30">
+                <h4 className="text-xs font-mono text-red-400 uppercase mb-1">Error</h4>
+                <p className="text-xs text-red-400">{server.errorMessage}</p>
+              </div>
+            )}
+
+            {/* Tools */}
+            {server.tools.length > 0 && (
+              <div>
+                <h4 className="text-xs font-mono text-claude-text-secondary uppercase mb-2">
+                  Available Tools ({server.tools.length})
+                </h4>
+                <div className="space-y-2">
+                  {server.tools.map((tool) => (
+                    <div
+                      key={tool.name}
+                      className="p-2 bg-claude-surface border border-claude-border"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Wrench size={12} className="text-claude-accent" />
+                        <span className="text-xs font-mono text-claude-text">{tool.name}</span>
+                      </div>
+                      {tool.description && (
+                        <p className="text-xs text-claude-text-secondary mt-1 ml-5">
+                          {tool.description}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
 
     return (
       <div className="flex-1 overflow-y-auto border-l border-claude-border">
@@ -387,7 +528,7 @@ export default function ExtensionsExplorer({ sessionId, projectPath }: Extension
             </div>
             <div className="flex items-center gap-1">
               <button
-                onClick={() => handleEditItem(selectedItem)}
+                onClick={() => handleEditItem(selectedItem as Command | Skill | AgentDefinition)}
                 className="p-1 hover:bg-claude-surface text-claude-text-secondary hover:text-claude-accent"
                 title="Edit file"
               >
@@ -468,120 +609,202 @@ export default function ExtensionsExplorer({ sessionId, projectPath }: Extension
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center">
-        <p className="text-sm text-claude-text-secondary">Loading extensions...</p>
+        <div className="flex items-center gap-2 text-claude-text-secondary">
+          <Loader2 size={16} className="animate-spin" />
+          <span className="text-sm">Loading extensions...</span>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="h-full flex">
-      {/* List Panel */}
-      <div className="w-80 border-r border-claude-border overflow-y-auto">
-        {/* Commands Section */}
-        <div className="border-b border-claude-border">
-          <button
-            onClick={() => toggleType('commands')}
-            className="w-full px-3 py-2 flex items-center gap-2 hover:bg-claude-surface transition-colors"
-          >
-            {expandedType === 'commands' ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            <Terminal size={14} className="text-claude-accent" />
-            <span className="text-sm font-mono text-claude-text">Commands</span>
-            <span className="text-xs text-claude-text-secondary">({commands.length})</span>
-          </button>
-          {expandedType === 'commands' && <div>{renderCommandList()}</div>}
-        </div>
-
-        {/* Skills Section */}
-        <div className="border-b border-claude-border">
-          <div className="flex items-center relative">
-            <button
-              onClick={() => toggleType('skills')}
-              className="flex-1 px-3 py-2 flex items-center gap-2 hover:bg-claude-surface transition-colors"
-            >
-              {expandedType === 'skills' ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              <Sparkles size={14} className="text-purple-400" />
-              <span className="text-sm font-mono text-claude-text">Skills</span>
-              <span className="text-xs text-claude-text-secondary">({skills.length})</span>
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                setShowSkillMenu(!showSkillMenu);
-              }}
-              className="px-2 py-2 hover:bg-claude-surface text-claude-text-secondary hover:text-purple-400 transition-colors"
-              title="Add skill"
-            >
-              <Plus size={14} />
-            </button>
-
-            {/* Skill action menu */}
-            {showSkillMenu && (
-              <div
-                ref={skillMenuRef}
-                className="absolute right-0 top-full mt-1 z-50 bg-claude-bg border border-claude-border shadow-lg min-w-48"
-              >
-                <button
-                  onClick={() => {
-                    setShowSkillMenu(false);
-                    setShowCreateDialog(true);
-                  }}
-                  className="w-full px-3 py-2 flex items-center gap-2 hover:bg-claude-surface text-left transition-colors"
-                >
-                  <FileText size={14} className="text-purple-400" />
-                  <div>
-                    <span className="text-sm text-claude-text">Create New Skill</span>
-                    <p className="text-xs text-claude-text-secondary">Write a skill from scratch</p>
-                  </div>
-                </button>
-                <button
-                  onClick={() => {
-                    setShowSkillMenu(false);
-                    setShowInstallDialog(true);
-                  }}
-                  className="w-full px-3 py-2 flex items-center gap-2 hover:bg-claude-surface text-left transition-colors border-t border-claude-border"
-                >
-                  <Github size={14} className="text-claude-text-secondary" />
-                  <div>
-                    <span className="text-sm text-claude-text">Install from GitHub</span>
-                    <p className="text-xs text-claude-text-secondary">Clone a skill repository</p>
-                  </div>
-                </button>
-              </div>
-            )}
-          </div>
-          {expandedType === 'skills' && <div>{renderSkillList()}</div>}
-        </div>
-
-        {/* Agents Section */}
-        <div className="border-b border-claude-border">
-          <button
-            onClick={() => toggleType('agents')}
-            className="w-full px-3 py-2 flex items-center gap-2 hover:bg-claude-surface transition-colors"
-          >
-            {expandedType === 'agents' ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-            <Bot size={14} className="text-blue-400" />
-            <span className="text-sm font-mono text-claude-text">Agents</span>
-            <span className="text-xs text-claude-text-secondary">({agents.length})</span>
-          </button>
-          {expandedType === 'agents' && <div>{renderAgentList()}</div>}
-        </div>
+    <div className="h-full flex flex-col">
+      {/* Tab Bar */}
+      <div className="flex border-b border-claude-border flex-shrink-0">
+        <button
+          onClick={() => setActiveTab('installed')}
+          className={`flex items-center gap-2 px-4 py-2 text-sm font-mono transition-colors ${
+            activeTab === 'installed'
+              ? 'text-claude-text border-b-2 border-claude-accent bg-claude-surface/50'
+              : 'text-claude-text-secondary hover:text-claude-text'
+          }`}
+        >
+          <FolderGit size={14} />
+          Installed
+        </button>
+        <button
+          onClick={() => setActiveTab('marketplace')}
+          className={`flex items-center gap-2 px-4 py-2 text-sm font-mono transition-colors ${
+            activeTab === 'marketplace'
+              ? 'text-claude-text border-b-2 border-claude-accent bg-claude-surface/50'
+              : 'text-claude-text-secondary hover:text-claude-text'
+          }`}
+        >
+          <Store size={14} />
+          Marketplace
+        </button>
       </div>
 
-      {/* Details Panel */}
-      {viewingContent ? (
-        renderItemDetails()
-      ) : (
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center">
-            <Terminal size={48} className="mx-auto mb-4 text-claude-text-secondary opacity-50" />
-            <p className="text-sm text-claude-text-secondary">Select an extension to view details</p>
+      {/* Tab Content */}
+      {activeTab === 'installed' ? (
+        <div className="flex-1 flex overflow-hidden">
+          {/* List Panel */}
+          <div className="w-80 border-r border-claude-border overflow-y-auto flex-shrink-0">
+            {/* MCP Servers Section */}
+            <div className="border-b border-claude-border">
+              <div className="flex items-center relative">
+                <button
+                  onClick={() => toggleType('mcpServers')}
+                  className="flex-1 px-3 py-2 flex items-center gap-2 hover:bg-claude-surface transition-colors"
+                >
+                  {expandedType === 'mcpServers' ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  <Server size={14} className="text-green-400" />
+                  <span className="text-sm font-mono text-claude-text">MCP Servers</span>
+                  <span className="text-xs text-claude-text-secondary">({mcpServers.length})</span>
+                </button>
+                <button
+                  onClick={() => setActiveTab('marketplace')}
+                  className="px-2 py-2 hover:bg-claude-surface text-claude-text-secondary hover:text-green-400 transition-colors"
+                  title="Add MCP server"
+                >
+                  <Plus size={14} />
+                </button>
+              </div>
+              {expandedType === 'mcpServers' && <div>{renderMcpServerList()}</div>}
+            </div>
+
+            {/* Commands Section */}
+            <div className="border-b border-claude-border">
+              <div className="flex items-center relative">
+                <button
+                  onClick={() => toggleType('commands')}
+                  className="flex-1 px-3 py-2 flex items-center gap-2 hover:bg-claude-surface transition-colors"
+                >
+                  {expandedType === 'commands' ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  <Terminal size={14} className="text-claude-accent" />
+                  <span className="text-sm font-mono text-claude-text">Commands</span>
+                  <span className="text-xs text-claude-text-secondary">({commands.length})</span>
+                </button>
+                <button
+                  onClick={() => setActiveTab('marketplace')}
+                  className="px-2 py-2 hover:bg-claude-surface text-claude-text-secondary hover:text-claude-accent transition-colors"
+                  title="Browse plugins for more commands"
+                >
+                  <Plus size={14} />
+                </button>
+              </div>
+              {expandedType === 'commands' && <div>{renderCommandList()}</div>}
+            </div>
+
+            {/* Skills Section */}
+            <div className="border-b border-claude-border">
+              <div className="flex items-center relative">
+                <button
+                  onClick={() => toggleType('skills')}
+                  className="flex-1 px-3 py-2 flex items-center gap-2 hover:bg-claude-surface transition-colors"
+                >
+                  {expandedType === 'skills' ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  <Sparkles size={14} className="text-purple-400" />
+                  <span className="text-sm font-mono text-claude-text">Skills</span>
+                  <span className="text-xs text-claude-text-secondary">({skills.length})</span>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowSkillMenu(!showSkillMenu);
+                  }}
+                  className="px-2 py-2 hover:bg-claude-surface text-claude-text-secondary hover:text-purple-400 transition-colors"
+                  title="Add skill"
+                >
+                  <Plus size={14} />
+                </button>
+
+                {/* Skill action menu */}
+                {showSkillMenu && (
+                  <div
+                    ref={skillMenuRef}
+                    className="absolute right-0 top-full mt-1 z-50 bg-claude-bg border border-claude-border shadow-lg min-w-48"
+                  >
+                    <button
+                      onClick={() => {
+                        setShowSkillMenu(false);
+                        setShowCreateDialog(true);
+                      }}
+                      className="w-full px-3 py-2 flex items-center gap-2 hover:bg-claude-surface text-left transition-colors"
+                    >
+                      <FileText size={14} className="text-purple-400" />
+                      <div>
+                        <span className="text-sm text-claude-text">Create New Skill</span>
+                        <p className="text-xs text-claude-text-secondary">Write a skill from scratch</p>
+                      </div>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowSkillMenu(false);
+                        setShowInstallDialog(true);
+                      }}
+                      className="w-full px-3 py-2 flex items-center gap-2 hover:bg-claude-surface text-left transition-colors border-t border-claude-border"
+                    >
+                      <Github size={14} className="text-claude-text-secondary" />
+                      <div>
+                        <span className="text-sm text-claude-text">Install from GitHub</span>
+                        <p className="text-xs text-claude-text-secondary">Clone a skill repository</p>
+                      </div>
+                    </button>
+                  </div>
+                )}
+              </div>
+              {expandedType === 'skills' && <div>{renderSkillList()}</div>}
+            </div>
+
+            {/* Agents Section */}
+            <div className="border-b border-claude-border">
+              <div className="flex items-center relative">
+                <button
+                  onClick={() => toggleType('agents')}
+                  className="flex-1 px-3 py-2 flex items-center gap-2 hover:bg-claude-surface transition-colors"
+                >
+                  {expandedType === 'agents' ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  <Bot size={14} className="text-blue-400" />
+                  <span className="text-sm font-mono text-claude-text">Agents</span>
+                  <span className="text-xs text-claude-text-secondary">({agents.length})</span>
+                </button>
+                <button
+                  onClick={() => setActiveTab('marketplace')}
+                  className="px-2 py-2 hover:bg-claude-surface text-claude-text-secondary hover:text-blue-400 transition-colors"
+                  title="Browse plugins for more agents"
+                >
+                  <Plus size={14} />
+                </button>
+              </div>
+              {expandedType === 'agents' && <div>{renderAgentList()}</div>}
+            </div>
           </div>
+
+          {/* Details Panel */}
+          {viewingContent ? (
+            renderItemDetails()
+          ) : (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center">
+                <Terminal size={48} className="mx-auto mb-4 text-claude-text-secondary opacity-50" />
+                <p className="text-sm text-claude-text-secondary">Select an extension to view details</p>
+              </div>
+            </div>
+          )}
         </div>
+      ) : (
+        <UnifiedMarketplace
+          sessionId={sessionId}
+          projectPath={projectPath}
+          installedMcpServers={mcpServers}
+          onMcpServerInstalled={refreshMcpServers}
+        />
       )}
 
       {/* Install Skill Dialog */}
       {showInstallDialog && (
-        <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-claude-bg border border-claude-border w-96 max-w-[90%]">
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-claude-border">
@@ -687,7 +910,7 @@ export default function ExtensionsExplorer({ sessionId, projectPath }: Extension
 
       {/* Create Skill Dialog */}
       {showCreateDialog && (
-        <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
           <div className="bg-claude-bg border border-claude-border w-[600px] max-w-[95%] max-h-[90%] flex flex-col">
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-claude-border flex-shrink-0">

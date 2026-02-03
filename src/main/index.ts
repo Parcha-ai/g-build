@@ -29,6 +29,8 @@ import { registerBrowserHandlers } from './ipc/browser.ipc';
 import { registerSSHHandlers } from './ipc/ssh.ipc';
 import { registerMemoryHandlers } from './ipc/memory.ipc';
 import { registerQmdHandlers } from './ipc/qmd.ipc';
+import { registerMcpHandlers } from './ipc/mcp.ipc';
+import { registerPluginHandlers } from './ipc/plugin.ipc';
 import { IPC_CHANNELS } from '../shared/constants/channels';
 import { cdpProxyService } from './services/cdp-proxy.service';
 
@@ -590,6 +592,8 @@ function registerIPCHandlers(): void {
   registerSSHHandlers(ipcMain);
   registerMemoryHandlers(ipcMain);
   registerQmdHandlers(ipcMain, () => mainWindow);
+  registerMcpHandlers(ipcMain);
+  registerPluginHandlers(ipcMain);
 }
 
 // This method will be called when Electron has finished initialization

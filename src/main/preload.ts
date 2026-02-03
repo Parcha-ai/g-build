@@ -12,7 +12,13 @@ import type {
   TranscriptionResult,
   TTSRequest,
   AudioSettings,
-  SSHConfig
+  SSHConfig,
+  MCPServerInfo,
+  MarketplaceMCPServer,
+  PopularMarketplace,
+  PluginMarketplace,
+  InstalledPlugin,
+  MarketplacePlugin
 } from '../shared/types';
 
 // Dev instance name from environment variable (set by scripts/dev.sh)
@@ -59,6 +65,8 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.SESSION_GET, sessionId),
     update: (sessionId: string, updates: Partial<Session>): Promise<Session> =>
       ipcRenderer.invoke(IPC_CHANNELS.SESSION_UPDATE, sessionId, updates),
+    rewindAndFork: (sessionId: string, rewindToMessageId: string): Promise<Session> =>
+      ipcRenderer.invoke(IPC_CHANNELS.SESSION_REWIND_FORK, sessionId, rewindToMessageId),
     onStatusChanged: (callback: (session: Session) => void) => {
       const handler = (_: IpcRendererEvent, session: Session) => callback(session);
       ipcRenderer.on(IPC_CHANNELS.SESSION_STATUS_CHANGED, handler);
@@ -808,6 +816,64 @@ const electronAPI = {
     // Auto-install QMD (downloads Bun + QMD if not available)
     autoInstall: (): Promise<boolean> =>
       ipcRenderer.invoke(IPC_CHANNELS.QMD_AUTO_INSTALL),
+  },
+
+  // MCP (MCP server management)
+  mcp: {
+    getServers: (sessionId: string, projectPath?: string): Promise<MCPServerInfo[]> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MCP_GET_SERVERS, sessionId, projectPath),
+
+    getMarketplace: (): Promise<MarketplaceMCPServer[]> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MCP_GET_MARKETPLACE),
+
+    install: (serverId: string, authValues: Record<string, string>): Promise<{ success: boolean; error?: string; authUrl?: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MCP_INSTALL_SERVER, serverId, authValues),
+
+    installRaw: (serverId: string, config: Record<string, unknown>): Promise<{ success: boolean; error?: string; authUrl?: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MCP_INSTALL_SERVER_RAW, serverId, config),
+
+    uninstall: (serverId: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MCP_UNINSTALL_SERVER, serverId),
+  },
+
+  // Plugins (plugin marketplace management)
+  plugins: {
+    getPopularMarketplaces: (): Promise<PopularMarketplace[]> =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_GET_POPULAR_MARKETPLACES),
+
+    getMarketplaces: (): Promise<PluginMarketplace[]> =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_GET_MARKETPLACES),
+
+    getInstalled: (): Promise<InstalledPlugin[]> =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_GET_INSTALLED),
+
+    getAvailable: (): Promise<MarketplacePlugin[]> =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_GET_AVAILABLE),
+
+    install: (
+      pluginId: string,
+      marketplace: string,
+      options?: { scope?: 'user' | 'project' }
+    ): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_INSTALL, pluginId, marketplace, options),
+
+    uninstall: (pluginId: string, marketplace: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_UNINSTALL, pluginId, marketplace),
+
+    enable: (pluginId: string, marketplace: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_ENABLE, pluginId, marketplace),
+
+    disable: (pluginId: string, marketplace: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_DISABLE, pluginId, marketplace),
+
+    addMarketplace: (source: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_ADD_MARKETPLACE, source),
+
+    removeMarketplace: (name: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_REMOVE_MARKETPLACE, name),
+
+    updateMarketplaces: (name?: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_UPDATE_MARKETPLACE, name),
   },
 };
 

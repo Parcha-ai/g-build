@@ -113,10 +113,14 @@ export default function SessionCard({ session, isActive, onClick, isFork = false
       }}
     >
       <div className="flex items-start gap-2">
-        {/* Status indicator - square */}
+        {/* Status indicator - shape varies by type */}
         <div
           className={`w-2 h-2 mt-1 flex-shrink-0 ${getStatusColor()} ${isAnimating ? 'animate-pulse' : ''}`}
-          style={{ borderRadius: 0 }}
+          style={{
+            borderRadius: isSSH ? '50%' : (isWorktree ? '2px' : '0'),
+            transform: isWorktree ? 'rotate(45deg)' : 'none'
+          }}
+          title={isSSH ? 'SSH Session' : (isWorktree ? 'Worktree' : 'Project')}
         />
 
         {/* Content */}

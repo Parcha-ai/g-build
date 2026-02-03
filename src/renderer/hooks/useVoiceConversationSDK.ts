@@ -108,18 +108,8 @@ export const useVoiceConversationSDK = ({
         }
       }
 
-      // Request microphone access before starting session
-      try {
-        await navigator.mediaDevices.getUserMedia({ audio: true });
-      } catch (e) {
-        const errorMsg = 'Failed to access microphone';
-        console.error('[VoiceConversationSDK]', errorMsg, e);
-        setState(s => ({ ...s, isConnecting: false, error: errorMsg }));
-        onErrorRef.current?.(errorMsg);
-        return;
-      }
-
       // Get conversation token from main process (which has the API key)
+      // NOTE: SDK will handle getUserMedia() internally - don't call it twice!
       // Use conversation token + WebRTC for hardware echo cancellation
       console.log('[VoiceConversationSDK] Requesting conversation token for WebRTC...');
       const tokenResult = await window.electronAPI.voice.getConversationToken({ agentId });
@@ -137,10 +127,11 @@ export const useVoiceConversationSDK = ({
         // We'll handle unhandled tool calls via the callback
       }
 
-      // Start session with the official SDK using WebRTC for hardware echo cancellation
+      // Start session with the official SDK
+      // NOTE: Back to WebRTC mode - will catch errors defensively
       const conversation = await Conversation.startSession({
         conversationToken: tokenResult.conversationToken,
-        connectionType: 'webrtc', // Use WebRTC for hardware-level echo cancellation
+        connectionType: 'webrtc',
         clientTools,
 
         // Callbacks
@@ -163,9 +154,18 @@ export const useVoiceConversationSDK = ({
         },
 
         onError: (message, context) => {
-          console.error('[VoiceConversationSDK] Error:', message, context);
-          setState(s => ({ ...s, error: message }));
-          onErrorRef.current?.(message);
+          try {
+            console.error('[VoiceConversationSDK] Error:', message, context);
+            const errorMessage = typeof message === 'string' ? message : 'Voice mode error';
+            setState(s => ({ ...s, error: errorMessage }));
+            onErrorRef.current?.(errorMessage);
+          } catch (e) {
+            // Defensive: SDK's error handler itself can crash if error object is malformed
+            console.error('[VoiceConversationSDK] Error handling error:', e);
+            const fallbackMessage = 'Voice mode encountered an error';
+            setState(s => ({ ...s, error: fallbackMessage }));
+            onErrorRef.current?.(fallbackMessage);
+          }
         },
 
         onMessage: ({ message, role }) => {
@@ -223,6 +223,40 @@ export const useVoiceConversationSDK = ({
       });
 
       conversationRef.current = conversation;
+
+      // Patch SDK's handleErrorEvent to handle malformed error events (e.g., quota errors)
+      try {
+        const proto = Object.getPrototypeOf(conversation);
+        if (proto && typeof proto.handleErrorEvent === 'function') {
+          const original = proto.handleErrorEvent.bind(conversation);
+          proto.handleErrorEvent = function(event: any) {
+            try {
+              return original(event);
+            } catch (e) {
+              // SDK crashed trying to handle error - extract the real error message
+              const errorMessage = event?.message || 'Voice mode error occurred';
+              console.error('[VoiceConversationSDK] SDK handleErrorEvent crashed:', e);
+              console.error('[VoiceConversationSDK] Real error from server:', errorMessage);
+
+              // Check for quota errors
+              if (errorMessage.includes('quota limit') || errorMessage.includes('exceeds your quota')) {
+                const quotaError = 'ElevenLabs quota exceeded. Please check your usage at elevenlabs.io/app/usage';
+                setState(s => ({ ...s, error: quotaError }));
+                onErrorRef.current?.(quotaError);
+              } else {
+                // Generic error handling
+                setState(s => ({ ...s, error: errorMessage }));
+                onErrorRef.current?.(errorMessage);
+              }
+
+              // Disconnect to prevent further issues
+              conversation.endSession?.();
+            }
+          };
+        }
+      } catch (e) {
+        console.warn('[VoiceConversationSDK] Could not patch handleErrorEvent:', e);
+      }
 
       // Start audio level polling
       audioLevelIntervalRef.current = setInterval(() => {
@@ -319,13 +353,21 @@ export const useVoiceConversationSDK = ({
 
   /**
    * Send context update (inform agent of state changes)
-   * NOTE: Disabled because sendContextualUpdate triggers a server error that
-   * crashes the ElevenLabs SDK (error_type undefined bug in handleErrorEvent)
+   * Now safe to use since we patched the SDK's error handler
    */
-  const updateContext = useCallback(async (_context: string) => {
-    // Disabled - sendContextualUpdate causes SDK crash
-    // TODO: Re-enable when ElevenLabs fixes the bug or we find a workaround
-    console.log('[VoiceConversationSDK] Context update disabled (SDK bug workaround)');
+  const updateContext = useCallback(async (context: string) => {
+    if (!conversationRef.current || !isConnectedRef.current) {
+      console.warn('[VoiceConversationSDK] Not connected');
+      return;
+    }
+
+    try {
+      // Send contextual update to inform the agent about session state
+      conversationRef.current.sendContextualUpdate?.(context);
+      console.log('[VoiceConversationSDK] Sent context update:', context.slice(0, 100));
+    } catch (e) {
+      console.error('[VoiceConversationSDK] Failed to send context update:', e);
+    }
   }, []);
 
   /**

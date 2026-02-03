@@ -138,6 +138,8 @@ interface SessionState {
   clearAutoResumeState: () => Promise<void>;
   checkAndAutoResume: () => Promise<void>;
   setupAutoResumeOnClose: () => () => void;
+  // Rewind and fork
+  rewindAndFork: (messageId: string) => Promise<void>;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -194,6 +196,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (hasElectronAPI && sessionId) {
       window.electronAPI.dev.setActiveSession(sessionId);
       window.electronAPI.sessions.update(sessionId, { updatedAt: new Date() });
+
+      // Refresh session metadata (branch, status, etc.) from backend
+      // This ensures we always show current info when switching sessions
+      const refreshedSession = await window.electronAPI.sessions.get(sessionId);
+      if (refreshedSession) {
+        set((state) => ({
+          sessions: state.sessions.map(s =>
+            s.id === sessionId ? { ...s, ...refreshedSession } : s
+          ),
+        }));
+      }
 
       // Auto-start the session if it's stopped
       const session = get().sessions.find(s => s.id === sessionId);
@@ -879,21 +892,25 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     // Subscribe to plan content (when a plan file is written)
     const unsubPlanContent = window.electronAPI.claude.onPlanContent((data) => {
-      console.log('[Session Store] Plan content received for session:', data.sessionId);
+      console.log('[Session Store] Plan content received for session:', data.sessionId, 'length:', data.planContent?.length);
       // Import ui.store dynamically to avoid circular dependency
       import('./ui.store').then(({ useUIStore }) => {
+        console.log('[Session Store] Setting plan content in UI store');
         useUIStore.getState().setPlanContent(data.sessionId, data.planContent);
+        console.log('[Session Store] Plan content set, current content:', useUIStore.getState().sessionPlanContent[data.sessionId]?.substring(0, 100));
       });
     });
 
     // Subscribe to plan approval requests (when ExitPlanMode is called)
     const unsubPlanApproval = window.electronAPI.claude.onPlanApprovalRequest((request) => {
-      console.log('[Session Store] Plan approval request received for session:', request.sessionId);
+      console.log('[Session Store] Plan approval request received for session:', request.sessionId, 'planContent length:', request.planContent?.length);
       const { setPendingPlanApproval } = get();
       setPendingPlanApproval(request.sessionId, request);
       // Also update the plan content in UI store for display
       import('./ui.store').then(({ useUIStore }) => {
+        console.log('[Session Store] Setting plan content from approval request');
         useUIStore.getState().setPlanContent(request.sessionId, request.planContent);
+        console.log('[Session Store] Plan content set in approval flow, opening panel');
         // Open the plan panel automatically when approval is requested
         useUIStore.getState().showPlanPanel();
       });
@@ -1444,5 +1461,41 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
+  },
+
+  rewindAndFork: async (messageId: string) => {
+    if (!hasElectronAPI) return;
+
+    const { activeSessionId, loadSessions, setActiveSession, loadMessages } = get();
+    if (!activeSessionId) {
+      console.error('[SessionStore] No active session for rewind and fork');
+      return;
+    }
+
+    try {
+      console.log('[SessionStore] Rewinding and forking session at message:', messageId);
+
+      // Call the backend to create the forked session
+      const forkedSession = await window.electronAPI.sessions.rewindAndFork(
+        activeSessionId,
+        messageId
+      );
+
+      console.log('[SessionStore] Created forked session:', forkedSession.id);
+
+      // Reload sessions to include the new fork
+      await loadSessions();
+
+      // Switch to the forked session
+      await setActiveSession(forkedSession.id);
+
+      // Load messages for the forked session
+      await loadMessages(forkedSession.id);
+
+      console.log('[SessionStore] Switched to forked session:', forkedSession.name);
+    } catch (error) {
+      console.error('[SessionStore] Failed to rewind and fork session:', error);
+      throw error;
+    }
   },
 }));

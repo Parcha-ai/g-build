@@ -622,6 +622,147 @@ Only return the title, nothing else.`
     return sessions;
   }
 
+  /**
+   * Rewind a session to a specific message and create a fork
+   * This creates a new session with a truncated transcript
+   */
+  async rewindAndForkSession(sessionId: string, rewindToMessageId: string): Promise<Session> {
+    const originalSession = await this.getSession(sessionId);
+    if (!originalSession) {
+      throw new Error(`Session ${sessionId} not found`);
+    }
+
+    // Find the transcript file for this session
+    const homeDir = require('os').homedir();
+    const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
+
+    // Search for the transcript file matching this sessionId
+    let transcriptPath: string | null = null;
+    let projectHash: string | null = null;
+
+    try {
+      const entries = await fs.readdir(claudeProjectsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+
+        const projectDir = path.join(claudeProjectsDir, entry.name);
+        const transcriptFile = `${sessionId}.jsonl`;
+        const potentialPath = path.join(projectDir, transcriptFile);
+
+        try {
+          await fs.access(potentialPath);
+          transcriptPath = potentialPath;
+          projectHash = entry.name;
+          break;
+        } catch {
+          // File doesn't exist in this directory, continue searching
+        }
+      }
+    } catch (error) {
+      throw new Error(`Failed to search for transcript: ${error}`);
+    }
+
+    if (!transcriptPath || !projectHash) {
+      throw new Error(`Transcript file not found for session ${sessionId}`);
+    }
+
+    // Read the transcript
+    const content = await fs.readFile(transcriptPath, 'utf-8');
+    const lines = content.split('\n').filter(l => l.trim());
+
+    // Find all lines up to and including the target message
+    const truncatedLines: string[] = [];
+    let foundTargetMessage = false;
+    let lastUserMessageIndex = -1;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      truncatedLines.push(line);
+
+      try {
+        const parsed = JSON.parse(line);
+        // Check if this line contains the target message UUID
+        if (parsed.uuid === rewindToMessageId) {
+          foundTargetMessage = true;
+          // Include subsequent lines that are part of the same message exchange
+          // (e.g., assistant response immediately after)
+          break;
+        }
+        // Track the last user message index for fallback
+        if (parsed.type === 'user' && parsed.message?.role === 'user') {
+          lastUserMessageIndex = i;
+        }
+      } catch {
+        // Not valid JSON, keep line anyway (could be metadata)
+      }
+    }
+
+    if (!foundTargetMessage) {
+      throw new Error(`Message ${rewindToMessageId} not found in transcript`);
+    }
+
+    // Generate new session ID for the fork
+    const forkedSessionId = uuid();
+    const forkedTranscriptPath = path.join(
+      claudeProjectsDir,
+      projectHash,
+      `${forkedSessionId}.jsonl`
+    );
+
+    // Update sessionId in all lines to point to the new session
+    const updatedLines = truncatedLines.map(line => {
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed.sessionId === sessionId) {
+          parsed.sessionId = forkedSessionId;
+        }
+        return JSON.stringify(parsed);
+      } catch {
+        return line;
+      }
+    });
+
+    // Write the truncated transcript
+    await fs.writeFile(forkedTranscriptPath, updatedLines.join('\n') + '\n', 'utf-8');
+
+    // Generate forked session name
+    const originalName = originalSession.name;
+    const forkSuffix = ' (forked)';
+    const forkedName = originalName.endsWith(forkSuffix)
+      ? originalName
+      : `${originalName}${forkSuffix}`;
+
+    // Create the forked session object
+    const forkedSession: Session = {
+      ...originalSession,
+      id: forkedSessionId,
+      name: forkedName,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      // Preserve important metadata
+      model: originalSession.model,
+      branch: originalSession.branch,
+      worktreePath: originalSession.worktreePath,
+      repoPath: originalSession.repoPath,
+      isDevMode: originalSession.isDevMode,
+      sshConfig: originalSession.sshConfig,
+    };
+
+    // Store the forked session
+    this.store.set(`sessions.${forkedSessionId}`, forkedSession);
+
+    // Add to discovered sessions cache
+    this.discoveredSessionsCache.set(forkedSessionId, forkedSession);
+    this.persistDiscoveredSessions();
+
+    // Emit event to notify UI
+    this.emit('sessionsUpdated', this.getMergedSessions());
+
+    console.log(`[Session] Created forked session ${forkedSessionId} from ${sessionId} at message ${rewindToMessageId}`);
+
+    return forkedSession;
+  }
+
   async updateSession(sessionId: string, updates: Partial<Session>): Promise<Session> {
     const session = await this.getSession(sessionId);
     if (!session) {

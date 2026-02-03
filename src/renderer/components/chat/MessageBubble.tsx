@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { GitBranch } from 'lucide-react';
 import ToolCallCard from './ToolCallCard';
 import { SpeakerButton } from './SpeakerButton';
 import { useEditorStore } from '../../stores/editor.store';
@@ -18,6 +19,8 @@ interface MessageBubbleProps {
   streamingToolCalls?: ToolCall[];
   isLatestMessage?: boolean; // True only for the most recent message in the conversation
   isOldMessage?: boolean; // True for messages older than 10 from the end - collapse tool cards by default
+  isLatestUserMessage?: boolean; // True for the most recent user message (don't show rewind)
+  onRewind?: (messageId: string) => void; // Callback when rewind button is clicked
 }
 
 // Extracted component for rendering text content blocks with markdown
@@ -221,12 +224,28 @@ function TextContentBlock({
   );
 }
 
-function MessageBubble({ message, isStreaming, streamingToolCalls, isLatestMessage = false, isOldMessage = false }: MessageBubbleProps) {
+function MessageBubble({ message, isStreaming, streamingToolCalls, isLatestMessage = false, isOldMessage = false, isLatestUserMessage = false, onRewind }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
+  const [isRewinding, setIsRewinding] = useState(false);
   const openFile = useEditorStore((state) => state.openFile);
   const { toggleBrowserPanel, isBrowserPanelOpen } = useUIStore();
   const { activeSessionId, updateSession, sessions } = useSessionStore();
+
+  // Show rewind button for user messages that aren't the most recent one
+  const showRewindButton = isUser && !isLatestUserMessage && onRewind && !isStreaming;
+
+  const handleRewind = async () => {
+    if (!onRewind || isRewinding) return;
+    setIsRewinding(true);
+    try {
+      await onRewind(message.id);
+    } catch (error) {
+      console.error('Failed to rewind:', error);
+    } finally {
+      setIsRewinding(false);
+    }
+  };
 
   // Use streaming tool calls if provided, otherwise use message.toolCalls
   const toolCalls = streamingToolCalls || message.toolCalls || [];
@@ -256,8 +275,20 @@ function MessageBubble({ message, isStreaming, streamingToolCalls, isLatestMessa
           </div>
         ) : isUser ? (
           // User messages - left border accent with subtle background
-          <div className="border-l-2 border-blue-500 pl-3 py-1 bg-blue-500/5">
-            <p className="whitespace-pre-wrap text-claude-text font-mono text-base">
+          <div className="relative group border-l-2 border-blue-500 pl-3 py-1 bg-blue-500/5">
+            {/* Rewind button - appears on hover in top-right */}
+            {showRewindButton && (
+              <button
+                onClick={handleRewind}
+                disabled={isRewinding}
+                className="absolute top-0 right-0 p-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200 text-claude-text-secondary hover:text-claude-accent hover:bg-claude-surface/50 disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Fork conversation from this point"
+                style={{ borderRadius: 0 }}
+              >
+                <GitBranch size={14} className={isRewinding ? 'animate-pulse' : ''} />
+              </button>
+            )}
+            <p className="whitespace-pre-wrap text-claude-text font-mono text-base pr-8">
               {message.content}
             </p>
           </div>

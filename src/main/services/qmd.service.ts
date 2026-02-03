@@ -117,24 +117,38 @@ export class QMDService {
   /**
    * Get the path to bundled QMD based on platform
    *
-   * Note: In development mode, the bundled QMD may have module resolution conflicts
-   * with the parent project's node_modules (specifically ajv-formats version mismatch).
-   * The bundled QMD works correctly in the packaged app where it's isolated.
-   * During development, check user-local install first, then fall back to system QMD.
+   * Priority order:
+   * 1. Development mode: Check project's resources/qmd directory first (from setup-qmd.ts)
+   * 2. User-local installation (via auto-install button)
+   * 3. Packaged app: Resources folder in the built application
    */
   private getBundledQmdPath(): string | null {
     const platform = os.platform();
     const arch = os.arch();
     const platformKey = `${platform}-${arch}`;
 
-    // In development mode, check user-local QMD first (installed via auto-download)
+    // In development mode, check project's resources/qmd first
     if (!app.isPackaged) {
+      // Try project's bundled QMD (from scripts/setup-qmd.ts)
+      const projectQmdPath = platform === 'win32'
+        ? path.join(__dirname, '..', '..', 'resources', 'qmd', platformKey, 'qmd.cmd')
+        : path.join(__dirname, '..', '..', 'resources', 'qmd', platformKey, 'qmd');
+
+      if (fs.existsSync(projectQmdPath)) {
+        console.log('[QMD Service] Development mode - using project bundled QMD at:', projectQmdPath);
+        this.isBundled = true;
+        return projectQmdPath;
+      }
+
+      // Fall back to user-local QMD (installed via auto-download)
       const userQmdPath = this.getUserQmdPath();
       if (fs.existsSync(userQmdPath)) {
         console.log('[QMD Service] Development mode - using user-local QMD at:', userQmdPath);
+        this.isBundled = false;
         return userQmdPath;
       }
-      console.log('[QMD Service] Development mode - no user-local QMD found');
+
+      console.log('[QMD Service] Development mode - no bundled or user-local QMD found');
       return null;
     }
 
@@ -153,6 +167,7 @@ export class QMDService {
     console.log('[QMD Service] Checking bundled QMD at:', qmdWrapper);
 
     if (fs.existsSync(qmdWrapper)) {
+      this.isBundled = true;
       return qmdWrapper;
     }
 

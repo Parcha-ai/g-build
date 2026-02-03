@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import MessageBubble from './MessageBubble';
 import ToolCallCard from './ToolCallCard';
 import ReleaseNotes from '../common/ReleaseNotes';
 import { getLatestRelease } from '../../../shared/config/release-notes';
+import { useSessionStore } from '../../stores/session.store';
 import type { ChatMessage, ToolCall } from '../../../shared/types';
 import type { StreamEvent } from '../../stores/session.store';
 
@@ -36,6 +37,7 @@ export default function MessageList({
   onBackgroundTask,
 }: MessageListProps) {
   // All hooks must be called before any conditional returns
+  const rewindAndFork = useSessionStore((state) => state.rewindAndFork);
 
   // Create a map for quick lookup of current tool call state by ID
   const toolCallMap = React.useMemo(() => {
@@ -120,14 +122,32 @@ export default function MessageList({
     );
   }
 
+  // Find the index of the last user message for rewind button visibility
+  const lastUserMessageIndex = React.useMemo(() => {
+    for (let i = sortedMessages.length - 1; i >= 0; i--) {
+      if (sortedMessages[i]?.role === 'user') {
+        return i;
+      }
+    }
+    return -1;
+  }, [sortedMessages]);
+
+  // Callback for rewinding to a specific message
+  const handleRewind = useCallback((messageId: string) => {
+    return rewindAndFork(messageId);
+  }, [rewindAndFork]);
+
   return (
     <div className="p-4 space-y-4 min-w-0">
       {sortedMessages.map((message, index) => (
         <MessageBubble
           key={message.id}
           message={message}
+          isStreaming={false}
           isLatestMessage={!hasStreamingContent && index === sortedMessages.length - 1}
           isOldMessage={index < sortedMessages.length - 10}
+          isLatestUserMessage={message.role === 'user' && index === lastUserMessageIndex}
+          onRewind={handleRewind}
         />
       ))}
 
