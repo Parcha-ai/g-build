@@ -24,6 +24,11 @@ export NODE_ENV=development
   autoStartContainer: true,
   // QMD semantic search - disabled by default, user must opt-in
   qmdEnabled: false,
+  // Ultra Plan mode - disabled by default, user must opt-in
+  ultraPlanMode: false,
+  // Lunch reminder - disabled by default
+  lunchReminderEnabled: false,
+  lunchReminderTime: '12:00', // Default time, only used if enabled
 };
 
 export class SettingsService {

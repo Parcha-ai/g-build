@@ -447,6 +447,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         [sessionId]: (state.currentThinkingContent[sessionId] || '') + content,
       },
     }));
+
+    // Send thinking updates to ElevenLabs agent (if voice mode active)
+    // Format as [THINKING] so agent knows to narrate it
+    if (window.electronAPI?.voice) {
+      window.electronAPI.voice.sendContextUpdate(`[THINKING] ${content}`).catch((err: Error) => {
+        console.error('[SessionStore] Failed to send thinking to voice:', err);
+      });
+    }
   },
 
   addToolCall: (sessionId, toolCall) => {
@@ -664,6 +672,26 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     try {
       const models = await window.electronAPI.claude.getModels();
       set({ availableModels: models });
+
+      // Migration: Fix any sessions using old incorrect Opus 4.6 ID
+      const state = get();
+      const fixedSelections: Record<string, string> = {};
+      let needsUpdate = false;
+
+      for (const [sessionId, modelId] of Object.entries(state.selectedModel)) {
+        // Old wrong IDs to migrate
+        if (modelId === 'claude-opus-4-6-20260125') {
+          fixedSelections[sessionId] = 'claude-opus-4-5-20251101';
+          needsUpdate = true;
+          console.log(`[SessionStore] Migrating session ${sessionId} from invalid model ID to Opus 4.5`);
+        } else {
+          fixedSelections[sessionId] = modelId;
+        }
+      }
+
+      if (needsUpdate) {
+        set({ selectedModel: fixedSelections });
+      }
     } catch (error) {
       console.error('[SessionStore] Failed to load available models:', error);
     }

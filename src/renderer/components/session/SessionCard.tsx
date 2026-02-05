@@ -1,5 +1,5 @@
-import React from 'react';
-import { Play, Square, Trash2, GitBranch, GitFork, Server, Upload } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Play, Square, Trash2, GitBranch, GitFork, Server, Upload, Pencil, Pin } from 'lucide-react';
 import { useSessionStore } from '../../stores/session.store';
 import type { Session } from '../../../shared/types';
 
@@ -29,7 +29,10 @@ interface SessionCardProps {
 }
 
 export default function SessionCard({ session, isActive, onClick, isFork = false, onTeleportRequest }: SessionCardProps) {
-  const { startSession, stopSession, deleteSession } = useSessionStore();
+  const { startSession, stopSession, deleteSession, updateSession } = useSessionStore();
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [editedName, setEditedName] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // Determine session type for icon display
   const isSSH = !!session.sshConfig;
@@ -75,6 +78,58 @@ export default function SessionCard({ session, isActive, onClick, isFork = false
       onTeleportRequest(session);
     }
   };
+
+  const handleDoubleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    startRenaming();
+  };
+
+  const handleEditClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    startRenaming();
+  };
+
+  const handlePinToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    updateSession(session.id, { isPinned: !session.isPinned });
+  };
+
+  const startRenaming = () => {
+    setEditedName(session.forkName || session.name);
+    setIsRenaming(true);
+  };
+
+  const saveRename = async () => {
+    if (editedName.trim() && editedName !== (session.forkName || session.name)) {
+      // Update forkName if it's a fork, otherwise update name
+      const updates = isFork || session.forkName
+        ? { forkName: editedName.trim() }
+        : { name: editedName.trim() };
+      await updateSession(session.id, updates);
+    }
+    setIsRenaming(false);
+  };
+
+  const cancelRename = () => {
+    setIsRenaming(false);
+    setEditedName('');
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      saveRename();
+    } else if (e.key === 'Escape') {
+      cancelRename();
+    }
+  };
+
+  // Focus input when entering rename mode
+  useEffect(() => {
+    if (isRenaming && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isRenaming]);
 
   // Get the appropriate icon based on session type
   const getSessionIcon = () => {
@@ -125,10 +180,37 @@ export default function SessionCard({ session, isActive, onClick, isFork = false
 
         {/* Content */}
         <div className="flex-1 min-w-0">
-          <h4 className={`text-xs font-bold truncate ${isActive ? 'text-claude-text' : 'text-claude-text-secondary'}`}>
-            {/* Use forkName for forks, otherwise session name */}
-            {session.forkName || session.name}
-          </h4>
+          {isRenaming ? (
+            <input
+              ref={inputRef}
+              type="text"
+              value={editedName}
+              onChange={(e) => setEditedName(e.target.value)}
+              onBlur={saveRename}
+              onKeyDown={handleKeyDown}
+              className="text-xs font-bold w-full bg-claude-surface border border-claude-accent px-1 py-0.5 text-claude-text"
+              style={{ borderRadius: 0 }}
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <div className="flex items-center gap-1 group/name">
+              <h4
+                className={`text-xs font-bold truncate ${isActive ? 'text-claude-text' : 'text-claude-text-secondary'} cursor-text`}
+                onDoubleClick={handleDoubleClick}
+              >
+                {/* Use forkName for forks, otherwise session name */}
+                {session.forkName || session.name}
+              </h4>
+              <button
+                onClick={handleEditClick}
+                className="opacity-0 group-hover/name:opacity-100 p-0.5 hover:bg-claude-accent/20 transition-opacity"
+                style={{ borderRadius: 0 }}
+                title="Rename session"
+              >
+                <Pencil size={10} className="text-claude-text-secondary" />
+              </button>
+            </div>
+          )}
           <div className="flex items-center gap-1 mt-0.5 text-claude-text-secondary">
             {getSessionIcon()}
             <span className="text-[10px] truncate">
@@ -142,6 +224,19 @@ export default function SessionCard({ session, isActive, onClick, isFork = false
 
         {/* Actions - brutalist */}
         <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          {/* Pin button - only shows on hover, unless already pinned */}
+          <button
+            onClick={handlePinToggle}
+            className={`p-1 transition-colors ${
+              session.isPinned
+                ? 'opacity-100 text-claude-accent hover:bg-claude-accent/20'
+                : 'text-claude-text-secondary hover:bg-claude-text-secondary/20'
+            }`}
+            style={{ borderRadius: 0 }}
+            title={session.isPinned ? 'Unpin session' : 'Pin session'}
+          >
+            <Pin size={12} />
+          </button>
           {session.status === 'stopped' && (
             <button
               onClick={handleStart}

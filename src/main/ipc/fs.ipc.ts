@@ -3,6 +3,7 @@ import { IPC_CHANNELS } from '../../shared/constants/channels';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { sessionService } from './session.ipc';
+import { sshService } from '../services/ssh.service';
 
 export interface FileEntry {
   name: string;
@@ -110,12 +111,28 @@ export function registerFsHandlers(ipcMain: IpcMain): void {
     return files;
   });
 
-  // Read file content
-  ipcMain.handle(IPC_CHANNELS.FS_READ_FILE, async (_event, filePath: string) => {
+  // Read file content - supports both local and SSH sessions
+  ipcMain.handle(IPC_CHANNELS.FS_READ_FILE, async (_event, filePath: string, sessionId?: string) => {
+    console.log('[FS] FS_READ_FILE called, filePath:', filePath, 'sessionId:', sessionId);
     try {
+      // If sessionId provided, check if it's an SSH session
+      if (sessionId) {
+        const session = await sessionService.getSession(sessionId);
+        console.log('[FS] Session found:', !!session, 'has sshConfig:', !!session?.sshConfig);
+        if (session?.sshConfig) {
+          console.log('[FS] Reading file from SSH session:', filePath);
+          const remoteContent = await sshService.readRemoteFile(sessionId, session.sshConfig, filePath);
+          console.log('[FS] SSH read successful, content length:', remoteContent.length);
+          return { success: true, content: remoteContent };
+        }
+      }
+
+      // Local file read
+      console.log('[FS] Reading local file:', filePath);
       const content = await fs.readFile(filePath, 'utf-8');
       return { success: true, content };
     } catch (error) {
+      console.error('[FS] Read file error:', error);
       return { success: false, error: (error as Error).message };
     }
   });

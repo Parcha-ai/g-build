@@ -216,11 +216,37 @@ function formatToolInput(name: string, input: Record<string, unknown>): string {
 // Clickable file path component
 function ClickableFilePath({ filePath, label, lineNumber }: { filePath: string; label?: string; lineNumber?: number }) {
   const openFile = useEditorStore((state) => state.openFile);
+  const openPlan = useEditorStore((state) => state.openPlan);
   const fileName = filePath.split('/').pop() || filePath;
 
-  const handleClick = (e: React.MouseEvent) => {
+  const handleClick = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    openFile(filePath, lineNumber);
+    console.log('[ClickableFilePath] Opening file:', filePath, 'lineNumber:', lineNumber);
+
+    // Check if this is a plan file
+    const isPlanFile = filePath.includes('/.claude/plans/');
+    console.log('[ClickableFilePath] Is plan file:', isPlanFile);
+
+    if (isPlanFile) {
+      // Read the plan file and open in Plan panel
+      console.log('[ClickableFilePath] Opening as plan in Plan panel');
+      const { useSessionStore } = await import('../../stores/session.store');
+      const { useUIStore } = await import('../../stores/ui.store');
+      const activeSessionId = useSessionStore.getState().activeSessionId;
+
+      if (activeSessionId && window.electronAPI?.fs?.readFile) {
+        const result = await window.electronAPI.fs.readFile(filePath, activeSessionId);
+        if (result.success && result.content) {
+          useUIStore.getState().setPlanContent(activeSessionId, result.content);
+          useUIStore.getState().showPlanPanel();
+        }
+      }
+    } else if (openFile) {
+      // Regular file - open in editor
+      openFile(filePath, lineNumber);
+    } else {
+      console.error('[ClickableFilePath] openFile is undefined!');
+    }
   };
 
   return (
@@ -404,6 +430,33 @@ function WriteView({ content, filePath, toolCallId, priority = false }: { conten
 // Render a diff view for Edit tool using Monaco diff editor (lazy loaded)
 function DiffView({ oldString, newString, filePath, toolCallId, priority = false }: { oldString: string; newString: string; filePath: string; toolCallId: string; priority?: boolean }) {
   const language = getLanguageFromPath(filePath);
+  const openFile = useEditorStore((state) => state.openFile);
+
+  const handleDiffClick = async () => {
+    console.log('[DiffView] Opening file from diff click:', filePath);
+
+    // Check if this is a plan file
+    const isPlanFile = filePath.includes('/.claude/plans/');
+
+    if (isPlanFile) {
+      // Open in Plan panel
+      const { useSessionStore } = await import('../../stores/session.store');
+      const { useUIStore } = await import('../../stores/ui.store');
+      const activeSessionId = useSessionStore.getState().activeSessionId;
+
+      if (activeSessionId && window.electronAPI?.fs?.readFile) {
+        const result = await window.electronAPI.fs.readFile(filePath, activeSessionId);
+        if (result.success && result.content) {
+          useUIStore.getState().setPlanContent(activeSessionId, result.content);
+          useUIStore.getState().showPlanPanel();
+        }
+      }
+    } else if (openFile) {
+      openFile(filePath);
+    } else {
+      console.error('[DiffView] openFile is undefined!');
+    }
+  };
 
   return (
     <div className="space-y-2 text-xs">
@@ -412,10 +465,15 @@ function DiffView({ oldString, newString, filePath, toolCallId, priority = false
         <ClickableFilePath filePath={filePath} />
       </div>
 
-      {/* Monaco Diff Editor - side by side, lazy loaded */}
-      <div className="border border-claude-border overflow-hidden" style={{ borderRadius: 0 }}>
+      {/* Monaco Diff Editor - side by side, lazy loaded - click to open file */}
+      <div
+        className="border border-claude-border overflow-hidden cursor-pointer hover:border-blue-400 transition-colors"
+        style={{ borderRadius: 0 }}
+        onClick={handleDiffClick}
+        title="Click to open file in editor"
+      >
         <div className="px-2 py-1 bg-claude-surface text-claude-text-secondary text-xs font-bold uppercase border-b border-claude-border" style={{ letterSpacing: '0.05em' }}>
-          DIFF
+          DIFF (Click to open file)
         </div>
         <LazyDiffEditor
           editorId={`diff-${toolCallId}`}

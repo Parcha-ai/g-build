@@ -29,6 +29,8 @@ npm run make
 - Kills any existing process on port 9000
 - Provides better logging and environment setup
 
+**IMPORTANT: After running `./scripts/dev.sh`, ALWAYS tell the user the dev instance name** (e.g., "Dev server started: bouncy-penguin"). The user needs this to identify which build is running in the status bar.
+
 ## Development Workflow
 
 **CRITICAL: Always test in dev before building!**

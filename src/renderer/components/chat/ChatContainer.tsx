@@ -49,6 +49,10 @@ export default function ChatContainer({ session }: ChatContainerProps) {
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [hasNewContent, setHasNewContent] = useState(false);
   const lastMessageCountRef = useRef(0);
+  const lastScrollTop = useRef(0);
+  const lastScrollTime = useRef(Date.now());
+  const fastScrollCount = useRef(0);
+  const fastScrollResetTimer = useRef<NodeJS.Timeout | null>(null);
 
   const sessionMessages = messages[session.id] || [];
   const isSessionStreaming = isStreaming[session.id] || false;
@@ -352,13 +356,69 @@ export default function ChatContainer({ session }: ChatContainerProps) {
     return isBottom;
   }, []);
 
-  // Handle scroll events
+  // Handle scroll events with velocity detection
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (!container) return;
 
     const handleScroll = () => {
-      checkIfAtBottom();
+      const now = Date.now();
+      const currentScrollTop = container.scrollTop;
+      const timeDelta = now - lastScrollTime.current;
+      const scrollDelta = currentScrollTop - lastScrollTop.current;
+
+      // Calculate scroll velocity (pixels per millisecond)
+      const velocity = timeDelta > 0 ? Math.abs(scrollDelta / timeDelta) : 0;
+
+      // Determine scroll direction
+      const isScrollingDown = scrollDelta > 0;
+      const isScrollingUp = scrollDelta < 0;
+      const isFastScroll = velocity > 3;
+
+      // Double-scroll gesture: need TWO fast scrolls within 500ms (like double-click)
+      if (isScrollingDown && isFastScroll) {
+        fastScrollCount.current += 1;
+        console.log('[ChatContainer] Fast scroll detected:', fastScrollCount.current, '/ 2');
+
+        // Clear any existing reset timer
+        if (fastScrollResetTimer.current) {
+          clearTimeout(fastScrollResetTimer.current);
+        }
+
+        // Reset count after 500ms (double-scroll window)
+        fastScrollResetTimer.current = setTimeout(() => {
+          console.log('[ChatContainer] Fast scroll window expired, resetting count');
+          fastScrollCount.current = 0;
+        }, 500);
+
+        // If we got TWO fast scrolls, trigger snap to bottom
+        if (fastScrollCount.current >= 2) {
+          console.log('[ChatContainer] Double fast-scroll detected! Snapping to bottom');
+          messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+          setIsAtBottom(true);
+          setShowScrollButton(false);
+          fastScrollCount.current = 0; // Reset
+          if (fastScrollResetTimer.current) {
+            clearTimeout(fastScrollResetTimer.current);
+          }
+        }
+      } else if (isScrollingUp) {
+        // Any upward scroll cancels the gesture and resets counter
+        if (fastScrollCount.current > 0) {
+          console.log('[ChatContainer] User scrolled up - canceling fast scroll gesture');
+        }
+        fastScrollCount.current = 0;
+        if (fastScrollResetTimer.current) {
+          clearTimeout(fastScrollResetTimer.current);
+        }
+        checkIfAtBottom();
+      } else {
+        checkIfAtBottom();
+      }
+
+      // Update refs for next scroll event
+      lastScrollTop.current = currentScrollTop;
+      lastScrollTime.current = now;
     };
 
     container.addEventListener('scroll', handleScroll);
@@ -366,6 +426,8 @@ export default function ChatContainer({ session }: ChatContainerProps) {
   }, [checkIfAtBottom]);
 
   // Auto-scroll only if user is at bottom
+  // NOTE: Deliberately exclude streamingToolCalls from dependencies to avoid scroll spam
+  // Tool call updates (status, output) shouldn't trigger scrolls - only new content should
   useEffect(() => {
     if (isAtBottom) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -378,7 +440,7 @@ export default function ChatContainer({ session }: ChatContainerProps) {
       }
     }
     lastMessageCountRef.current = sessionMessages.length;
-  }, [sessionMessages, streamContent, thinkingContent, streamingToolCalls, isAtBottom]);
+  }, [sessionMessages, streamContent, thinkingContent, isAtBottom]);
 
   // Scroll to bottom function for FAB
   const scrollToBottom = useCallback(() => {
@@ -496,15 +558,15 @@ export default function ChatContainer({ session }: ChatContainerProps) {
 
         <div ref={messagesEndRef} />
 
-        {/* Scroll to bottom button - simple square in bottom right */}
+        {/* Scroll to bottom button - positioned at bottom of scrollable area, above tasks/thinking */}
         {showScrollButton && (
           <button
             onClick={scrollToBottom}
-            className="absolute bottom-2 right-2 z-50 w-7 h-7 flex items-center justify-center bg-claude-bg-secondary border border-claude-border hover:bg-claude-accent hover:border-claude-accent hover:text-black text-claude-accent transition-colors"
+            className="absolute bottom-4 right-4 z-50 w-10 h-10 flex items-center justify-center bg-claude-accent text-white border border-claude-accent hover:bg-claude-accent/80 shadow-lg transition-all"
             style={{ borderRadius: 0 }}
             title="Scroll to bottom"
           >
-            <ArrowDown size={14} />
+            <ArrowDown size={18} strokeWidth={2.5} />
           </button>
         )}
       </div>

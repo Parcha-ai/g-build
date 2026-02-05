@@ -89,6 +89,24 @@ export default function MessageList({
     setShowReleaseNotes(false);
   };
 
+  // Find the index of the last user message for rewind button visibility
+  // IMPORTANT: This hook must be called before any conditional returns to satisfy React's rules of hooks
+  const lastUserMessageIndex = React.useMemo(() => {
+    for (let i = sortedMessages.length - 1; i >= 0; i--) {
+      if (sortedMessages[i]?.role === 'user') {
+        return i;
+      }
+    }
+    return -1;
+  }, [sortedMessages]);
+
+  // Callback for rewinding to a specific message
+  // IMPORTANT: This hook must be called before any conditional returns to satisfy React's rules of hooks
+  const handleRewind = useCallback((messageId: string) => {
+    return rewindAndFork(messageId);
+  }, [rewindAndFork]);
+
+  // Empty state render - now safe to return early after all hooks are called
   if (messages.length === 0 && !hasStreamingContent) {
     return (
       <div className="h-full flex flex-col">
@@ -121,21 +139,6 @@ export default function MessageList({
       </div>
     );
   }
-
-  // Find the index of the last user message for rewind button visibility
-  const lastUserMessageIndex = React.useMemo(() => {
-    for (let i = sortedMessages.length - 1; i >= 0; i--) {
-      if (sortedMessages[i]?.role === 'user') {
-        return i;
-      }
-    }
-    return -1;
-  }, [sortedMessages]);
-
-  // Callback for rewinding to a specific message
-  const handleRewind = useCallback((messageId: string) => {
-    return rewindAndFork(messageId);
-  }, [rewindAndFork]);
 
   return (
     <div className="p-4 space-y-4 min-w-0">

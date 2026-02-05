@@ -52,6 +52,8 @@ export interface Session {
   // Teleportation tracking
   teleportedFrom?: string; // Original local session ID if teleported to SSH
   sdkSessionId?: string; // Claude Agent SDK session ID for transcript resumption
+  // Pinning/favorites
+  isPinned?: boolean; // True if session is pinned to top of recent sessions
 }
 
 export type SessionStatus = 'creating' | 'starting' | 'setup' | 'running' | 'stopping' | 'stopped' | 'error';
@@ -181,6 +183,11 @@ export interface AppSettings {
   autoStartContainer: boolean;
   // QMD semantic search settings
   qmdEnabled: boolean; // Global toggle for QMD semantic search
+  // Ultra Plan mode - automatic task decomposition after plan approval
+  ultraPlanMode: boolean; // Global toggle for Ultra Plan mode
+  // Lunch reminder settings
+  lunchReminderEnabled: boolean; // Enable/disable lunch reminders
+  lunchReminderTime?: string; // Time in HH:MM format (only used if enabled)
 }
 
 // Permission request from Agent SDK

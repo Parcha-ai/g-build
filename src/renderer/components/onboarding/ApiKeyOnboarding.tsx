@@ -3,7 +3,7 @@ import { Key, Eye, EyeOff, ExternalLink, Check, AlertCircle, Loader2 } from 'luc
 import { useUIStore } from '../../stores/ui.store';
 
 export default function ApiKeyOnboarding() {
-  const { isOnboardingOpen, closeOnboarding, openSettings } = useUIStore();
+  const { isOnboardingOpen, closeOnboarding, openSettings, checkApiKey } = useUIStore();
   const [apiKey, setApiKey] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -26,6 +26,8 @@ export default function ApiKeyOnboarding() {
 
     try {
       await window.electronAPI.settings.setApiKey(apiKey.trim());
+      // Re-check API key to update hasApiKey state
+      await checkApiKey();
       closeOnboarding();
     } catch (err) {
       console.error('Failed to save API key:', err);

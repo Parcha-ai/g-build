@@ -41,10 +41,14 @@ export const VoiceMode: React.FC<VoiceModeProps> = ({
   } = useVoiceConversationSDK({
     agentId,
     sessionId,
-    systemPrompt: `You are a helpful AI assistant integrated with Claude Code.
-When the user speaks, transcribe their request and pass it to Claude for processing.
-Keep responses concise and conversational. If the user asks about code or files,
-indicate that Claude is working on it.`,
+    systemPrompt: `You are Grep, an AI development assistant.
+When the user speaks, process their request and help them with code, debugging, and development tasks.
+Keep responses concise and conversational.
+
+IMPORTANT: When you receive [THINKING] updates, narrate them out loud to keep the user informed.
+These show your internal reasoning process. Speak them naturally as if you're thinking out loud -
+for example: "Hmm, let me check the authentication flow..." or "I'm searching for the relevant files now...".
+This keeps the conversation flowing and the user engaged while you work.`,
     onTranscript: (text, isFinal) => {
       if (isFinal) {
         onTranscript(text);

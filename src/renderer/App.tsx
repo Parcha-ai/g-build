@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useAuthStore } from './stores/auth.store';
 import { useSessionStore } from './stores/session.store';
 import { useUIStore } from './stores/ui.store';
@@ -13,7 +13,8 @@ import ApiKeyOnboarding from './components/onboarding/ApiKeyOnboarding';
 import QuickSearch from './components/editor/QuickSearch';
 import SessionSwitcher from './components/session/SessionSwitcher';
 import QMDPrompt from './components/qmd/QMDPrompt';
-import { Terminal, Globe, PanelRight, Settings, PanelLeftClose, Monitor, AlertTriangle, Package, FileText } from 'lucide-react';
+import LunchLockModal from './components/layout/LunchLockModal';
+import { Terminal, Globe, PanelRight, Settings, PanelLeftClose, Monitor, AlertTriangle, Package, FileText, FileCode } from 'lucide-react';
 
 // Check if we're running in Electron (has electronAPI) or browser preview mode
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
@@ -120,7 +121,7 @@ function PreviewMode() {
 // Main App component that requires Electron
 function ElectronApp() {
   const { user, isLoading, isDevMode, checkAuth } = useAuthStore();
-  const { loadSessions, subscribeToSessionChanges, subscribeToSetupProgress, subscribeToCompaction, setupAutoResumeOnClose, checkAndAutoResume } = useSessionStore();
+  const { activeSessionId, sessions, loadSessions, subscribeToSessionChanges, subscribeToSetupProgress, subscribeToCompaction, setupAutoResumeOnClose, checkAndAutoResume } = useSessionStore();
   const {
     isSidebarOpen,
     isTerminalPanelOpen,
@@ -139,9 +140,168 @@ function ElectronApp() {
     hasApiKey,
     enableSessionBrowser,
   } = useUIStore();
-  const { toggleQuickSearch } = useEditorStore();
+  const { toggleQuickSearch, isEditorOpen, openEditor, closeEditor } = useEditorStore();
   const { loadSettings: loadAudioSettings } = useAudioStore();
+
+  // Toggle editor panel
+  const toggleEditorPanel = () => {
+    if (isEditorOpen) {
+      closeEditor();
+    } else {
+      openEditor();
+    }
+  };
   const [isInitialized, setIsInitialized] = useState(false);
+
+  // Clock and lunch enforcement system
+  const [currentTime, setCurrentTime] = useState(new Date());
+  const [showLunchModal, setShowLunchModal] = useState(false);
+  const [lunchReminderEnabled, setLunchReminderEnabled] = useState(false);
+  const [lunchTime, setLunchTime] = useState('12:00');
+
+  const activeSession = sessions.find((s) => s.id === activeSessionId);
+
+  // Load lunch settings
+  useEffect(() => {
+    window.electronAPI.settings.get().then((settings) => {
+      setLunchReminderEnabled(settings.lunchReminderEnabled || false);
+      setLunchTime(settings.lunchReminderTime || '12:00');
+    });
+  }, []);
+
+  // Clock tick + lunch enforcement
+  useEffect(() => {
+    const checkLunchStatus = async () => {
+      const today = new Date().toDateString();
+      const lunchLogged = localStorage.getItem('lunch-logged-date');
+
+      // Get configured lunch time from settings
+      const settings = await window.electronAPI.settings.get();
+
+      // Only enforce if lunch reminder is enabled
+      if (!settings.lunchReminderEnabled) {
+        return;
+      }
+
+      const lunchTime = settings.lunchReminderTime || '12:00';
+      const [lunchHour, lunchMinute] = lunchTime.split(':').map(Number);
+
+      const now = new Date();
+      const hours = now.getHours();
+      const minutes = now.getMinutes();
+
+      // At configured lunch time, if lunch not logged today, show modal
+      if (hours === lunchHour && minutes === lunchMinute && lunchLogged !== today && !showLunchModal) {
+        setShowLunchModal(true);
+      }
+    };
+
+    const interval = setInterval(() => {
+      setCurrentTime(new Date());
+      checkLunchStatus();
+    }, 1000);
+
+    // Also check immediately on mount
+    checkLunchStatus();
+
+    return () => clearInterval(interval);
+  }, [showLunchModal]);
+
+  // Calculate time until noon and display format
+  const getClockDisplay = useCallback(() => {
+    const hours = currentTime.getHours();
+    const minutes = currentTime.getMinutes();
+    const seconds = currentTime.getSeconds();
+
+    // Check if lunch already logged today
+    const today = new Date().toDateString();
+    const lunchLogged = localStorage.getItem('lunch-logged-date') === today;
+
+    // Normal time display
+    const normalTime = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+
+    // If lunch reminder disabled, show normal time
+    if (!lunchReminderEnabled || lunchLogged) {
+      return {
+        display: normalTime,
+        color: 'text-white',
+        isCountdown: false,
+      };
+    }
+
+    // Calculate minutes until lunch time
+    const [lunchHour, lunchMinute] = lunchTime.split(':').map(Number);
+    const lunchDate = new Date();
+    lunchDate.setHours(lunchHour, lunchMinute, 0, 0);
+
+    const now = new Date();
+    const msUntilLunch = lunchDate.getTime() - now.getTime();
+    const minutesUntilLunch = Math.floor(msUntilLunch / 60000);
+
+    // If more than 30 minutes away, show normal time
+    if (minutesUntilLunch > 30 || minutesUntilLunch < 0) {
+      return {
+        display: normalTime,
+        color: 'text-white',
+        isCountdown: false,
+      };
+    }
+
+    // Countdown mode: 30 minutes before lunch
+    const secondsUntilLunch = Math.floor(msUntilLunch / 1000);
+    const minsLeft = Math.floor(secondsUntilLunch / 60);
+    const secsLeft = secondsUntilLunch % 60;
+
+    const countdownDisplay = `${minsLeft}:${secsLeft.toString().padStart(2, '0')}`;
+
+    // Color based on time remaining
+    let color = 'text-white';
+    if (secondsUntilLunch <= 60) {
+      color = 'text-red-500 font-bold'; // Red at t-1 minute
+    } else if (secondsUntilLunch <= 300) {
+      color = 'text-red-500 font-bold'; // Red at t-5 minutes
+    } else if (secondsUntilLunch <= 1800) {
+      color = 'text-amber-500 font-bold'; // Orange at t-30 minutes
+    }
+
+    return {
+      display: countdownDisplay,
+      color,
+      isCountdown: true,
+    };
+  }, [currentTime]);
+
+  const clockInfo = getClockDisplay();
+
+  const handleLunchConfirmed = async (meal: string) => {
+    const today = new Date().toDateString();
+    localStorage.setItem('lunch-logged-date', today);
+
+    // Store in proper memory system
+    if (activeSession?.worktreePath) {
+      try {
+        console.log('[Lunch System] Attempting to store in memory:', {
+          worktreePath: activeSession.worktreePath,
+          meal,
+          date: today
+        });
+
+        const result = await window.electronAPI.memory.remember({
+          category: 'preference',
+          content: `Lunch on ${today}: ${meal}`,
+          source: 'user',
+        }, activeSession.worktreePath);
+
+        console.log('[Lunch System] Successfully logged to memory:', result);
+      } catch (error) {
+        console.error('[Lunch System] Failed to log to memory:', error);
+      }
+    } else {
+      console.warn('[Lunch System] No active session or worktree path, skipping memory storage');
+    }
+
+    setShowLunchModal(false);
+  };
 
   useEffect(() => {
     const init = async () => {
@@ -281,6 +441,20 @@ function ElectronApp() {
           </div>
         </div>
 
+        {/* Center: Clock with lunch countdown */}
+        <div className="absolute left-1/2 transform -translate-x-1/2 flex items-center">
+          <div className={`flex items-center gap-2 font-mono text-base ${clockInfo.color} transition-colors`}>
+            {clockInfo.isCountdown && (
+              <span className="text-xs uppercase font-bold" style={{ letterSpacing: '0.1em' }}>
+                LUNCH IN
+              </span>
+            )}
+            <span className="font-bold tabular-nums" style={{ letterSpacing: '0.05em' }}>
+              {clockInfo.display}
+            </span>
+          </div>
+        </div>
+
         {/* Right: panel toggle buttons */}
         <div
           className="flex items-center gap-0.5 px-2"
@@ -323,6 +497,15 @@ function ElectronApp() {
             <FileText size={14} />
           </button>
           <button
+            onClick={toggleEditorPanel}
+            className={`p-1 transition-colors hover:text-claude-text ${
+              isEditorOpen ? 'text-claude-text' : 'text-claude-text-secondary'
+            }`}
+            title="Toggle Editor (Files)"
+          >
+            <FileCode size={14} />
+          </button>
+          <button
             onClick={cycleSplitRatio}
             className="p-1 text-claude-text-secondary hover:text-claude-text transition-colors"
             title="Cycle Split Layout"
@@ -362,6 +545,11 @@ function ElectronApp() {
 
       {/* Session Switcher (Ctrl+Tab) */}
       <SessionSwitcher />
+
+      {/* Lunch Lock Modal */}
+      {showLunchModal && (
+        <LunchLockModal onConfirm={handleLunchConfirmed} />
+      )}
 
       {/* QMD Semantic Search Prompt */}
       <QMDPrompt />

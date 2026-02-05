@@ -173,9 +173,14 @@ export class ClaudeService {
   getAvailableModels(): Array<{ id: string; name: string; description: string }> {
     return [
       {
+        id: 'claude-opus-4-6',
+        name: 'Opus 4.6',
+        description: 'Latest and most capable model - best for complex tasks'
+      },
+      {
         id: 'claude-opus-4-5-20251101',
         name: 'Opus 4.5',
-        description: 'Most capable model - best for complex tasks'
+        description: 'Highly capable model'
       },
       {
         id: 'claude-sonnet-4-5-20250929',
@@ -1641,12 +1646,21 @@ ${memoriesPrompt}
       // Check if bypassPermissions mode requires the danger flag
       const requiresDangerFlag = sdkPermissionMode === 'bypassPermissions';
 
-      // Map thinking mode to token counts
-      // off = undefined (no extended thinking)
-      // thinking = 10000 tokens
-      // ultrathink = model-specific max (Opus 4.5: 60000, others: 100000)
+      // Map thinking mode to effort levels (via maxThinkingTokens)
+      // The Claude Agent SDK uses maxThinkingTokens, which maps to Claude 4.6's effort parameter:
+      //   - off = undefined (no extended thinking) ~ effort: null
+      //   - thinking = medium effort ~ effort: "medium"
+      //   - ultrathink = high effort ~ effort: "high"
       //
-      // IMPORTANT: Opus 4.5 has a max output token limit of 64,000
+      // NOTE: When the SDK adds support for output_config.effort, we can migrate to:
+      //   thinking: { type: "adaptive" }
+      //   output_config: { effort: "medium" | "high" }
+      //
+      // For now, we use token budgets that approximate effort levels:
+      //   - medium (thinking): 10,000 tokens
+      //   - high (ultrathink): 60,000-100,000 tokens (model-dependent)
+      //
+      // IMPORTANT: Opus models have a max output token limit of 64,000
       // The thinking tokens count towards this limit, so we cap ultrathink at 60,000
       // to leave room for the actual response (~4,000 tokens buffer)
       const selectedModel = model || 'claude-opus-4-5-20251101';
@@ -1655,15 +1669,19 @@ ${memoriesPrompt}
       // Opus has stricter limits, other models can use full 100k
       const ultrathinkTokens = isOpus ? 60000 : 100000;
 
+      // Effort level mapping via token budgets
       const thinkingTokensMap: Record<string, number | undefined> = {
-        off: undefined,
-        thinking: 10000,
-        ultrathink: ultrathinkTokens,
+        off: undefined,        // No extended thinking
+        thinking: 10000,       // Medium effort
+        ultrathink: ultrathinkTokens, // High effort
       };
       const maxThinkingTokens = thinkingTokensMap[thinkingMode || 'thinking'];
 
       if (thinkingMode === 'ultrathink' && isOpus) {
-        console.log(`[Claude Service] Ultrathink mode with Opus - capping thinking tokens to ${ultrathinkTokens} (model limit: 64,000)`);
+        console.log(`[Claude Service] Ultrathink (high effort) with Opus - capping thinking tokens to ${ultrathinkTokens} (model limit: 64,000)`);
+      }
+      if (thinkingMode && thinkingMode !== 'off') {
+        console.log(`[Claude Service] Thinking mode: ${thinkingMode} -> maxThinkingTokens: ${maxThinkingTokens}`);
       }
 
       // Build prompt with attachments
@@ -1812,6 +1830,83 @@ ${memoriesPrompt}
         }
       }
 
+      // Ultra Plan Mode: Configure PostToolUse hook to auto-generate tasks after plan approval
+      // This hook fires only when ExitPlanMode succeeds and ultraPlanMode setting is enabled
+      const settings = this.store.get('settings', {}) as any;
+      const ultraPlanEnabled = settings.ultraPlanMode || false;
+      const hooks = ultraPlanEnabled ? {
+        PostToolUse: [{
+          matcher: 'ExitPlanMode',  // Only trigger after ExitPlanMode succeeds
+          hooks: [async (input: any, toolUseID: string | undefined, { signal }: { signal: AbortSignal }) => {
+            try {
+              console.log('[Ultra Plan] PostToolUse hook triggered after ExitPlanMode');
+
+              // Read the approved plan content from cache
+              const cachedPlan = this.sessionPlanFiles.get(sessionId);
+              const planContent = cachedPlan?.content || '';
+
+              if (!planContent) {
+                console.log('[Ultra Plan] No plan content available, skipping task generation');
+                return { continue: true };
+              }
+
+              // Inject system message prompting structured task creation
+              const taskCreationPrompt = `
+# Task Decomposition Required
+
+Your plan has been approved. Before beginning implementation, you must decompose this plan into structured, executable tasks using the TaskCreate tool.
+
+## Approved Plan Summary
+
+${planContent.substring(0, 2000)}
+
+## Instructions
+
+1. **Analyze the plan** and identify discrete, actionable implementation steps
+2. **Create tasks** using the TaskCreate tool with:
+   - Clear, imperative subjects (e.g., "Add rewind button UI", "Implement fork backend logic")
+   - Detailed descriptions with acceptance criteria
+   - activeForm for progress display (e.g., "Adding rewind button")
+3. **Set up dependencies** using TaskUpdate with addBlockedBy for tasks that must wait
+4. **Use TaskList** to verify the complete task structure
+5. **Mark first task as in_progress** using TaskUpdate before starting work
+
+## Task Guidelines
+
+- Create granular, atomic tasks - each task should accomplish ONE clear, testable objective
+- Prefer more smaller tasks over fewer large tasks (e.g., separate tasks for "Add type definition", "Add service method", "Add IPC handler")
+- Each task should be independently verifiable and take no more than a few focused steps
+- Order tasks by natural execution flow
+- Use blockedBy for strict dependencies (e.g., "Add backend service" blocks "Add IPC handler")
+- Include a final "End-to-end verification" task
+- Start work immediately after task structure is confirmed
+
+## Example Task Structure
+
+Task 1: "Set up service layer" (no blockers)
+Task 2: "Add IPC handlers" (blocked by Task 1)
+Task 3: "Expose preload API" (blocked by Task 2)
+Task 4: "Implement UI component" (blocked by Task 3)
+Task 5: "End-to-end verification" (blocked by Task 4)
+
+Begin by creating the task structure now.
+`;
+
+              return {
+                continue: true,
+                hookSpecificOutput: {
+                  hookEventName: 'PostToolUse' as const,
+                  additionalContext: taskCreationPrompt,
+                }
+              };
+            } catch (error) {
+              console.error('[Ultra Plan] Error in PostToolUse hook:', error);
+              return { continue: true };
+            }
+          }]
+        }]
+      } : undefined;
+
       // Use the Claude Agent SDK query function with Claude Code's system prompt
       console.log('[Claude Service] Starting query, session has sshConfig:', !!session.sshConfig);
       if (session.sshConfig) {
@@ -1828,6 +1923,8 @@ ${memoriesPrompt}
           // Use selected model or default to Claude Opus 4.5
           model: model || 'claude-opus-4-5-20251101',
           ...(maxThinkingTokens ? { maxThinkingTokens } : {}),
+          // Ultra Plan Mode: Add hooks if enabled
+          ...(hooks ? { hooks } : {}),
           // Use Claude Code's system prompt preset with Grep Build agent context
           systemPrompt: {
             type: 'preset',

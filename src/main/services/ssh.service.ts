@@ -221,6 +221,27 @@ export class SSHService {
   }
 
   /**
+   * Read a file from the remote machine
+   */
+  async readRemoteFile(sessionId: string, config: SSHConfig, filePath: string): Promise<string> {
+    const connectionInfo = this.connections.get(sessionId);
+    if (!connectionInfo) {
+      throw new Error(`No SSH connection found for session ${sessionId}`);
+    }
+
+    // Use cat to read the file, escape single quotes in path
+    const escapedPath = filePath.replace(/'/g, "'\\''");
+    const command = `cat '${escapedPath}'`;
+
+    try {
+      const content = await this.execCommand(connectionInfo.client, command);
+      return content;
+    } catch (error) {
+      throw new Error(`Failed to read remote file ${filePath}: ${(error as Error).message}`);
+    }
+  }
+
+  /**
    * Execute a command on the remote and return stdout
    */
   private execCommand(client: Client, command: string): Promise<string> {

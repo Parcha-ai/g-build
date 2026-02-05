@@ -209,7 +209,10 @@ export default function SessionList() {
         new Date(s.updatedAt).getTime() > sevenDaysAgo // Show recently used sessions
       )
       .sort((a, b) => {
-        // Currently active session goes first
+        // Pinned sessions go first
+        if (a.isPinned && !b.isPinned) return -1;
+        if (!a.isPinned && b.isPinned) return 1;
+        // Currently active session goes next
         if (a.id === activeSessionId) return -1;
         if (b.id === activeSessionId) return 1;
         // Then sort by most recently used

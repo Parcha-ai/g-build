@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 import Editor, { OnMount, OnChange, BeforeMount, loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
-import { X, Save, FileText, Circle, Loader2 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import { X, Save, FileText, Circle, Loader2, Eye, Edit3 } from 'lucide-react';
 import { useEditorStore } from '../../stores/editor.store';
 
 // Track created model URIs for proper cleanup
@@ -22,10 +23,23 @@ export default function EditorPanel({ onClose }: EditorPanelProps) {
     updateTabContent,
     saveTab,
     closeEditor,
+    togglePreviewMode,
   } = useEditorStore();
 
   const editorRef = useRef<unknown>(null);
   const activeTab = tabs.find(tab => tab.id === activeTabId);
+
+  // Debug logging for markdown preview
+  React.useEffect(() => {
+    if (activeTab) {
+      console.log('[EditorPanel] Active tab:', {
+        fileName: activeTab.fileName,
+        language: activeTab.language,
+        isPreviewMode: activeTab.isPreviewMode,
+        isPlanTab: activeTab.isPlanTab,
+      });
+    }
+  }, [activeTab]);
 
   const handleClose = () => {
     closeEditor();
@@ -198,6 +212,26 @@ export default function EditorPanel({ onClose }: EditorPanelProps) {
 
         {/* Actions */}
         <div className="flex items-center gap-2 px-3">
+          {/* Preview/Edit toggle for markdown files */}
+          {activeTab?.language === 'markdown' && (
+            <button
+              onClick={() => activeTab && togglePreviewMode(activeTab.id)}
+              className="flex items-center gap-1 px-2 py-1 text-xs font-mono bg-claude-surface hover:bg-claude-bg text-claude-text transition-colors"
+              title={activeTab.isPreviewMode ? "Switch to Edit Mode" : "Switch to Preview Mode"}
+            >
+              {activeTab.isPreviewMode ? (
+                <>
+                  <Edit3 size={12} />
+                  EDIT
+                </>
+              ) : (
+                <>
+                  <Eye size={12} />
+                  PREVIEW
+                </>
+              )}
+            </button>
+          )}
           {activeTab?.isDirty && (
             <button
               onClick={handleSave}
@@ -247,29 +281,37 @@ export default function EditorPanel({ onClose }: EditorPanelProps) {
             </div>
           </div>
         ) : activeTab ? (
-          <Editor
-            // NOTE: Do NOT use key prop here - it forces remount and causes model leaks
-            // Monaco handles model switching internally via the path prop
-            height="100%"
-            path={activeTab.filePath} // Monaco uses this for model management
-            language={activeTab.language}
-            value={activeTab.content}
-            theme="vs-dark"
-            beforeMount={handleBeforeMount}
-            onMount={handleEditorMount}
-            onChange={handleEditorChange}
-            keepCurrentModel={true} // Keep models alive for tab switching (cleaner than remounting)
-            saveViewState={true} // Preserve view state for tab switching
-            options={{
-              fontSize: 13,
-              fontFamily: 'JetBrains Mono, Menlo, Monaco, monospace',
-              lineNumbers: 'on',
-              minimap: { enabled: true },
-              scrollBeyondLastLine: false,
-              wordWrap: 'on',
-              automaticLayout: true,
-              tabSize: 2,
-              insertSpaces: true,
+          // Show markdown preview or Monaco editor based on mode
+          activeTab.isPreviewMode && activeTab.language === 'markdown' ? (
+            <div className="flex-1 overflow-auto p-6 bg-claude-bg">
+              <div className="max-w-4xl mx-auto prose prose-invert prose-sm">
+                <ReactMarkdown>{activeTab.content}</ReactMarkdown>
+              </div>
+            </div>
+          ) : (
+            <Editor
+              // NOTE: Do NOT use key prop here - it forces remount and causes model leaks
+              // Monaco handles model switching internally via the path prop
+              height="100%"
+              path={activeTab.filePath} // Monaco uses this for model management
+              language={activeTab.language}
+              value={activeTab.content}
+              theme="vs-dark"
+              beforeMount={handleBeforeMount}
+              onMount={handleEditorMount}
+              onChange={handleEditorChange}
+              keepCurrentModel={true} // Keep models alive for tab switching (cleaner than remounting)
+              saveViewState={true} // Preserve view state for tab switching
+              options={{
+                fontSize: 13,
+                fontFamily: 'JetBrains Mono, Menlo, Monaco, monospace',
+                lineNumbers: 'on',
+                minimap: { enabled: true },
+                scrollBeyondLastLine: false,
+                wordWrap: 'on',
+                automaticLayout: true,
+                tabSize: 2,
+                insertSpaces: true,
               renderWhitespace: 'selection',
               bracketPairColorization: { enabled: true },
               guides: {
@@ -294,6 +336,7 @@ export default function EditorPanel({ onClose }: EditorPanelProps) {
               },
             }}
           />
+          )
         ) : (
           <div className="absolute inset-0 flex items-center justify-center text-claude-text-secondary">
             <p className="font-mono text-sm">No file open</p>

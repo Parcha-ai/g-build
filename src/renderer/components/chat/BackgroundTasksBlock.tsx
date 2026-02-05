@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal, Loader2, ChevronRight, ChevronDown, CheckCircle2, XCircle, Square } from 'lucide-react';
+import { Ampersand, Loader2, ChevronRight, ChevronDown, CheckCircle2, XCircle, Square } from 'lucide-react';
 import type { BackgroundTask } from '../../stores/session.store';
 
 interface BackgroundTasksBlockProps {
@@ -65,7 +65,7 @@ export default function BackgroundTasksBlock({ tasks, onStopTask, onViewOutput }
         />
 
         {/* Icon and label */}
-        <Terminal size={14} className={`${accentColor} flex-shrink-0`} />
+        <Ampersand size={14} className={`${accentColor} flex-shrink-0`} />
         <span className={`font-semibold ${accentColor}`}>
           Background ({runningTasks} running)
         </span>

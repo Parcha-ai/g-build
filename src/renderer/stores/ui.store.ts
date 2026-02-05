@@ -113,11 +113,58 @@ export const useUIStore = create<UIState>((set, get) => ({
   setSidebarWidth: (width) => set({ sidebarWidth: width }),
   setTerminalHeight: (height) => set({ terminalHeight: height }),
   toggleTerminalPanel: () => set((state) => ({ isTerminalPanelOpen: !state.isTerminalPanelOpen })),
-  toggleBrowserPanel: () => set((state) => ({ isBrowserPanelOpen: !state.isBrowserPanelOpen })),
+  // Browser, Extensions, Plan, and Editor panels are mutually exclusive
+  // When opening one, close the others. Git can coexist with any panel.
+  toggleBrowserPanel: () => {
+    const state = useUIStore.getState();
+    set({
+      isBrowserPanelOpen: !state.isBrowserPanelOpen,
+      // Close competing panels when opening browser
+      ...((!state.isBrowserPanelOpen) ? { isExtensionsPanelOpen: false, isPlanPanelOpen: false } : {})
+    });
+    // Also close editor when opening browser (dynamic import to avoid circular dependency)
+    if (!state.isBrowserPanelOpen) {
+      import('./editor.store').then(({ useEditorStore }) => {
+        useEditorStore.getState().closeEditor();
+      });
+    }
+  },
   toggleGitPanel: () => set((state) => ({ isGitPanelOpen: !state.isGitPanelOpen })),
-  toggleExtensionsPanel: () => set((state) => ({ isExtensionsPanelOpen: !state.isExtensionsPanelOpen })),
-  togglePlanPanel: () => set((state) => ({ isPlanPanelOpen: !state.isPlanPanelOpen })),
-  showPlanPanel: () => set({ isPlanPanelOpen: true, isBrowserPanelOpen: false, isExtensionsPanelOpen: false }),
+  toggleExtensionsPanel: () => {
+    const state = useUIStore.getState();
+    set({
+      isExtensionsPanelOpen: !state.isExtensionsPanelOpen,
+      // Close competing panels when opening extensions
+      ...((!state.isExtensionsPanelOpen) ? { isBrowserPanelOpen: false, isPlanPanelOpen: false } : {})
+    });
+    // Also close editor when opening extensions (dynamic import to avoid circular dependency)
+    if (!state.isExtensionsPanelOpen) {
+      import('./editor.store').then(({ useEditorStore }) => {
+        useEditorStore.getState().closeEditor();
+      });
+    }
+  },
+  togglePlanPanel: () => {
+    const state = useUIStore.getState();
+    set({
+      isPlanPanelOpen: !state.isPlanPanelOpen,
+      // Close competing panels when opening plan
+      ...((!state.isPlanPanelOpen) ? { isBrowserPanelOpen: false, isExtensionsPanelOpen: false } : {})
+    });
+    // Also close editor when opening plan (dynamic import to avoid circular dependency)
+    if (!state.isPlanPanelOpen) {
+      import('./editor.store').then(({ useEditorStore }) => {
+        useEditorStore.getState().closeEditor();
+      });
+    }
+  },
+  showPlanPanel: () => {
+    set({ isPlanPanelOpen: true, isBrowserPanelOpen: false, isExtensionsPanelOpen: false });
+    // Also close editor when showing plan (dynamic import to avoid circular dependency)
+    import('./editor.store').then(({ useEditorStore }) => {
+      useEditorStore.getState().closeEditor();
+    });
+  },
   setInspectorActive: (active) => set({ isInspectorActive: active }),
   setSelectedElement: (element) => set({ selectedElement: element }),
   cycleSplitRatio: () => set((state) => {
@@ -155,7 +202,7 @@ export const useUIStore = create<UIState>((set, get) => ({
     }
   },
   openOnboarding: () => set({ isOnboardingOpen: true }),
-  closeOnboarding: () => set({ isOnboardingOpen: false, hasApiKey: true }),
+  closeOnboarding: () => set({ isOnboardingOpen: false }),
 
   // Plan content methods
   setPlanContent: (sessionId: string, content: string) => set((state) => ({

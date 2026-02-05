@@ -12,6 +12,9 @@ export interface EditorTab {
   isDirty: boolean;
   language: string;
   lineNumber?: number;
+  isPreviewMode?: boolean; // For markdown files, track if showing preview vs raw
+  isPlanTab?: boolean; // Special flag for plan approval tabs
+  planRequestId?: string; // For plan approval tabs, track the request ID
 }
 
 interface EditorState {
@@ -25,6 +28,7 @@ interface EditorState {
   isQuickSearchOpen: boolean;
 
   openFile: (filePath: string, lineNumber?: number) => Promise<void>;
+  openPlan: (planContent: string, requestId: string) => void; // Open plan as editor tab
   closeTab: (tabId: string) => void;
   closeAllTabs: () => void;
   setActiveTab: (tabId: string) => void;
@@ -33,6 +37,7 @@ interface EditorState {
   saveAllTabs: () => Promise<void>;
   closeEditor: () => void;
   openEditor: () => void;
+  togglePreviewMode: (tabId: string) => void; // Toggle between preview and edit for markdown
 
   // Quick Search actions
   openQuickSearch: () => void;
@@ -101,15 +106,26 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   isQuickSearchOpen: false,
 
   openFile: async (filePath: string, lineNumber?: number) => {
+    console.log('[EditorStore] openFile called:', filePath, 'lineNumber:', lineNumber);
+
     if (!hasElectronAPI) {
+      console.error('[EditorStore] No Electron API available');
       set({ error: 'File operations not available in preview mode', isLoading: false });
       return;
     }
+
+    // Get active session ID from session store (dynamic import to avoid circular dependency)
+    const { useSessionStore } = await import('./session.store');
+    const activeSessionId = useSessionStore.getState().activeSessionId;
+    console.log('[EditorStore] Active session ID:', activeSessionId);
+
     const { tabs } = get();
+    console.log('[EditorStore] Current tabs:', tabs.length);
 
     // Check if file is already open
     const existingTab = tabs.find(tab => tab.filePath === filePath);
     if (existingTab) {
+      console.log('[EditorStore] File already open, activating tab:', existingTab.id);
       set({
         activeTabId: existingTab.id,
         isEditorOpen: true,
@@ -123,18 +139,25 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return;
     }
 
+    console.log('[EditorStore] Setting loading state');
     set({ isLoading: true, error: null });
 
     try {
-      const result = await window.electronAPI.fs.readFile(filePath);
+      console.log('[EditorStore] Reading file via IPC, sessionId:', activeSessionId);
+      const result = await window.electronAPI.fs.readFile(filePath, activeSessionId || undefined);
+      console.log('[EditorStore] Read result:', result);
 
       if (!result.success) {
+        console.error('[EditorStore] Failed to read file:', result.error);
         set({ error: result.error || 'Failed to read file', isLoading: false });
         return;
       }
 
       const content = result.content || '';
       const fileName = filePath.split('/').pop() || filePath;
+      const language = getLanguageFromPath(filePath);
+      console.log('[EditorStore] Creating new tab, fileName:', fileName, 'language:', language);
+
       const newTab: EditorTab = {
         id: generateTabId(filePath),
         filePath,
@@ -142,17 +165,34 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         content,
         originalContent: content,
         isDirty: false,
-        language: getLanguageFromPath(filePath),
+        language,
         lineNumber,
+        // Default to preview mode for markdown files
+        isPreviewMode: language === 'markdown',
       };
 
+      console.log('[EditorStore] Setting tab state, isEditorOpen will be true');
       set(state => ({
         tabs: [...state.tabs, newTab],
         activeTabId: newTab.id,
         isEditorOpen: true,
         isLoading: false,
       }));
+      console.log('[EditorStore] Tab created successfully, ID:', newTab.id);
+
+      // Close competing panels (Browser, Extensions, Plan) when opening editor
+      // Import dynamically to avoid circular dependency
+      console.log('[EditorStore] Closing competing panels');
+      import('./ui.store').then(({ useUIStore }) => {
+        useUIStore.setState({
+          isBrowserPanelOpen: false,
+          isExtensionsPanelOpen: false,
+          isPlanPanelOpen: false,
+        });
+        console.log('[EditorStore] Competing panels closed');
+      });
     } catch (error) {
+      console.error('[EditorStore] Exception in openFile:', error);
       set({
         error: error instanceof Error ? error.message : 'Failed to open file',
         isLoading: false
@@ -247,12 +287,63 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     await Promise.all(dirtyTabs.map(tab => saveTab(tab.id)));
   },
 
+  openPlan: (planContent: string, requestId: string) => {
+    console.log('[EditorStore] openPlan called, requestId:', requestId);
+
+    const planTab: EditorTab = {
+      id: `plan-${requestId}`,
+      filePath: `plan://${requestId}`,
+      fileName: 'Plan (Awaiting Approval)',
+      content: planContent,
+      originalContent: planContent,
+      isDirty: false,
+      language: 'markdown',
+      isPreviewMode: true,  // Always show plans in preview
+      isPlanTab: true,
+      planRequestId: requestId,
+    };
+
+    set(state => ({
+      tabs: [...state.tabs.filter(t => !t.isPlanTab), planTab], // Replace any existing plan tab
+      activeTabId: planTab.id,
+      isEditorOpen: true,
+    }));
+
+    // Close competing panels
+    import('./ui.store').then(({ useUIStore }) => {
+      useUIStore.setState({
+        isBrowserPanelOpen: false,
+        isExtensionsPanelOpen: false,
+        isPlanPanelOpen: false,
+      });
+    });
+  },
+
   closeEditor: () => {
     set({ isEditorOpen: false });
   },
 
   openEditor: () => {
     set({ isEditorOpen: true });
+    // Close competing panels when manually opening editor
+    // Import dynamically to avoid circular dependency
+    import('./ui.store').then(({ useUIStore }) => {
+      useUIStore.setState({
+        isBrowserPanelOpen: false,
+        isExtensionsPanelOpen: false,
+        isPlanPanelOpen: false,
+      });
+    });
+  },
+
+  togglePreviewMode: (tabId: string) => {
+    set(state => ({
+      tabs: state.tabs.map(tab =>
+        tab.id === tabId
+          ? { ...tab, isPreviewMode: !tab.isPreviewMode }
+          : tab
+      )
+    }));
   },
 
   // Quick Search actions
