@@ -1888,8 +1888,8 @@ ${memoriesPrompt}
           matcher: 'mcp__claudette-browser__Browser*', // Match all MCP browser tools
           hooks: [async (input: any, toolUseID: string | undefined, options: any) => {
             console.log('[SSH Browser Intercept] PreToolUse hook called with:', JSON.stringify({ input, toolUseID, optionsKeys: Object.keys(options || {}) }));
-            // Extract actual tool name from MCP format
-            const fullToolName = input?.toolName || options?.toolName || '';
+            // Extract actual tool name from MCP format (note: tool_name is snake_case in hook input)
+            const fullToolName = input?.tool_name || input?.toolName || '';
             const toolName = fullToolName.replace('mcp__claudette-browser__', '');
             console.log('[SSH Browser Intercept] Extracted tool name:', fullToolName, '->', toolName);
 
