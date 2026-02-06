@@ -1896,7 +1896,10 @@ ${memoriesPrompt}
             if (toolName.startsWith('Browser')) {
               console.log('[SSH Browser Intercept] Executing browser tool locally:', toolName);
               try {
-                const result = await this.executeLocalBrowserTool(sessionId, toolName, input);
+                // Extract the actual tool input from hook input structure
+                const toolInput = input?.tool_input || {};
+                const result = await this.executeLocalBrowserTool(sessionId, toolName, toolInput);
+                console.log('[SSH Browser Intercept] Local execution completed:', { success: result.success });
                 return {
                   continue: false, // Stop - don't send to remote
                   toolResult: result, // Return local result
