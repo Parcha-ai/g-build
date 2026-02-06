@@ -144,15 +144,13 @@ export class StagehandService {
 
       this.stagehand = new Stagehand({
         env: 'LOCAL',
+        apiKey: this.googleApiKey || undefined, // Pass Google API key at top level
         localBrowserLaunchOptions: browserWsUrl ? {
           cdpUrl: browserWsUrl, // Connect to existing webview via browser-level CDP
         } : {
           headless: true, // Fallback: launch own browser
         },
-        model: this.googleApiKey ? {
-          modelName: 'google/gemini-2.5-flash',
-          apiKey: this.googleApiKey, // Pass API key directly to model config
-        } : 'google/gemini-2.5-flash', // Fallback to env var if no key
+        model: 'google/gemini-2.5-flash', // Model name (API key passed separately)
         domSettleTimeout: 3000, // Wait for DOM to stabilize
         verbose: 1,
       });
@@ -640,13 +638,11 @@ export class StagehandService {
 
       this.stagehand = new Stagehand({
         env: 'LOCAL',
+        apiKey: this.googleApiKey || undefined, // Pass Google API key at top level
         localBrowserLaunchOptions: {
           cdpUrl: browserWsUrl,
         },
-        model: this.googleApiKey ? {
-          modelName: 'google/gemini-2.5-flash',
-          apiKey: this.googleApiKey, // Pass API key directly to model config
-        } : 'google/gemini-2.5-flash', // Fallback to env var if no key
+        model: 'google/gemini-2.5-flash', // Model name (API key passed separately)
         domSettleTimeout: 3000,
         verbose: 1,
       });

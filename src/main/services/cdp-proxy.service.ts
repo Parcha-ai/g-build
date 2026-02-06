@@ -262,16 +262,27 @@ export class CdpProxyService {
           const wcId = browserService.getWebContentsId(targetId);
           if (wcId) {
             const wc = webContents.fromId(wcId);
-            if (wc && !wc.debugger.isAttached()) {
+            if (wc) {
               try {
-                wc.debugger.attach('1.3');
-                console.log('[CDP Proxy] Debugger attached for target:', targetId);
+                // Attach if not already attached
+                if (!wc.debugger.isAttached()) {
+                  wc.debugger.attach('1.3');
+                  console.log('[CDP Proxy] Debugger attached for target:', targetId);
+                } else {
+                  console.log('[CDP Proxy] Debugger already attached for target:', targetId);
+                }
 
-                // Forward debugger events to WebSocket
-                wc.debugger.on('message', (_event, eventMethod, eventParams) => {
-                  if (flatten) {
+                // Always set up event forwarding for this session (even if debugger was already attached)
+                const eventHandler = (_event: any, eventMethod: string, eventParams: any) => {
+                  if (flatten && ws.readyState === WebSocket.OPEN) {
                     this.sendEvent(ws, eventMethod, eventParams, sessionIdStr);
                   }
+                };
+                wc.debugger.on('message', eventHandler);
+
+                // Clean up event handler when WebSocket closes
+                ws.on('close', () => {
+                  wc.debugger.off('message', eventHandler);
                 });
               } catch (err) {
                 console.log('[CDP Proxy] Debugger attach note:', err);
