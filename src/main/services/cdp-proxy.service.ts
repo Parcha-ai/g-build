@@ -42,6 +42,7 @@ export class CdpProxyService {
       try {
         // Create HTTP server for /json endpoints
         const requestHandler = (req: any, res: any) => this.handleHttpRequest(req, res);
+        // @ts-ignore - Electron's TS config doesn't resolve Node http types properly
         this.httpServer = http.createServer(requestHandler);
 
         // Create WebSocket server attached to HTTP server
