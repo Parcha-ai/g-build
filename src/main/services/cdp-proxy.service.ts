@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { WebSocketServer, WebSocket } from 'ws';
 import * as http from 'http';
 import { webContents } from 'electron';
@@ -14,7 +15,7 @@ import { browserService } from './browser.service';
  * - Page-level WebSocket connections for direct page control
  */
 export class CdpProxyService {
-  private httpServer: http.Server | null = null;
+  private httpServer: any = null;
   private wss: WebSocketServer | null = null;
   private port = 9223;
   private activeConnections = new Map<WebSocket, {
@@ -40,7 +41,8 @@ export class CdpProxyService {
     return new Promise((resolve, reject) => {
       try {
         // Create HTTP server for /json endpoints
-        this.httpServer = http.createServer((req, res) => this.handleHttpRequest(req, res));
+        const requestHandler = (req: any, res: any) => this.handleHttpRequest(req, res);
+        this.httpServer = http.createServer(requestHandler);
 
         // Create WebSocket server attached to HTTP server
         this.wss = new WebSocketServer({ server: this.httpServer });
@@ -85,7 +87,7 @@ export class CdpProxyService {
   /**
    * Handle HTTP requests for CDP discovery endpoints
    */
-  private handleHttpRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+  private handleHttpRequest(req: any, res: any): void {
     const url = req.url || '';
 
     // Set CORS headers for browser access
