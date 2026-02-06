@@ -299,11 +299,16 @@ ${memoriesPrompt}
     const apiKey = this.getApiKey();
     if (apiKey) {
       stagehandService.setApiKey(apiKey);
+      console.log('[Claude Service] Set Anthropic API key for Stagehand');
     }
     // Pass Google API key for Gemini models (from store or environment)
     const googleApiKey = this.getGoogleApiKey() || process.env.GOOGLE_API_KEY;
+    console.log('[Claude Service] Google API key check:', googleApiKey ? 'PRESENT' : 'MISSING', 'from store:', !!this.getGoogleApiKey(), 'from env:', !!process.env.GOOGLE_API_KEY);
     if (googleApiKey) {
       stagehandService.setGoogleApiKey(googleApiKey);
+      console.log('[Claude Service] Set Google API key for Stagehand');
+    } else {
+      console.warn('[Claude Service] No Google API key available - Stagehand AI features will not work!');
     }
 
     // ============ STAGEHAND-POWERED BROWSER TOOLS ============
@@ -1779,9 +1784,16 @@ ${memoriesPrompt}
 
       // Build MCP servers configuration
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const mcpServersConfig: Record<string, any> = {
-        'claudette-browser': this.getBrowserMcpServer(sessionId),
-      };
+      const mcpServersConfig: Record<string, any> = {};
+
+      // CRITICAL: Browser tools are LOCAL ONLY - never send to remote SSH sessions
+      // They control the local Grep app's browser panel, not remote browsers
+      if (!session.sshConfig) {
+        mcpServersConfig['claudette-browser'] = this.getBrowserMcpServer(sessionId);
+        console.log('[Claude Service] Browser MCP tools enabled (local session)');
+      } else {
+        console.log('[Claude Service] Browser MCP tools disabled (SSH remote session)');
+      }
 
       // Load user-installed MCP servers from Claudette's electron-store
       // This runs on EVERY message, so new MCP servers are picked up automatically
