@@ -1372,6 +1372,37 @@ ${memoriesPrompt}
     return mcpServer;
   }
 
+  /**
+   * Execute browser tools locally (used for SSH sessions where browser is local)
+   */
+  private async executeLocalBrowserTool(sessionId: string, toolName: string, input: Record<string, unknown>): Promise<any> {
+    console.log('[Claude Service] Executing browser tool locally:', toolName, input);
+
+    // Ensure browser panel is open
+    await this.ensureBrowserPanelOpen(sessionId);
+
+    switch (toolName) {
+      case 'BrowserNavigate':
+        return stagehandService.navigate(input.url as string, sessionId);
+
+      case 'BrowserAct':
+        return stagehandService.act(input.instruction as string, sessionId);
+
+      case 'BrowserObserve':
+        return stagehandService.observe(input.instruction as string | undefined, sessionId);
+
+      case 'BrowserAgent':
+        return stagehandService.agent(input.task as string);
+
+      case 'BrowserExtractData':
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return stagehandService.extract(input.instruction as string, input.schema as any);
+
+      default:
+        throw new Error(`Unknown browser tool: ${toolName}`);
+    }
+  }
+
   setApiKey(apiKey: string): void {
     this.store.set('anthropicApiKey', apiKey);
   }
@@ -1786,14 +1817,10 @@ ${memoriesPrompt}
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const mcpServersConfig: Record<string, any> = {};
 
-      // CRITICAL: Browser tools are LOCAL ONLY - never send to remote SSH sessions
-      // They control the local Grep app's browser panel, not remote browsers
-      if (!session.sshConfig) {
-        mcpServersConfig['claudette-browser'] = this.getBrowserMcpServer(sessionId);
-        console.log('[Claude Service] Browser MCP tools enabled (local session)');
-      } else {
-        console.log('[Claude Service] Browser MCP tools disabled (SSH remote session)');
-      }
+      // Browser tools are available for all sessions
+      // For SSH sessions, PreToolUse hook intercepts and executes them locally
+      mcpServersConfig['claudette-browser'] = this.getBrowserMcpServer(sessionId);
+      console.log('[Claude Service] Browser MCP tools enabled');
 
       // Load user-installed MCP servers from Claudette's electron-store
       // This runs on EVERY message, so new MCP servers are picked up automatically
@@ -1850,7 +1877,43 @@ ${memoriesPrompt}
       // This hook fires only when ExitPlanMode succeeds and ultraPlanMode setting is enabled
       const settings = this.store.get('settings', {}) as any;
       const ultraPlanEnabled = settings.ultraPlanMode || false;
-      const hooks = ultraPlanEnabled ? {
+
+      // Build hooks object
+      const hooks: any = {};
+
+      // PreToolUse hook for SSH sessions: intercept browser tools and execute locally
+      if (session.sshConfig) {
+        hooks.PreToolUse = [{
+          matcher: 'Browser*', // Match all Browser tools
+          hooks: [async (input: any, toolUseID: string | undefined, { signal }: { signal: AbortSignal }) => {
+            const toolName = input?.toolName || 'Unknown';
+            if (toolName.startsWith('Browser')) {
+              console.log('[SSH Browser Intercept] Executing browser tool locally:', toolName);
+              try {
+                const result = await this.executeLocalBrowserTool(sessionId, toolName, input);
+                return {
+                  continue: false, // Stop - don't send to remote
+                  toolResult: result, // Return local result
+                };
+              } catch (error) {
+                console.error('[SSH Browser Intercept] Local execution failed:', error);
+                return {
+                  continue: false,
+                  toolResult: {
+                    success: false,
+                    error: error instanceof Error ? error.message : String(error),
+                  },
+                };
+              }
+            }
+            return { continue: true }; // Not a browser tool, continue normally
+          }]
+        }];
+      }
+
+      // Add ultra plan mode hooks if enabled
+      if (ultraPlanEnabled) {
+        hooks.PostToolUse = [{
         PostToolUse: [{
           matcher: 'ExitPlanMode',  // Only trigger after ExitPlanMode succeeds
           hooks: [async (input: any, toolUseID: string | undefined, { signal }: { signal: AbortSignal }) => {
@@ -1920,8 +1983,8 @@ Begin by creating the task structure now.
               return { continue: true };
             }
           }]
-        }]
-      } : undefined;
+        }];
+      }
 
       // Use the Claude Agent SDK query function with Claude Code's system prompt
       console.log('[Claude Service] Starting query, session has sshConfig:', !!session.sshConfig);
