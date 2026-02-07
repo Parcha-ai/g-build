@@ -51,6 +51,7 @@ export interface Session {
   forkName?: string; // Silly memorable name for this fork (e.g., "fuzzy-tiger")
   // Teleportation tracking
   teleportedFrom?: string; // Original local session ID if teleported to SSH
+  downloadedFrom?: string; // Session ID of source SSH session (reverse teleport)
   sdkSessionId?: string; // Claude Agent SDK session ID for transcript resumption
   // Pinning/favorites
   isPinned?: boolean; // True if session is pinned to top of recent sessions
@@ -426,6 +427,13 @@ export interface MarketplacePlugin {
   installed?: boolean;
   enabled?: boolean;
   installedVersion?: string;
+}
+
+// Download session config (reverse teleport: SSH -> local)
+export interface DownloadSessionConfig {
+  localRepoPath: string;      // Path to local git repo
+  sessionName: string;         // Name for new local session
+  branch?: string;             // Optional: specific branch to checkout
 }
 
 // Export audio types

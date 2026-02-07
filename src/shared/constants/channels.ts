@@ -179,6 +179,8 @@ export const IPC_CHANNELS = {
   SSH_KILL_PERSISTENT_SESSION: 'ssh:kill-persistent-session',
   SSH_CHECK_CONNECTION: 'ssh:check-connection',
   SSH_TELEPORT_SESSION: 'ssh:teleport-session',
+  SSH_DOWNLOAD_SESSION: 'ssh:download-session',
+  SSH_DOWNLOAD_PROGRESS: 'ssh:download-progress',
 
   // Voice mode channels (ElevenLabs Conversational AI)
   VOICE_CONNECT: 'voice:connect',

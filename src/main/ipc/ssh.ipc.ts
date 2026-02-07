@@ -1,9 +1,14 @@
 import { IpcMain, BrowserWindow } from 'electron';
 import { v4 as uuid } from 'uuid';
 import Store from 'electron-store';
+import simpleGit from 'simple-git';
+import path from 'path';
+import os from 'os';
+import fs from 'fs/promises';
+import crypto from 'crypto';
 import { IPC_CHANNELS } from '../../shared/constants/channels';
 import { sshService } from '../services/ssh.service';
-import type { SSHConfig, Session, SavedSSHConfig } from '../../shared/types';
+import type { SSHConfig, Session, SavedSSHConfig, DownloadSessionConfig } from '../../shared/types';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const sessionStore: any = new Store({ name: 'claudette-sessions' });
@@ -30,6 +35,44 @@ function sendSetupProgress(sessionId: string, status: 'running' | 'completed' | 
   for (const win of windows) {
     win.webContents.send(IPC_CHANNELS.SSH_SETUP_PROGRESS, { sessionId, status, message, output, error });
   }
+}
+
+/**
+ * Send download progress to all renderer windows
+ */
+function sendDownloadProgress(message: string): void {
+  BrowserWindow.getAllWindows().forEach(win => {
+    win.webContents.send(IPC_CHANNELS.SSH_DOWNLOAD_PROGRESS, message);
+  });
+}
+
+/**
+ * Generate a stable hash for a path to use as directory name
+ */
+function getPathHash(repoPath: string): string {
+  return crypto.createHash('md5').update(repoPath).digest('hex').substring(0, 8);
+}
+
+/**
+ * Resolve a path to its main git repository.
+ * If the path is inside a worktree, returns the main repo path.
+ */
+async function getMainRepoPath(repoPath: string): Promise<string> {
+  const git = simpleGit(repoPath);
+  try {
+    const gitDir = await git.raw(['rev-parse', '--git-dir']);
+    const trimmedGitDir = gitDir.trim();
+
+    if (trimmedGitDir.includes('.git/worktrees/') || trimmedGitDir.includes('/.git/worktrees/')) {
+      const commonGitDir = await git.raw(['rev-parse', '--git-common-dir']);
+      const mainRepoPath = path.dirname(commonGitDir.trim());
+      console.log(`[Download] Resolved worktree at ${repoPath} to main repo at ${mainRepoPath}`);
+      return mainRepoPath;
+    }
+  } catch {
+    console.log(`[Download] Path ${repoPath} is not a worktree, using as main repo`);
+  }
+  return repoPath;
 }
 
 export function registerSSHHandlers(ipcMain: IpcMain): void {
@@ -399,6 +442,336 @@ export function registerSSHHandlers(ipcMain: IpcMain): void {
       } catch (error) {
         console.error('[SSH IPC] Teleport failed:', error);
         sendSetupProgress(data.sourceSessionId, 'error', undefined, undefined, error instanceof Error ? error.message : 'Unknown error');
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        };
+      }
+    }
+  );
+
+  /**
+   * Download an SSH session to local (reverse teleport)
+   * Copies transcript from remote, creates local worktree, and creates a local session
+   *
+   * Order of operations:
+   * 1. Validate source SSH session exists and has sshConfig
+   * 2. Connect to remote & gather git info (remote URL, branch, transcript path)
+   * 3. Validate local repo exists and remotes match
+   * 4. Create local worktree
+   * 5. Download transcript from remote to local
+   * 6. Create new local session record
+   * 7. Cleanup & return
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.SSH_DOWNLOAD_SESSION,
+    async (
+      _event,
+      sessionId: string,
+      config: DownloadSessionConfig
+    ): Promise<{ success: boolean; newSessionId?: string; error?: string }> => {
+      console.log('[SSH IPC] Downloading session', sessionId, 'to local with config:', config);
+
+      try {
+        // ========================================================================
+        // STEP 1: Validate source session
+        // ========================================================================
+        const sessions = sessionStore.get('sessions') || {};
+        const sourceSession = sessions[sessionId] as Session | undefined;
+
+        if (!sourceSession) {
+          return { success: false, error: 'Source session not found' };
+        }
+
+        if (!sourceSession.sshConfig) {
+          return { success: false, error: 'Source session is not an SSH session - nothing to download' };
+        }
+
+        const sshConfig = sourceSession.sshConfig;
+        const remoteWorkingDir = sourceSession.worktreePath || sshConfig.remoteWorkdir;
+        const sdkSessionId = sourceSession.sdkSessionId;
+
+        sendDownloadProgress('Validating source session...');
+
+        // ========================================================================
+        // STEP 2: Connect to remote & gather git info
+        // ========================================================================
+        const downloadConnId = `download-${Date.now()}`;
+
+        try {
+          sendDownloadProgress('Connecting to remote host...');
+          await sshService.connect(downloadConnId, sshConfig);
+        } catch (connError) {
+          return {
+            success: false,
+            error: `Failed to connect to remote: ${connError instanceof Error ? connError.message : String(connError)}`,
+          };
+        }
+
+        const connInfo = sshService['connections'].get(downloadConnId);
+        if (!connInfo) {
+          return { success: false, error: 'Failed to establish SSH connection' };
+        }
+        const client = connInfo.client;
+
+        let remoteOriginUrl = '';
+        let remoteBranch = '';
+        let remoteTranscriptPath: string | null = null;
+
+        try {
+          sendDownloadProgress('Gathering remote git info...');
+
+          // Get remote origin URL
+          try {
+            remoteOriginUrl = (await sshService.execCommand(
+              client,
+              `cd "${remoteWorkingDir}" && git remote get-url origin 2>/dev/null || echo ""`
+            )).trim();
+          } catch {
+            console.log('[SSH IPC] Could not get remote origin URL');
+          }
+
+          // Get current branch
+          try {
+            remoteBranch = (await sshService.execCommand(
+              client,
+              `cd "${remoteWorkingDir}" && git branch --show-current 2>/dev/null || echo "main"`
+            )).trim() || 'main';
+          } catch {
+            remoteBranch = 'main';
+          }
+
+          // Get remote transcript path
+          if (sdkSessionId) {
+            sendDownloadProgress('Locating remote transcript...');
+            remoteTranscriptPath = await sshService.getRemoteTranscriptPath(
+              client,
+              remoteWorkingDir,
+              sdkSessionId
+            );
+            if (remoteTranscriptPath) {
+              console.log('[SSH IPC] Found remote transcript at:', remoteTranscriptPath);
+            } else {
+              console.log('[SSH IPC] No remote transcript found (session will start fresh)');
+            }
+          }
+        } catch (infoError) {
+          console.warn('[SSH IPC] Error gathering remote info (continuing):', infoError);
+        }
+
+        // ========================================================================
+        // STEP 3: Validate local repo
+        // ========================================================================
+        sendDownloadProgress('Validating local repository...');
+
+        try {
+          await fs.access(config.localRepoPath);
+        } catch {
+          sshService.disconnect(downloadConnId);
+          return { success: false, error: `Local repo path does not exist: ${config.localRepoPath}` };
+        }
+
+        const localGit = simpleGit(config.localRepoPath);
+        const isGitRepo = await localGit.checkIsRepo();
+
+        if (!isGitRepo) {
+          sshService.disconnect(downloadConnId);
+          return { success: false, error: `Local path is not a git repository: ${config.localRepoPath}` };
+        }
+
+        // Optionally validate that git remotes match
+        if (remoteOriginUrl) {
+          try {
+            const localOriginUrl = (await localGit.remote(['get-url', 'origin'])) as string | void;
+            if (localOriginUrl && localOriginUrl.trim()) {
+              // Normalise for comparison (strip .git suffix, trailing slashes)
+              const normalise = (url: string) => url.trim().replace(/\.git$/, '').replace(/\/$/, '');
+              if (normalise(localOriginUrl.toString()) !== normalise(remoteOriginUrl)) {
+                console.warn(
+                  `[SSH IPC] Git remote mismatch - local: ${localOriginUrl.toString().trim()}, remote: ${remoteOriginUrl}. Proceeding anyway.`
+                );
+                sendDownloadProgress('Warning: Git remote URLs differ between local and remote. Proceeding anyway.');
+              }
+            }
+          } catch {
+            // No remote configured locally - that's fine, continue
+            console.log('[SSH IPC] Could not check local git remote (may not have origin)');
+          }
+        }
+
+        // ========================================================================
+        // STEP 4: Create local worktree
+        // ========================================================================
+        const targetBranch = config.branch || remoteBranch || 'main';
+        sendDownloadProgress(`Creating local worktree for branch "${targetBranch}"...`);
+
+        let worktreePath: string;
+
+        try {
+          // Resolve to main repo to avoid nested worktree issues
+          const mainRepoPath = await getMainRepoPath(config.localRepoPath);
+          const mainGit = simpleGit(mainRepoPath);
+
+          const worktreeDirName = `dl-${uuid().substring(0, 8)}`;
+          const repoHash = getPathHash(mainRepoPath);
+          const centralWorktreesDir = path.join(os.homedir(), '.claudette', 'worktrees', repoHash);
+          worktreePath = path.join(centralWorktreesDir, worktreeDirName);
+
+          // Ensure the central directory exists
+          await fs.mkdir(centralWorktreesDir, { recursive: true });
+
+          // Check if branch exists locally, if not fetch from remote
+          const branches = await mainGit.branch(['-a']);
+          const branchExistsLocally = branches.all.includes(targetBranch);
+          const branchExistsRemotely = branches.all.includes(`remotes/origin/${targetBranch}`);
+
+          if (!branchExistsLocally && branchExistsRemotely) {
+            sendDownloadProgress(`Fetching branch "${targetBranch}" from remote...`);
+            try {
+              await mainGit.fetch(['origin', targetBranch]);
+            } catch (fetchErr) {
+              console.warn('[SSH IPC] Fetch failed, will try worktree creation anyway:', fetchErr);
+            }
+          } else if (!branchExistsLocally && !branchExistsRemotely) {
+            // Try a general fetch first
+            sendDownloadProgress('Fetching latest branches from remote...');
+            try {
+              await mainGit.fetch(['--all', '--prune']);
+            } catch {
+              console.log('[SSH IPC] Fetch --all failed, continuing with local state');
+            }
+          }
+
+          // Create the worktree
+          console.log(`[SSH IPC] Creating worktree at ${worktreePath} from ${mainRepoPath} on branch ${targetBranch}`);
+          const branchesAfterFetch = await mainGit.branch(['-a']);
+          const localExists = branchesAfterFetch.all.includes(targetBranch);
+          const remoteExists = branchesAfterFetch.all.includes(`remotes/origin/${targetBranch}`);
+
+          if (localExists) {
+            await mainGit.raw(['worktree', 'add', worktreePath, targetBranch]);
+          } else if (remoteExists) {
+            // Create tracking branch from remote
+            await mainGit.raw(['worktree', 'add', '--track', '-b', targetBranch, worktreePath, `origin/${targetBranch}`]);
+          } else {
+            // Branch doesn't exist anywhere - create new from current HEAD
+            sendDownloadProgress(`Branch "${targetBranch}" not found, creating new branch from HEAD...`);
+            await mainGit.raw(['worktree', 'add', '-b', targetBranch, worktreePath]);
+          }
+
+          sendDownloadProgress('Worktree created successfully');
+        } catch (wtError) {
+          sshService.disconnect(downloadConnId);
+          return {
+            success: false,
+            error: `Failed to create worktree: ${wtError instanceof Error ? wtError.message : String(wtError)}`,
+          };
+        }
+
+        // ========================================================================
+        // STEP 5: Download transcript
+        // ========================================================================
+        let transcriptDownloaded = false;
+
+        if (remoteTranscriptPath && sdkSessionId) {
+          sendDownloadProgress('Downloading session transcript...');
+
+          try {
+            // Calculate local transcript path using the worktree path
+            // Claude stores transcripts in ~/.claude/projects/{escaped-worktree-path}/{sdkSessionId}.jsonl
+            const escapedWorktreePath = worktreePath.replace(/\//g, '-').replace(/^-/, '-');
+            const localTranscriptDir = path.join(os.homedir(), '.claude', 'projects', escapedWorktreePath);
+            const localTranscriptPath = path.join(localTranscriptDir, `${sdkSessionId}.jsonl`);
+
+            // Ensure transcript directory exists
+            await fs.mkdir(localTranscriptDir, { recursive: true });
+
+            // Download the transcript file
+            // The remote path might start with ~ which we need to resolve
+            const resolvedRemotePath = remoteTranscriptPath.startsWith('~')
+              ? remoteTranscriptPath // sshService.downloadFile handles ~ via SFTP
+              : remoteTranscriptPath;
+
+            // Resolve ~ to actual home directory for SFTP
+            let absoluteRemotePath = resolvedRemotePath;
+            if (resolvedRemotePath.startsWith('~')) {
+              try {
+                const homeResult = await sshService.execCommand(client, 'echo $HOME');
+                const remoteHome = homeResult.trim();
+                absoluteRemotePath = resolvedRemotePath.replace('~', remoteHome);
+              } catch {
+                console.warn('[SSH IPC] Could not resolve remote home dir, trying path as-is');
+              }
+            }
+
+            await sshService.downloadFile(client, absoluteRemotePath, localTranscriptPath);
+            transcriptDownloaded = true;
+            sendDownloadProgress('Transcript downloaded successfully');
+            console.log('[SSH IPC] Transcript downloaded to:', localTranscriptPath);
+          } catch (dlError) {
+            // Non-fatal - session can still be created without transcript
+            console.warn('[SSH IPC] Failed to download transcript (non-fatal):', dlError);
+            sendDownloadProgress('Warning: Could not download transcript. Session will start fresh.');
+          }
+        } else {
+          sendDownloadProgress('No transcript to download (session will start fresh)');
+        }
+
+        // ========================================================================
+        // STEP 6: Create new local session
+        // ========================================================================
+        sendDownloadProgress('Creating local session...');
+
+        const newSessionId = uuid();
+
+        const newSession: Session = {
+          id: newSessionId,
+          name: config.sessionName,
+          repoPath: config.localRepoPath,
+          worktreePath: worktreePath,
+          branch: targetBranch,
+          status: 'stopped',
+          ports: { web: 0, api: 0, debug: 0 },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          setupScript: '',
+          isDevMode: true,
+          isWorktree: true,
+          parentRepoPath: config.localRepoPath,
+          // Preserve SDK session ID so Claude SDK finds the transcript
+          sdkSessionId: sdkSessionId,
+          // Track download origin
+          downloadedFrom: sessionId,
+          // Copy useful metadata from source
+          model: sourceSession.model,
+        };
+
+        // Save new session
+        sessions[newSessionId] = newSession;
+        sessionStore.set('sessions', sessions);
+
+        sendDownloadProgress('Session created!');
+
+        // ========================================================================
+        // STEP 7: Cleanup & return
+        // ========================================================================
+        sshService.disconnect(downloadConnId);
+
+        const transcriptNote = transcriptDownloaded
+          ? ' Transcript downloaded successfully.'
+          : sdkSessionId
+            ? ' Warning: transcript could not be downloaded.'
+            : '';
+
+        console.log(`[SSH IPC] Download complete. New session: ${newSessionId}.${transcriptNote}`);
+
+        return {
+          success: true,
+          newSessionId,
+        };
+      } catch (error) {
+        console.error('[SSH IPC] Download session failed:', error);
+        sendDownloadProgress(`Error: ${error instanceof Error ? error.message : 'Unknown error'}`);
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error',

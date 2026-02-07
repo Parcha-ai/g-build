@@ -4,6 +4,7 @@ import { useSessionStore } from '../../stores/session.store';
 import SessionCard from './SessionCard';
 import NewSessionDialog from './NewSessionDialog';
 import TeleportDialog from './TeleportDialog';
+import DownloadSessionDialog from './DownloadSessionDialog';
 import type { Session } from '../../../shared/types';
 
 interface ProjectGroup {
@@ -24,6 +25,7 @@ export default function SessionList() {
   const [newSessionInitialName, setNewSessionInitialName] = useState<string>('');
   const [showAllRecentSessions, setShowAllRecentSessions] = useState(false);
   const [teleportSession, setTeleportSession] = useState<Session | null>(null);
+  const [downloadSession, setDownloadSession] = useState<Session | null>(null);
 
   // Track sessions that have been visited during this app instance
   const [visitedSessionIds, setVisitedSessionIds] = useState<Set<string>>(new Set());
@@ -288,6 +290,7 @@ export default function SessionList() {
                 onClick={() => setActiveSession(session.id)}
                 isFork={session.isWorktree}
                 onTeleportRequest={setTeleportSession}
+                onDownload={setDownloadSession}
               />
             ))}
 
@@ -408,6 +411,7 @@ export default function SessionList() {
                                   onClick={() => setActiveSession(session.id)}
                                   isFork={true}
                                   onTeleportRequest={setTeleportSession}
+                                  onDownload={setDownloadSession}
                                 />
                               </div>
                             </div>
@@ -424,6 +428,7 @@ export default function SessionList() {
                         isActive={session.id === activeSessionId}
                         onClick={() => setActiveSession(session.id)}
                         onTeleportRequest={setTeleportSession}
+                        onDownload={setDownloadSession}
                       />
                     ))}
                   </div>
@@ -454,6 +459,23 @@ export default function SessionList() {
           onTeleported={async (newSessionId) => {
             setTeleportSession(null);
             // Reload sessions from backend to include the new teleported session
+            await loadSessions();
+            // Select the new session
+            await setActiveSession(newSessionId);
+            // Explicitly start the session since it's created in 'stopped' state
+            await startSession(newSessionId);
+          }}
+        />
+      )}
+
+      {/* Download SSH Session to Local Dialog */}
+      {downloadSession && (
+        <DownloadSessionDialog
+          session={downloadSession}
+          onClose={() => setDownloadSession(null)}
+          onSuccess={async (newSessionId) => {
+            setDownloadSession(null);
+            // Reload sessions from backend to include the new local session
             await loadSessions();
             // Select the new session
             await setActiveSession(newSessionId);

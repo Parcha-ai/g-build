@@ -13,6 +13,7 @@ import type {
   TTSRequest,
   AudioSettings,
   SSHConfig,
+  DownloadSessionConfig,
   MCPServerInfo,
   MarketplaceMCPServer,
   PopularMarketplace,
@@ -711,6 +712,16 @@ const electronAPI = {
       newSessionId?: string;
       error?: string;
     }> => ipcRenderer.invoke(IPC_CHANNELS.SSH_TELEPORT_SESSION, { sourceSessionId, destinationConfig }),
+    downloadSession: (sessionId: string, config: DownloadSessionConfig): Promise<{
+      success: boolean;
+      newSessionId?: string;
+      error?: string;
+    }> => ipcRenderer.invoke(IPC_CHANNELS.SSH_DOWNLOAD_SESSION, sessionId, config),
+    onDownloadProgress: (callback: (message: string) => void) => {
+      const handler = (_: IpcRendererEvent, message: string) => callback(message);
+      ipcRenderer.on(IPC_CHANNELS.SSH_DOWNLOAD_PROGRESS, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SSH_DOWNLOAD_PROGRESS, handler);
+    },
   },
 
   // Memory (agent memory system)

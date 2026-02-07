@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Square, Trash2, GitBranch, GitFork, Server, Upload, Pencil, Pin } from 'lucide-react';
+import { Play, Square, Trash2, GitBranch, GitFork, Server, Upload, Pencil, Pin, Download } from 'lucide-react';
 import { useSessionStore } from '../../stores/session.store';
 import type { Session } from '../../../shared/types';
 
@@ -26,9 +26,10 @@ interface SessionCardProps {
   onClick: () => void;
   isFork?: boolean;
   onTeleportRequest?: (session: Session) => void;
+  onDownload?: (session: Session) => void;
 }
 
-export default function SessionCard({ session, isActive, onClick, isFork = false, onTeleportRequest }: SessionCardProps) {
+export default function SessionCard({ session, isActive, onClick, isFork = false, onTeleportRequest, onDownload }: SessionCardProps) {
   const { startSession, stopSession, deleteSession, updateSession } = useSessionStore();
   const [isRenaming, setIsRenaming] = useState(false);
   const [editedName, setEditedName] = useState('');
@@ -76,6 +77,13 @@ export default function SessionCard({ session, isActive, onClick, isFork = false
     e.stopPropagation();
     if (onTeleportRequest && !isSSH) {
       onTeleportRequest(session);
+    }
+  };
+
+  const handleDownload = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (onDownload && isSSH) {
+      onDownload(session);
     }
   };
 
@@ -266,6 +274,17 @@ export default function SessionCard({ session, isActive, onClick, isFork = false
               title="Teleport to SSH remote"
             >
               <Upload size={12} />
+            </button>
+          )}
+          {/* Download to Local - only show for SSH sessions */}
+          {isSSH && onDownload && (
+            <button
+              onClick={handleDownload}
+              className="p-1 transition-colors hover:bg-cyan-500/20 text-cyan-400"
+              style={{ borderRadius: 0 }}
+              title="Download to local folder"
+            >
+              <Download size={12} />
             </button>
           )}
           <button

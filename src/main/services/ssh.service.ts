@@ -242,9 +242,10 @@ export class SSHService {
   }
 
   /**
-   * Execute a command on the remote and return stdout
+   * Execute a command on the remote and return stdout.
+   * Public to allow IPC layer to query remote state (e.g. git branch, remote URL).
    */
-  private execCommand(client: Client, command: string): Promise<string> {
+  execCommand(client: Client, command: string): Promise<string> {
     return new Promise((resolve, reject) => {
       client.exec(command, (err, channel) => {
         if (err) {
@@ -1807,6 +1808,101 @@ export class SSHService {
         readStream.pipe(writeStream);
       });
     });
+  }
+
+  /**
+   * Download a file from the remote via SFTP.
+   * Mirror of uploadFile() — streams from remote to local, ensuring parent directories exist.
+   */
+  async downloadFile(client: Client, remotePath: string, localPath: string): Promise<void> {
+    const path = await import('path');
+    const fsPromises = await import('fs/promises');
+
+    // Ensure the local parent directory exists before writing
+    await fsPromises.mkdir(path.dirname(localPath), { recursive: true });
+
+    return new Promise((resolve, reject) => {
+      client.sftp((err, sftp) => {
+        if (err) return reject(err);
+
+        const readStream = sftp.createReadStream(remotePath);
+        const writeStream = fs.createWriteStream(localPath);
+
+        writeStream.on('close', () => {
+          sftp.end();
+          resolve();
+        });
+
+        writeStream.on('error', (error: Error) => {
+          sftp.end();
+          reject(error);
+        });
+
+        readStream.on('error', (error: Error) => {
+          sftp.end();
+          // Clean up partial file on error
+          fs.unlink(localPath, () => { /* ignore cleanup errors */ });
+          reject(error);
+        });
+
+        readStream.pipe(writeStream);
+      });
+    });
+  }
+
+  /**
+   * Get the path to a remote transcript file for a given working directory.
+   * Searches the remote ~/.claude/projects/ directory for transcript files.
+   *
+   * @param client - Active SSH client connection
+   * @param remoteWorkingDir - The remote working directory (e.g. /home/ubuntu/dev/repo)
+   * @param sdkSessionId - Optional specific SDK session ID to look for
+   * @returns Full remote path to the transcript file, or null if not found
+   */
+  async getRemoteTranscriptPath(
+    client: Client,
+    remoteWorkingDir: string,
+    sdkSessionId?: string
+  ): Promise<string | null> {
+    try {
+      // Claude Code stores transcripts in ~/.claude/projects/{escaped-path}/
+      // where slashes become dashes, prefixed with a leading dash
+      const escapedPath = remoteWorkingDir.replace(/\//g, '-').replace(/^-/, '-');
+      const projectDir = `~/.claude/projects/${escapedPath}`;
+
+      if (sdkSessionId) {
+        // Look for a specific transcript file
+        const targetPath = `${projectDir}/${sdkSessionId}.jsonl`;
+        const checkResult = await this.execCommand(
+          client,
+          `test -f "${targetPath}" && echo "${targetPath}" || echo ""`
+        );
+
+        if (checkResult.trim()) {
+          return checkResult.trim();
+        }
+
+        // Fallback: glob search across all project directories
+        console.log('[SSH Service] Transcript not at primary path, trying glob fallback');
+        const globResult = await this.execCommand(
+          client,
+          `find ~/.claude/projects -maxdepth 2 -name "${sdkSessionId}.jsonl" -type f 2>/dev/null | head -1`
+        );
+
+        return globResult.trim() || null;
+      }
+
+      // No specific session ID — check if the project directory exists
+      const dirCheck = await this.execCommand(
+        client,
+        `test -d "${projectDir}" && echo "${projectDir}" || echo ""`
+      );
+
+      return dirCheck.trim() || null;
+    } catch (error) {
+      console.error('[SSH Service] Failed to get remote transcript path:', error);
+      return null;
+    }
   }
 
   /**
