@@ -27,6 +27,9 @@ interface EditorState {
   // Quick Search state
   isQuickSearchOpen: boolean;
 
+  // File Content Search state
+  isFileSearchOpen: boolean;
+
   openFile: (filePath: string, lineNumber?: number) => Promise<void>;
   openPlan: (planContent: string, requestId: string) => void; // Open plan as editor tab
   closeTab: (tabId: string) => void;
@@ -43,6 +46,11 @@ interface EditorState {
   openQuickSearch: () => void;
   closeQuickSearch: () => void;
   toggleQuickSearch: () => void;
+
+  // File Content Search actions
+  openFileSearch: () => void;
+  closeFileSearch: () => void;
+  toggleFileSearch: () => void;
 }
 
 // Get language from file extension
@@ -104,6 +112,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   isLoading: false,
   error: null,
   isQuickSearchOpen: false,
+  isFileSearchOpen: false,
 
   openFile: async (filePath: string, lineNumber?: number) => {
     console.log('[EditorStore] openFile called:', filePath, 'lineNumber:', lineNumber);
@@ -348,7 +357,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   // Quick Search actions
   openQuickSearch: () => {
-    set({ isQuickSearchOpen: true });
+    set({ isQuickSearchOpen: true, isFileSearchOpen: false });
   },
 
   closeQuickSearch: () => {
@@ -356,6 +365,19 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   toggleQuickSearch: () => {
-    set(state => ({ isQuickSearchOpen: !state.isQuickSearchOpen }));
+    set(state => ({ isQuickSearchOpen: !state.isQuickSearchOpen, isFileSearchOpen: false }));
+  },
+
+  // File Content Search actions
+  openFileSearch: () => {
+    set({ isFileSearchOpen: true, isQuickSearchOpen: false });
+  },
+
+  closeFileSearch: () => {
+    set({ isFileSearchOpen: false });
+  },
+
+  toggleFileSearch: () => {
+    set(state => ({ isFileSearchOpen: !state.isFileSearchOpen, isQuickSearchOpen: false }));
   },
 }));

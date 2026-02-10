@@ -2,6 +2,7 @@ import { IpcMain } from 'electron';
 import { IPC_CHANNELS } from '../../shared/constants/channels';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { spawn } from 'child_process';
 import { sessionService } from './session.ipc';
 import { sshService } from '../services/ssh.service';
 
@@ -83,6 +84,53 @@ async function listFilesRecursive(
   return entries;
 }
 
+interface SearchMatch {
+  lineNumber: number;
+  lineContent: string;
+}
+
+interface SearchResult {
+  filePath: string;
+  relativePath: string;
+  fileName: string;
+  matches: SearchMatch[];
+  matchCount: number;
+}
+
+function parseGrepOutput(output: string, basePath: string, maxResults: number): SearchResult[] {
+  const fileMap = new Map<string, SearchMatch[]>();
+  const lines = output.split('\n');
+  let totalMatches = 0;
+
+  for (const line of lines) {
+    if (totalMatches >= maxResults) break;
+    if (!line) continue;
+
+    // grep -n output format: filepath:lineNumber:content
+    const match = line.match(/^(.+?):(\d+):(.*)$/);
+    if (!match) continue;
+
+    const [, filePath, lineNumStr, lineContent] = match;
+    const lineNumber = parseInt(lineNumStr, 10);
+    if (isNaN(lineNumber)) continue;
+
+    if (!fileMap.has(filePath)) {
+      fileMap.set(filePath, []);
+    }
+    fileMap.get(filePath)!.push({ lineNumber, lineContent: lineContent.trimEnd() });
+    totalMatches++;
+  }
+
+  const results: SearchResult[] = [];
+  for (const [filePath, matches] of fileMap) {
+    const relativePath = path.relative(basePath, filePath);
+    const fileName = path.basename(filePath);
+    results.push({ filePath, relativePath, fileName, matches, matchCount: matches.length });
+  }
+
+  return results;
+}
+
 export function registerFsHandlers(ipcMain: IpcMain): void {
   // List files in session working directory
   ipcMain.handle(IPC_CHANNELS.FS_LIST_FILES, async (_event, sessionId: string, query?: string) => {
@@ -150,33 +198,54 @@ export function registerFsHandlers(ipcMain: IpcMain): void {
     }
   });
 
-  // Search files by content (basic grep-like)
-  ipcMain.handle(IPC_CHANNELS.FS_SEARCH_FILES, async (_event, sessionId: string, searchTerm: string) => {
+  // Search files by content using grep
+  ipcMain.handle(IPC_CHANNELS.FS_SEARCH_FILES, async (
+    _event,
+    sessionId: string,
+    searchTerm: string,
+    options?: { caseSensitive?: boolean; wholeWord?: boolean; regex?: boolean; maxResults?: number }
+  ) => {
     const session = await sessionService.getSession(sessionId);
-    if (!session?.worktreePath) {
-      return [];
-    }
+    if (!session?.worktreePath || !searchTerm) return [];
 
-    const files = await listFilesRecursive(session.worktreePath, session.worktreePath);
-    const results: Array<{ file: FileEntry; matches: string[] }> = [];
+    const maxResults = options?.maxResults || 200;
 
-    for (const file of files.filter((f) => f.type === 'file').slice(0, 50)) {
-      try {
-        const content = await fs.readFile(file.path, 'utf-8');
-        const lines = content.split('\n');
-        const matches = lines
-          .filter((line) => line.toLowerCase().includes(searchTerm.toLowerCase()))
-          .slice(0, 3);
+    return new Promise((resolve) => {
+      const args = [
+        '-rn',
+        '--include=*.ts', '--include=*.tsx', '--include=*.js', '--include=*.jsx',
+        '--include=*.json', '--include=*.py', '--include=*.rb', '--include=*.go',
+        '--include=*.rs', '--include=*.java', '--include=*.c', '--include=*.cpp',
+        '--include=*.h', '--include=*.hpp', '--include=*.cs', '--include=*.php',
+        '--include=*.swift', '--include=*.kt', '--include=*.scala', '--include=*.html',
+        '--include=*.css', '--include=*.scss', '--include=*.yaml', '--include=*.yml',
+        '--include=*.xml', '--include=*.sql', '--include=*.sh', '--include=*.md',
+        '--include=*.toml', '--include=*.vue', '--include=*.svelte',
+        '--exclude-dir=node_modules', '--exclude-dir=.git', '--exclude-dir=dist',
+        '--exclude-dir=build', '--exclude-dir=.next', '--exclude-dir=__pycache__',
+        '--exclude-dir=.venv', '--exclude-dir=venv', '--exclude-dir=coverage',
+      ];
 
-        if (matches.length > 0) {
-          results.push({ file, matches });
-        }
-      } catch {
-        // Skip files that can't be read
-      }
-    }
+      if (!options?.caseSensitive) args.push('-i');
+      if (options?.wholeWord) args.push('-w');
+      if (!options?.regex) args.push('-F');
 
-    return results.slice(0, 10);
+      args.push('--', searchTerm, session.worktreePath);
+
+      const grep = spawn('grep', args, { cwd: session.worktreePath });
+
+      let output = '';
+      grep.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+      grep.stderr.on('data', () => {}); // ignore binary file warnings etc
+
+      grep.on('close', () => {
+        const results = parseGrepOutput(output, session.worktreePath, maxResults);
+        resolve(results);
+      });
+
+      // Kill after 5 seconds to prevent hanging on huge repos
+      setTimeout(() => { grep.kill(); }, 5000);
+    });
   });
 
   // Search for symbols (functions, classes, methods, etc.)

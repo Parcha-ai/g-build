@@ -459,10 +459,17 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.FS_READ_FILE, filePath, sessionId),
     writeFile: (filePath: string, content: string): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke(IPC_CHANNELS.FS_WRITE_FILE, filePath, content),
-    searchFiles: (sessionId: string, searchTerm: string): Promise<Array<{
-      file: { name: string; path: string; relativePath: string };
-      matches: string[];
-    }>> => ipcRenderer.invoke(IPC_CHANNELS.FS_SEARCH_FILES, sessionId, searchTerm),
+    searchFiles: (
+      sessionId: string,
+      searchTerm: string,
+      options?: { caseSensitive?: boolean; wholeWord?: boolean; regex?: boolean; maxResults?: number }
+    ): Promise<Array<{
+      filePath: string;
+      relativePath: string;
+      fileName: string;
+      matches: Array<{ lineNumber: number; lineContent: string }>;
+      matchCount: number;
+    }>> => ipcRenderer.invoke(IPC_CHANNELS.FS_SEARCH_FILES, sessionId, searchTerm, options),
     searchSymbols: (sessionId: string, query: string): Promise<Array<{
       name: string;
       kind: string;

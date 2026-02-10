@@ -39,6 +39,7 @@ export default function ChatContainer({ session }: ChatContainerProps) {
   const compaction = useSessionStore(useCallback((s) => s.compactionStatus[session.id] || null, [session.id]));
   const queuedMessages = useSessionStore(useCallback((s) => s.messageQueue[session.id] || EMPTY_QUEUE, [session.id]));
   const sessionBgTasks = useSessionStore(useCallback((s) => s.backgroundTasks[session.id] || EMPTY_BG_TASKS, [session.id]));
+  const isLoadingMessages = useSessionStore(useCallback((s) => s.isLoadingMessages[session.id] || false, [session.id]));
 
   // Action selectors — stable references, never cause re-renders
   const approvePermission = useSessionStore((s) => s.approvePermission);
@@ -573,6 +574,7 @@ export default function ChatContainer({ session }: ChatContainerProps) {
         <MessageList
           messages={sessionMessages}
           isStreaming={isSessionStreaming}
+          isLoadingMessages={isLoadingMessages}
           streamEvents={sessionStreamEvents}
           streamContent={streamContent}
           streamingToolCalls={streamingToolCalls}

@@ -2740,8 +2740,8 @@ Begin by creating the task structure now.
         if (block.type === 'text') {
           const text = block.text || '';
 
-          // Only merge with immediately preceding text block (not across tools)
-          if (lastMerged?.type === 'text') {
+          // Only merge with immediately preceding text block from the SAME agent (not across tools or agent boundaries)
+          if (lastMerged?.type === 'text' && lastMerged.agentId === block.agentId) {
             lastMerged.text = (lastMerged.text || '') + text;
           } else {
             mergedBlocks.push({ ...block });

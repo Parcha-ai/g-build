@@ -50,7 +50,9 @@ interface SessionState {
   activeSessionId: string | null;
   isLoadingSessions: boolean;
   messages: Record<string, ChatMessage[]>;
+  isLoadingMessages: Record<string, boolean>;
   isStreaming: Record<string, boolean>;
+  isProcessingQueue: Record<string, boolean>; // True during queue drain window to prevent race
   streamEvents: Record<string, StreamEvent[]>; // Chronological events
   currentStreamContent: Record<string, string>;
   currentThinkingContent: Record<string, string>;
@@ -152,7 +154,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   activeSessionId: null,
   isLoadingSessions: true, // Start as loading
   messages: {},
+  isLoadingMessages: {},
   isStreaming: {},
+  isProcessingQueue: {},
   streamEvents: {}, // Chronological event stream
   currentStreamContent: {},
   currentThinkingContent: {},
@@ -345,7 +349,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         sessions: state.sessions.filter((s) => s.id !== sessionId),
         activeSessionId: state.activeSessionId === sessionId ? null : state.activeSessionId,
         messages: clean(state.messages),
+        isLoadingMessages: clean(state.isLoadingMessages),
         isStreaming: clean(state.isStreaming),
+        isProcessingQueue: clean(state.isProcessingQueue),
         streamEvents: clean(state.streamEvents),
         currentStreamContent: clean(state.currentStreamContent),
         currentThinkingContent: clean(state.currentThinkingContent),
@@ -610,18 +616,23 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           const nextMessage = queue[0];
           console.log(`[SessionStore] Processing next queued message: "${nextMessage.message.slice(0, 50)}..."`);
 
+          // Lock the queue so new messages from the user don't bypass during the processing window
+          set((state) => ({
+            isProcessingQueue: { ...state.isProcessingQueue, [sessionId]: true },
+          }));
+
           // Atomically remove message from queue and verify we're not streaming
           set((state) => {
             // Double-check we're still not streaming before removing from queue
             if (state.isStreaming[sessionId]) {
               console.warn(`[SessionStore] Streaming started again before queue could be processed. Aborting.`);
-              return state; // Don't modify state
+              return { isProcessingQueue: { ...state.isProcessingQueue, [sessionId]: false } };
             }
 
             const currentQueue = state.messageQueue[sessionId] || [];
             if (currentQueue.length === 0) {
               console.warn(`[SessionStore] Queue became empty before processing. Race condition avoided.`);
-              return state;
+              return { isProcessingQueue: { ...state.isProcessingQueue, [sessionId]: false } };
             }
 
             const [, ...remainingQueue] = currentQueue;
@@ -637,6 +648,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
           // Send the message after a small delay to ensure state updates have propagated
           setTimeout(() => {
+            // Clear the processing lock before sending (sendMessage will set isStreaming=true)
+            set((state) => ({
+              isProcessingQueue: { ...state.isProcessingQueue, [sessionId]: false },
+            }));
+
             const currentState = get();
             const stillStreaming = currentState.isStreaming[sessionId];
             console.log(`[SessionStore] About to send queued message. Currently streaming: ${stillStreaming}`);
@@ -785,8 +801,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       });
     }
 
-    // If already streaming, queue the message
-    if (state.isStreaming[sessionId]) {
+    // If already streaming OR queue is being processed, queue the message
+    if (state.isStreaming[sessionId] || state.isProcessingQueue[sessionId]) {
       const queuedMsg = {
         id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         message,
@@ -847,18 +863,54 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   loadMessages: async (sessionId) => {
     if (!hasElectronAPI) return;
+
+    // Signal loading start (only if we don't already have messages)
+    const existingCount = (get().messages[sessionId] || []).length;
+    if (existingCount === 0) {
+      set((state) => ({
+        isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: true },
+      }));
+    }
+
     try {
-      const messages = await window.electronAPI.claude.getMessages(sessionId);
-      if (messages && messages.length > 0) {
+      const transcriptMessages = await window.electronAPI.claude.getMessages(sessionId);
+      if (transcriptMessages && transcriptMessages.length > 0) {
+        set((state) => {
+          const existingMessages = state.messages[sessionId] || [];
+
+          // If we're currently streaming, don't replace — the in-memory state is live
+          if (state.isStreaming[sessionId]) {
+            console.log(`[SessionStore] loadMessages: Skipping replacement for ${sessionId} — currently streaming`);
+            return { isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false } };
+          }
+
+          // If existing in-memory messages outnumber transcript messages,
+          // the transcript may be stale (SDK hasn't flushed yet). Keep the longer list
+          // to prevent the chat from appearing to lose messages.
+          if (existingMessages.length > transcriptMessages.length) {
+            console.log(`[SessionStore] loadMessages: Keeping ${existingMessages.length} in-memory messages (transcript has ${transcriptMessages.length})`);
+            return { isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false } };
+          }
+
+          return {
+            messages: {
+              ...state.messages,
+              [sessionId]: transcriptMessages,
+            },
+            isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false },
+          };
+        });
+      } else {
+        // No messages returned — clear loading flag
         set((state) => ({
-          messages: {
-            ...state.messages,
-            [sessionId]: messages,
-          },
+          isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false },
         }));
       }
     } catch (error) {
       console.error('Failed to load messages:', error);
+      set((state) => ({
+        isLoadingMessages: { ...state.isLoadingMessages, [sessionId]: false },
+      }));
     }
   },
 

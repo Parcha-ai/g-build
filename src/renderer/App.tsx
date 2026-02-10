@@ -11,6 +11,7 @@ import LoginScreen from './components/auth/LoginScreen';
 import SettingsDialog from './components/settings/SettingsDialog';
 import ApiKeyOnboarding from './components/onboarding/ApiKeyOnboarding';
 import QuickSearch from './components/editor/QuickSearch';
+import FileContentSearch from './components/editor/FileContentSearch';
 import SessionSwitcher from './components/session/SessionSwitcher';
 import QMDPrompt from './components/qmd/QMDPrompt';
 import LunchLockModal from './components/layout/LunchLockModal';
@@ -299,6 +300,13 @@ function ElectronApp() {
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Cmd+Shift+F: File Content Search
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'f') {
+        e.preventDefault();
+        useEditorStore.getState().toggleFileSearch();
+        return;
+      }
+
       // Cmd+K: Quick Search
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
@@ -506,6 +514,9 @@ function ElectronApp() {
 
       {/* Quick Search (Cmd+K) */}
       <QuickSearch />
+
+      {/* File Content Search (Cmd+Shift+F) */}
+      <FileContentSearch />
 
       {/* Session Switcher (Ctrl+Tab) */}
       <SessionSwitcher />

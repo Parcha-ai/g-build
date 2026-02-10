@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { Loader2 } from 'lucide-react';
 import MessageBubble from './MessageBubble';
 import ToolCallCard from './ToolCallCard';
 import ReleaseNotes from '../common/ReleaseNotes';
@@ -19,6 +20,7 @@ interface QueuedMessage {
 interface MessageListProps {
   messages: ChatMessage[];
   isStreaming: boolean;
+  isLoadingMessages?: boolean;
   streamEvents: StreamEvent[];
   streamContent: string;
   streamingToolCalls?: ToolCall[];
@@ -30,6 +32,7 @@ interface MessageListProps {
 export default function MessageList({
   messages,
   isStreaming,
+  isLoadingMessages = false,
   streamEvents,
   streamContent,
   streamingToolCalls,
@@ -112,6 +115,18 @@ export default function MessageList({
 
   // Empty state render - now safe to return early after all hooks are called
   if (messages.length === 0 && !hasStreamingContent) {
+    // Loading transcript — show spinner instead of empty state
+    if (isLoadingMessages) {
+      return (
+        <div className="h-full flex items-center justify-center">
+          <div className="text-center">
+            <Loader2 size={24} className="animate-spin text-claude-accent mx-auto mb-3" />
+            <p className="text-sm text-claude-text-secondary font-mono">Loading transcript...</p>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="h-full flex flex-col">
         {/* Release notes banner at top */}
