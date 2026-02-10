@@ -210,6 +210,13 @@ export interface AppSettings {
   // Lunch reminder settings
   lunchReminderEnabled: boolean; // Enable/disable lunch reminders
   lunchReminderTime?: string; // Time in HH:MM format (only used if enabled)
+  // Foundry settings (Azure-hosted Claude)
+  foundryEnabled?: boolean;
+  foundryBaseUrl?: string;
+  foundryApiKey?: string;
+  foundryDefaultSonnetModel?: string;
+  foundryDefaultHaikuModel?: string;
+  foundryDefaultOpusModel?: string;
 }
 
 // Permission request from Agent SDK

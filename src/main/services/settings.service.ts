@@ -29,6 +29,8 @@ export NODE_ENV=development
   // Lunch reminder - disabled by default
   lunchReminderEnabled: false,
   lunchReminderTime: '12:00', // Default time, only used if enabled
+  // Foundry - disabled by default
+  foundryEnabled: false,
 };
 
 export class SettingsService {
@@ -78,5 +80,13 @@ export class SettingsService {
 
   setGoogleApiKey(key: string): void {
     this.store.set('googleApiKey', key);
+  }
+
+  getFoundryApiKey(): string | undefined {
+    return this.store.get('foundryApiKey') as string | undefined;
+  }
+
+  setFoundryApiKey(key: string): void {
+    this.store.set('foundryApiKey', key);
   }
 }

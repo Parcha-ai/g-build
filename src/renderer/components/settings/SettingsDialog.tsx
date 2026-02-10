@@ -12,6 +12,51 @@ interface TabConfig {
   icon: React.ReactNode;
 }
 
+// Extracted to module level to prevent recreation on every render (causes focus loss)
+const ApiKeyInputComponent = ({
+  value,
+  onChange,
+  show,
+  onToggleShow,
+  placeholder,
+  onSave,
+  isLoading,
+  handleDebouncedChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  show: boolean;
+  onToggleShow: () => void;
+  placeholder: string;
+  onSave: (value: string) => void;
+  isLoading: boolean;
+  handleDebouncedChange: (value: string, saveFn: (value: string) => void) => void;
+}) => (
+  <div className="relative">
+    <input
+      type={show ? 'text' : 'password'}
+      value={value}
+      onChange={(e) => {
+        const newValue = e.target.value;
+        onChange(newValue);
+        handleDebouncedChange(newValue, onSave);
+      }}
+      placeholder={isLoading ? 'Loading...' : placeholder}
+      disabled={isLoading}
+      className="w-full px-3 py-2 pr-10 bg-claude-bg border border-claude-border text-claude-text font-mono text-sm placeholder:text-claude-text-secondary focus:outline-none focus:border-claude-accent disabled:opacity-50"
+      style={{ borderRadius: 0 }}
+    />
+    <button
+      onClick={onToggleShow}
+      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-claude-text-secondary hover:text-claude-text"
+      type="button"
+    >
+      {show ? <EyeOff size={14} /> : <Eye size={14} />}
+    </button>
+  </div>
+);
+const ApiKeyInput = React.memo(ApiKeyInputComponent);
+
 const TABS: TabConfig[] = [
   { id: 'general', label: 'General', icon: <Settings size={14} /> },
   { id: 'apiKeys', label: 'API Keys', icon: <Key size={14} /> },
@@ -48,6 +93,16 @@ export default function SettingsDialog() {
   const [lunchReminderEnabled, setLunchReminderEnabled] = useState(false);
   const [lunchReminderTime, setLunchReminderTime] = useState('12:00');
 
+  // Foundry settings
+  const [foundryEnabled, setFoundryEnabled] = useState(false);
+  const [foundryBaseUrl, setFoundryBaseUrl] = useState('');
+  const [foundryApiKey, setFoundryApiKey] = useState('');
+  const [showFoundryApiKey, setShowFoundryApiKey] = useState(false);
+  const [foundryDefaultSonnetModel, setFoundryDefaultSonnetModel] = useState('');
+  const [foundryDefaultHaikuModel, setFoundryDefaultHaikuModel] = useState('');
+  const [foundryDefaultOpusModel, setFoundryDefaultOpusModel] = useState('');
+
+
   // QMD status
   const [qmdStatus, setQmdStatus] = useState<{ installed: boolean; bundled: boolean } | null>(null);
   const [isInstallingQmd, setIsInstallingQmd] = useState(false);
@@ -70,7 +125,7 @@ export default function SettingsDialog() {
   }, []);
 
   // Auto-save app settings (toggles and time picker)
-  const autoSaveAppSettings = useCallback(async (updates: { qmdEnabled?: boolean; ultraPlanMode?: boolean; lunchReminderEnabled?: boolean; lunchReminderTime?: string }) => {
+  const autoSaveAppSettings = useCallback(async (updates: { qmdEnabled?: boolean; ultraPlanMode?: boolean; lunchReminderEnabled?: boolean; lunchReminderTime?: string; foundryEnabled?: boolean; foundryBaseUrl?: string; foundryApiKey?: string; foundryDefaultSonnetModel?: string; foundryDefaultHaikuModel?: string; foundryDefaultOpusModel?: string }) => {
     showSaveIndicator();
     try {
       await window.electronAPI.settings.set(updates);
@@ -143,6 +198,13 @@ export default function SettingsDialog() {
           setUltraPlanMode(appSettings.ultraPlanMode || false);
           setLunchReminderEnabled(appSettings.lunchReminderEnabled || false);
           setLunchReminderTime(appSettings.lunchReminderTime || '12:00');
+          // Foundry settings
+          setFoundryEnabled(appSettings.foundryEnabled || false);
+          setFoundryBaseUrl(appSettings.foundryBaseUrl || '');
+          setFoundryApiKey(appSettings.foundryApiKey || '');
+          setFoundryDefaultSonnetModel(appSettings.foundryDefaultSonnetModel || '');
+          setFoundryDefaultHaikuModel(appSettings.foundryDefaultHaikuModel || '');
+          setFoundryDefaultOpusModel(appSettings.foundryDefaultOpusModel || '');
           setQmdStatus(qmdStatusResult);
           setIsLoading(false);
         })
@@ -229,45 +291,6 @@ export default function SettingsDialog() {
   );
 
   // API Key input component
-  const ApiKeyInput = ({
-    value,
-    onChange,
-    show,
-    onToggleShow,
-    placeholder,
-    onSave,
-  }: {
-    value: string;
-    onChange: (value: string) => void;
-    show: boolean;
-    onToggleShow: () => void;
-    placeholder: string;
-    onSave: (value: string) => void;
-  }) => (
-    <div className="relative">
-      <input
-        type={show ? 'text' : 'password'}
-        value={value}
-        onChange={(e) => {
-          const newValue = e.target.value;
-          onChange(newValue);
-          handleDebouncedChange(newValue, onSave);
-        }}
-        placeholder={isLoading ? 'Loading...' : placeholder}
-        disabled={isLoading}
-        className="w-full px-3 py-2 pr-10 bg-claude-bg border border-claude-border text-claude-text font-mono text-sm placeholder:text-claude-text-secondary focus:outline-none focus:border-claude-accent disabled:opacity-50"
-        style={{ borderRadius: 0 }}
-      />
-      <button
-        onClick={onToggleShow}
-        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-claude-text-secondary hover:text-claude-text"
-        type="button"
-      >
-        {show ? <EyeOff size={14} /> : <Eye size={14} />}
-      </button>
-    </div>
-  );
-
   if (!isSettingsOpen) return null;
 
   // Render General Tab
@@ -486,6 +509,8 @@ export default function SettingsDialog() {
           onToggleShow={() => setShowApiKey(!showApiKey)}
           placeholder="sk-ant-..."
           onSave={(value) => autoSaveApiKey(value, 'anthropic')}
+          isLoading={isLoading}
+          handleDebouncedChange={handleDebouncedChange}
         />
         <p className="text-[10px] font-mono text-claude-text-secondary">
           Get your API key from{' '}
@@ -514,6 +539,8 @@ export default function SettingsDialog() {
           onToggleShow={() => setShowOpenaiApiKey(!showOpenaiApiKey)}
           placeholder="sk-..."
           onSave={(value) => autoSaveApiKey(value, 'openai')}
+          isLoading={isLoading}
+          handleDebouncedChange={handleDebouncedChange}
         />
         <p className="text-[10px] font-mono text-claude-text-secondary">
           For voice transcription using Whisper.{' '}
@@ -542,6 +569,8 @@ export default function SettingsDialog() {
           onToggleShow={() => setShowGoogleApiKey(!showGoogleApiKey)}
           placeholder="AIza..."
           onSave={(value) => autoSaveApiKey(value, 'google')}
+          isLoading={isLoading}
+          handleDebouncedChange={handleDebouncedChange}
         />
         <p className="text-[10px] font-mono text-claude-text-secondary">
           For AI-powered browser automation (Stagehand).{' '}
@@ -556,6 +585,102 @@ export default function SettingsDialog() {
             Get key
           </a>
         </p>
+      </div>
+
+      {/* Anthropic Foundry (Azure) */}
+      <div className="space-y-3 pt-4 border-t border-claude-border">
+        <div className="flex items-center justify-between">
+          <label className="block text-xs font-mono text-claude-text-secondary uppercase tracking-wider">
+            Anthropic Foundry (Azure)
+          </label>
+          <button
+            onClick={() => {
+              const newValue = !foundryEnabled;
+              setFoundryEnabled(newValue);
+              autoSaveAppSettings({ foundryEnabled: newValue });
+            }}
+            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+              foundryEnabled ? 'bg-claude-accent' : 'bg-claude-border'
+            }`}
+          >
+            <span
+              className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                foundryEnabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
+              }`}
+            />
+          </button>
+        </div>
+        {foundryEnabled && (
+          <div className="space-y-3 pl-2 border-l-2 border-claude-accent/30">
+            <div>
+              <label className="block text-[10px] font-mono text-claude-text-secondary mb-1">Base URL</label>
+              <input
+                type="text"
+                value={foundryBaseUrl}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setFoundryBaseUrl(val);
+                  handleDebouncedChange(val, (v) => autoSaveAppSettings({ foundryBaseUrl: v }));
+                }}
+                placeholder="https://your-endpoint.cognitiveservices.azure.com/anthropic/v1/messages"
+                className="w-full px-3 py-2 bg-claude-bg border border-claude-border text-claude-text font-mono text-sm placeholder:text-claude-text-secondary focus:outline-none focus:border-claude-accent"
+                style={{ borderRadius: 0 }}
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] font-mono text-claude-text-secondary mb-1">Foundry API Key</label>
+              <ApiKeyInput
+                value={foundryApiKey}
+                onChange={setFoundryApiKey}
+                show={showFoundryApiKey}
+                onToggleShow={() => setShowFoundryApiKey(!showFoundryApiKey)}
+                placeholder="foundry-..."
+                onSave={(value) => autoSaveAppSettings({ foundryApiKey: value })}
+                isLoading={isLoading}
+                handleDebouncedChange={handleDebouncedChange}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="block text-[10px] font-mono text-claude-text-secondary">Model Overrides (optional)</label>
+              <input
+                type="text"
+                value={foundryDefaultSonnetModel}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setFoundryDefaultSonnetModel(val);
+                  handleDebouncedChange(val, (v) => autoSaveAppSettings({ foundryDefaultSonnetModel: v }));
+                }}
+                placeholder="Sonnet model name"
+                className="w-full px-3 py-1.5 bg-claude-bg border border-claude-border text-claude-text font-mono text-xs placeholder:text-claude-text-secondary focus:outline-none focus:border-claude-accent"
+                style={{ borderRadius: 0 }}
+              />
+              <input
+                type="text"
+                value={foundryDefaultHaikuModel}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setFoundryDefaultHaikuModel(val);
+                  handleDebouncedChange(val, (v) => autoSaveAppSettings({ foundryDefaultHaikuModel: v }));
+                }}
+                placeholder="Haiku model name"
+                className="w-full px-3 py-1.5 bg-claude-bg border border-claude-border text-claude-text font-mono text-xs placeholder:text-claude-text-secondary focus:outline-none focus:border-claude-accent"
+                style={{ borderRadius: 0 }}
+              />
+              <input
+                type="text"
+                value={foundryDefaultOpusModel}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setFoundryDefaultOpusModel(val);
+                  handleDebouncedChange(val, (v) => autoSaveAppSettings({ foundryDefaultOpusModel: v }));
+                }}
+                placeholder="Opus model name"
+                className="w-full px-3 py-1.5 bg-claude-bg border border-claude-border text-claude-text font-mono text-xs placeholder:text-claude-text-secondary focus:outline-none focus:border-claude-accent"
+                style={{ borderRadius: 0 }}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Info */}

@@ -369,7 +369,18 @@ export class SSHService {
 
     // Build environment exports - only include essential variables for Claude
     // We explicitly whitelist rather than blacklist to avoid sending local machine paths/configs
-    const includeVars = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_ENTRYPOINT', 'TERM', 'LANG'];
+    const includeVars = [
+      'ANTHROPIC_API_KEY',
+      'CLAUDE_CODE_USE_FOUNDRY',
+      'ANTHROPIC_FOUNDRY_BASE_URL',
+      'ANTHROPIC_FOUNDRY_API_KEY',
+      'ANTHROPIC_DEFAULT_SONNET_MODEL',
+      'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+      'ANTHROPIC_DEFAULT_OPUS_MODEL',
+      'CLAUDE_CODE_ENTRYPOINT',
+      'TERM',
+      'LANG',
+    ];
     const envExports = Object.entries(sdkOptions.env)
       .filter(([key, value]) => value !== undefined && includeVars.includes(key))
       .map(([key, value]) => `export ${key}="${value?.replace(/"/g, '\\"')}"`)
@@ -1484,7 +1495,18 @@ export class SSHService {
     const fifoOut = `/tmp/grep-${sessionId.substring(0, 8)}-out`;
 
     // Build environment exports
-    const includeVars = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_ENTRYPOINT', 'TERM', 'LANG'];
+    const includeVars = [
+      'ANTHROPIC_API_KEY',
+      'CLAUDE_CODE_USE_FOUNDRY',
+      'ANTHROPIC_FOUNDRY_BASE_URL',
+      'ANTHROPIC_FOUNDRY_API_KEY',
+      'ANTHROPIC_DEFAULT_SONNET_MODEL',
+      'ANTHROPIC_DEFAULT_HAIKU_MODEL',
+      'ANTHROPIC_DEFAULT_OPUS_MODEL',
+      'CLAUDE_CODE_ENTRYPOINT',
+      'TERM',
+      'LANG',
+    ];
     const envExports = Object.entries(sdkOptions.env)
       .filter(([key, value]) => value !== undefined && includeVars.includes(key))
       .map(([key, value]) => `export ${key}="${value?.replace(/"/g, '\\"')}"`)

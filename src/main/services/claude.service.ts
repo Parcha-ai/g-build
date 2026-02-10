@@ -89,6 +89,34 @@ export class ClaudeService {
   }
 
   /**
+   * Get Foundry environment variables from settings (when Foundry is enabled)
+   */
+  private getFoundryEnvVars(): Record<string, string> {
+    const settings = this.store.get('settings', {}) as Record<string, unknown>;
+    if (!settings.foundryEnabled) return {};
+
+    const vars: Record<string, string> = {
+      CLAUDE_CODE_USE_FOUNDRY: '1',
+    };
+    if (settings.foundryBaseUrl) {
+      vars.ANTHROPIC_FOUNDRY_BASE_URL = (settings.foundryBaseUrl as string).trim();
+    }
+    if (settings.foundryApiKey) {
+      vars.ANTHROPIC_FOUNDRY_API_KEY = (settings.foundryApiKey as string).trim();
+    }
+    if (settings.foundryDefaultSonnetModel) {
+      vars.ANTHROPIC_DEFAULT_SONNET_MODEL = (settings.foundryDefaultSonnetModel as string).trim();
+    }
+    if (settings.foundryDefaultHaikuModel) {
+      vars.ANTHROPIC_DEFAULT_HAIKU_MODEL = (settings.foundryDefaultHaikuModel as string).trim();
+    }
+    if (settings.foundryDefaultOpusModel) {
+      vars.ANTHROPIC_DEFAULT_OPUS_MODEL = (settings.foundryDefaultOpusModel as string).trim();
+    }
+    return vars;
+  }
+
+  /**
    * Update the permission mode for an active session
    * This allows changing from 'default' to 'bypassPermissions' mid-stream
    */
@@ -2050,6 +2078,7 @@ Begin by creating the task structure now.
             ...process.env,
             ANTHROPIC_API_KEY: apiKey,
             CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
+            ...this.getFoundryEnvVars(),
           },
           // Resume previous conversation if we have an SDK session ID
           ...(sdkSessionId ? { resume: sdkSessionId } : {}),
