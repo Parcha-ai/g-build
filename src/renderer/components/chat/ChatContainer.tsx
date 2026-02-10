@@ -273,7 +273,7 @@ export default function ChatContainer({ session }: ChatContainerProps) {
         .reverse()
         .find(tc => tc.name === 'TodoWrite');
 
-      if (todoWriteCall?.input?.todos) {
+      if (todoWriteCall?.input?.todos && Array.isArray(todoWriteCall.input.todos)) {
         const todos = todoWriteCall.input.todos as any[];
         return todos.map((todo, index) => ({
           id: `todo-${index}`,
@@ -290,7 +290,7 @@ export default function ChatContainer({ session }: ChatContainerProps) {
           const todoWrite = [...msg.toolCalls]
             .reverse()
             .find(tc => tc?.name === 'TodoWrite');
-          if (todoWrite?.input?.todos) {
+          if (todoWrite?.input?.todos && Array.isArray(todoWrite.input.todos)) {
             const todos = todoWrite.input.todos as any[];
             return todos.map((todo, index) => ({
               id: `todo-${index}`,

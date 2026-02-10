@@ -699,7 +699,8 @@ function ExpandedContent({ toolCall, priority = false }: { toolCall: ToolCall; p
 
   // Special rendering for TodoWrite - show task list
   if (name === 'TodoWrite') {
-    const todos = input.todos as TodoItem[] | undefined;
+    const todosRaw = input.todos;
+    const todos = Array.isArray(todosRaw) ? todosRaw as TodoItem[] : undefined;
     if (!todos?.length) return null;
 
     return (
