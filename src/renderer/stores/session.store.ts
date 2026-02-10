@@ -892,50 +892,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         completedAt: tc.completedAt,
       });
 
-      // Check if there are queued messages to inject after this tool completes
-      const currentState = get();
-      const queue = currentState.messageQueue[sessionId] || [];
-      if (queue.length > 0) {
-        const nextMessage = queue[0];
-        console.log(`[SessionStore] Tool completed, injecting queued message: "${nextMessage.message.slice(0, 50)}..."`);
-
-        // First, add the user message to the chat so it's visible immediately
-        const userMessage: ChatMessage = {
-          id: nextMessage.id,
-          role: 'user',
-          content: nextMessage.message,
-          timestamp: new Date(nextMessage.timestamp),
-        };
-
-        // Add message and remove from queue in a single state update for consistency
-        set((state) => ({
-          messages: {
-            ...state.messages,
-            [sessionId]: [...(state.messages[sessionId] || []), userMessage],
-          },
-          messageQueue: {
-            ...state.messageQueue,
-            [sessionId]: (state.messageQueue[sessionId] || []).slice(1),
-          },
-        }));
-
-        console.log(`[SessionStore] User message added to chat: "${nextMessage.message.slice(0, 50)}..."`);
-
-        // Inject into the active query via streamInput
-        try {
-          const success = await window.electronAPI.claude.injectMessage(
-            sessionId,
-            nextMessage.message,
-            nextMessage.attachments as any[]
-          );
-          console.log(`[SessionStore] Message injection result:`, success);
-          if (!success) {
-            console.warn('[SessionStore] Message injection returned false - query may have ended');
-          }
-        } catch (error) {
-          console.error('[SessionStore] Failed to inject message:', error);
-        }
-      }
+      // Queued messages are processed when streaming fully ends (in setStreaming(false))
+      // Previously this eagerly injected queued messages on every tool completion,
+      // which interrupted the agent mid-conversation
     });
 
     const unsubSystemInfo = window.electronAPI.claude.onSystemInfo(({ sessionId, systemInfo }) => {
