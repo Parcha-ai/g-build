@@ -2085,14 +2085,13 @@ Begin by creating the task structure now.
           // Add MCP servers (browser tools + QMD semantic search if available)
           mcpServers: mcpServersConfig,
           // SSH remote execution: spawn Claude Code on remote machine instead of locally
-          // Note: Using non-persistent createRemoteProcess - the persistent tmux/FIFO approach
-          // has blocking issues with named pipes that cause the read channel to close immediately
+          // Use persistent tmux with Unix socket IPC (fixed FIFO blocking issues)
           ...(session.sshConfig ? {
             spawnClaudeCodeProcess: (options: { command: string; args: string[]; cwd?: string; env: Record<string, string | undefined>; signal: AbortSignal }) => {
-              console.log('[Claude Service] Creating SSH remote process for session:', sessionId);
+              console.log('[Claude Service] Creating persistent SSH remote process for session:', sessionId);
               console.log('[Claude Service] SDK spawn options:', { command: options.command, args: options.args, cwd: options.cwd });
-              // Use direct SSH exec - simpler and more reliable than tmux/FIFO
-              return sshService.createRemoteProcess(
+              // Use tmux with socket-based IPC for persistence across disconnects
+              return sshService.createPersistentRemoteProcess(
                 sessionId,
                 session.sshConfig!,
                 options
