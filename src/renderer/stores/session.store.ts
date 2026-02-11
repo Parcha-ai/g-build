@@ -797,6 +797,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     console.log(`[SessionStore] isStreaming: ${currentIsStreaming}, isProcessingQueue: ${currentIsProcessingQueue}, queueLength: ${currentQueueLength}`);
     console.log(`[SessionStore] Message: "${message.slice(0, 80)}..."`);
 
+    if (!currentIsStreaming) {
+      console.warn(`[SessionStore] ⚠️ isStreaming is FALSE — message will be sent as NEW query instead of queued!`);
+      console.warn(`[SessionStore] Stack trace:`, new Error().stack);
+    }
+
     // If already streaming, queue the message
     if (state.isStreaming[sessionId]) {
       const queuedMsg = {

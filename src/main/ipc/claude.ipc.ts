@@ -116,17 +116,6 @@ export function registerClaudeHandlers(ipcMain: IpcMain): void {
       const mainWindow = getMainWindow();
       if (!mainWindow) return;
 
-      // Guard: Reject if there's already an active query for this session.
-      // This is a critical safety net — if sendMessage is called while a query
-      // is running, it means the frontend queue logic failed. Log and reject.
-      if (claudeService.hasActiveQuery(sessionId)) {
-        console.error(`[Claude IPC] ❌ CRITICAL: sendMessage blocked for session ${sessionId} — already has active query!`);
-        console.error(`[Claude IPC] Message: "${message.slice(0, 100)}"`);
-        console.error(`[Claude IPC] This indicates the frontend queue is broken. The message will be dropped.`);
-        // Do NOT start a second query. Return silently.
-        return;
-      }
-
       // Ensure claudeService has the mainWindow reference for browser updates
       claudeService.setMainWindow(mainWindow);
 
