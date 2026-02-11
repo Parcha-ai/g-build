@@ -2921,10 +2921,12 @@ Begin by creating the task structure now.
   }
 
   /**
-   * Check if there's an active query for the given session
+   * Check if there's an active query for the given session.
+   * Uses activeQueries (AbortController map) which covers the full lifetime
+   * of streamMessage, including before the SDK Query object is created.
    */
   hasActiveQuery(sessionId: string): boolean {
-    return this.activeQueryObjects.has(sessionId);
+    return this.activeQueries.has(sessionId);
   }
 
   /**

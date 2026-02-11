@@ -791,9 +791,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const currentIsStreaming = state.isStreaming[sessionId];
     const currentQueueLength = (state.messageQueue[sessionId] || []).length;
 
+    const currentIsProcessingQueue = state.isProcessingQueue[sessionId];
+
     console.log(`[SessionStore] sendMessage called for session ${sessionId}`);
-    console.log(`[SessionStore] Current isStreaming: ${currentIsStreaming}, Queue length: ${currentQueueLength}`);
-    console.log(`[SessionStore] Message preview: "${message.slice(0, 80)}..."`);
+    console.log(`[SessionStore] isStreaming: ${currentIsStreaming}, isProcessingQueue: ${currentIsProcessingQueue}, queueLength: ${currentQueueLength}`);
+    console.log(`[SessionStore] Message: "${message.slice(0, 80)}..."`);
+    if (!currentIsStreaming && !currentIsProcessingQueue) {
+      console.log(`[SessionStore] ⚠️ SENDING DIRECTLY (not queuing) — stack:`, new Error().stack);
+    }
     console.log('[SessionStore] sendMessage called with attachments:', attachments?.length || 0);
     if (attachments) {
       attachments.forEach((a: any, i: number) => {
@@ -801,8 +806,22 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       });
     }
 
-    // If already streaming OR queue is being processed, queue the message
-    if (state.isStreaming[sessionId] || state.isProcessingQueue[sessionId]) {
+    // Check backend for active query as a safety net —
+    // isStreaming can be stale if a stream event was missed or if state got out of sync
+    let backendHasActiveQuery = false;
+    if (!currentIsStreaming && !currentIsProcessingQueue) {
+      try {
+        backendHasActiveQuery = await window.electronAPI.claude.hasActiveQuery(sessionId);
+        if (backendHasActiveQuery) {
+          console.warn(`[SessionStore] ⚠️ isStreaming is FALSE but backend has active query! Forcing queue.`);
+        }
+      } catch {
+        // If the IPC call fails, proceed with frontend-only check
+      }
+    }
+
+    // If already streaming OR queue is being processed OR backend has active query, queue the message
+    if (state.isStreaming[sessionId] || state.isProcessingQueue[sessionId] || backendHasActiveQuery) {
       const queuedMsg = {
         id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         message,
