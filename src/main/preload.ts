@@ -588,7 +588,7 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.EXTENSION_SCAN_AGENTS, options),
     getCommand: (commandName: string, projectPath?: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.EXTENSION_GET_COMMAND, commandName, projectPath),
-    installSkill: (source: string, options?: { global?: boolean; skills?: string[]; projectPath?: string }): Promise<{ success: boolean; output: string; error?: string }> =>
+    installSkill: (source: string, options?: { global?: boolean; skills?: string[]; projectPath?: string; sessionId?: string }): Promise<{ success: boolean; output: string; error?: string }> =>
       ipcRenderer.invoke(IPC_CHANNELS.EXTENSION_INSTALL_SKILL, source, options),
     listAvailableSkills: (source: string): Promise<{ success: boolean; skills?: Array<{ name: string; description?: string }>; error?: string }> =>
       ipcRenderer.invoke(IPC_CHANNELS.EXTENSION_LIST_AVAILABLE_SKILLS, source),
