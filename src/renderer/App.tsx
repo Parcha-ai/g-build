@@ -15,7 +15,7 @@ import FileContentSearch from './components/editor/FileContentSearch';
 import SessionSwitcher from './components/session/SessionSwitcher';
 import QMDPrompt from './components/qmd/QMDPrompt';
 import LunchLockModal from './components/layout/LunchLockModal';
-import { Terminal, Globe, PanelRight, Settings, PanelLeftClose, Monitor, AlertTriangle, Package, FileText, FileCode, ClipboardList } from 'lucide-react';
+import { Terminal, Globe, PanelRight, Settings, PanelLeftClose, Monitor, AlertTriangle, Package, FileText, FileCode, ClipboardList, GitBranch } from 'lucide-react';
 
 // Check if we're running in Electron (has electronAPI) or browser preview mode
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
@@ -186,11 +186,13 @@ function ElectronApp() {
     isBrowserPanelOpen,
     isExtensionsPanelOpen,
     isPlanPanelOpen,
+    isGitPanelOpen,
     toggleSidebar,
     toggleTerminalPanel,
     toggleBrowserPanel,
     toggleExtensionsPanel,
     togglePlanPanel,
+    toggleGitPanel,
     cycleSplitRatio,
     openSettings,
     hasApiKey,
@@ -476,6 +478,15 @@ function ElectronApp() {
             title="Toggle Editor (Files)"
           >
             <FileCode size={14} />
+          </button>
+          <button
+            onClick={toggleGitPanel}
+            className={`p-1 transition-colors hover:text-claude-text ${
+              isGitPanelOpen ? 'text-claude-text' : 'text-claude-text-secondary'
+            }`}
+            title="Toggle Git"
+          >
+            <GitBranch size={14} />
           </button>
           <button
             onClick={cycleSplitRatio}
