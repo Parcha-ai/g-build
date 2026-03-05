@@ -2401,13 +2401,14 @@ Begin by creating the task structure now.
           ...(sdkSessionId ? { resume: sdkSessionId } : {}),
           // Add MCP servers (browser tools + QMD semantic search if available)
           mcpServers: mcpServersConfig,
-          // SSH remote execution: spawn Claude Code on remote machine via tmux for persistence
-          // Uses tmux + FIFOs so the remote process survives app restarts
+          // SSH remote execution: spawn Claude Code on remote machine via direct SSH exec
+          // Note: The persistent tmux/FIFO approach has blocking issues with named pipes
+          // that cause the read channel to close or spawn duplicate processes
           ...(session.sshConfig ? {
             spawnClaudeCodeProcess: (options: { command: string; args: string[]; cwd?: string; env: Record<string, string | undefined>; signal: AbortSignal }) => {
-              console.log('[Claude Service] Creating SSH persistent remote process for session:', sessionId);
+              console.log('[Claude Service] Creating SSH remote process for session:', sessionId);
               console.log('[Claude Service] SDK spawn options:', { command: options.command, args: options.args, cwd: options.cwd });
-              return sshService.createPersistentRemoteProcess(
+              return sshService.createRemoteProcess(
                 sessionId,
                 session.sshConfig!,
                 options
