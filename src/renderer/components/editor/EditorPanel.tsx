@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useCallback } from 'react';
 import Editor, { OnMount, OnChange, BeforeMount, loader } from '@monaco-editor/react';
 import * as monaco from 'monaco-editor';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { X, Save, FileText, Circle, Loader2, Eye, Edit3 } from 'lucide-react';
 import { useEditorStore } from '../../stores/editor.store';
 
@@ -285,7 +286,7 @@ export default function EditorPanel({ onClose }: EditorPanelProps) {
           activeTab.isPreviewMode && activeTab.language === 'markdown' ? (
             <div className="flex-1 overflow-auto p-6 bg-claude-bg">
               <div className="max-w-4xl mx-auto prose prose-invert prose-sm">
-                <ReactMarkdown>{activeTab.content}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{activeTab.content}</ReactMarkdown>
               </div>
             </div>
           ) : (

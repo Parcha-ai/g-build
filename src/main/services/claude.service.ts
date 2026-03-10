@@ -319,8 +319,8 @@ export class ClaudeService {
         description: 'Fast and capable'
       },
       {
-        id: 'claude-3-5-haiku-20241022',
-        name: 'Haiku 3.5',
+        id: 'claude-haiku-4-5-20251001',
+        name: 'Haiku 4.5',
         description: 'Fastest model - best for simple tasks'
       },
     ];
@@ -1894,8 +1894,10 @@ ${memoriesPrompt}
     try {
       // Check if this session has been used before (has SDK session ID stored)
       // Try new location first, then fall back to old location for backwards compatibility
-      const sdkSessionId = this.sessionStore.get(`sdkSessionMappings.${sessionId}`) as string | undefined
+      // 'new' is a sentinel for brand-new sessions — don't resume those
+      const rawSdkSessionId = this.sessionStore.get(`sdkSessionMappings.${sessionId}`) as string | undefined
         || this.sessionStore.get(`sessions.${sessionId}.sdkSessionId`) as string | undefined;
+      const sdkSessionId = rawSdkSessionId === 'new' ? undefined : rawSdkSessionId;
 
       // Validate and cast permission mode to SDK type
       const validModes = ['default', 'acceptEdits', 'bypassPermissions', 'plan', 'dontAsk'] as const;
@@ -3982,17 +3984,22 @@ Begin by creating the task structure now.
 
     // Get the stored SDK session ID for this session
     // Try new location first, then fall back to old location for backwards compatibility
-    // IMPORTANT: Track whether we have an EXPLICITLY stored SDK session ID (not just the session ID)
-    // This is critical for distinguishing between:
-    // 1. New SSH sessions (no stored ID) - should start fresh, NOT load old transcripts
-    // 2. Teleported/resumed sessions (have stored ID) - should find their specific transcript
+    // 'new' is a sentinel for brand-new sessions that have never had a conversation —
+    // these must NOT inherit old transcripts from the same remote directory.
     const storedSdkSessionId = this.sessionStore.get(`sdkSessionMappings.${sessionId}`) as string | undefined
       || this.sessionStore.get(`sessions.${sessionId}.sdkSessionId`) as string | undefined;
-    const hasStoredSdkSessionId = !!storedSdkSessionId;
-    const sdkSessionId = storedSdkSessionId || sessionId;
+    const isNewSession = storedSdkSessionId === 'new';
+    const hasStoredSdkSessionId = !!storedSdkSessionId && !isNewSession;
+    const sdkSessionId = hasStoredSdkSessionId ? storedSdkSessionId : sessionId;
 
     // For SSH sessions, fetch transcript from the remote machine
     if (session?.sshConfig) {
+      // Brand-new session — start fresh, don't search for old transcripts
+      if (isNewSession) {
+        console.log('[Claude] Brand-new SSH session — starting fresh (no transcript search)');
+        return [];
+      }
+
       // If no stored SDK ID, try to find the most recent transcript on the remote.
       // This handles the case where the mapping was lost (repair, migration, etc.)
       // but the conversation still exists on the remote.

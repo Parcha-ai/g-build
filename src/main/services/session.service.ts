@@ -169,7 +169,7 @@ export class SessionService extends EventEmitter {
         console.log('[Session] Generating name for:', path.basename(actualPath));
 
         const response = await anthropic.messages.create({
-          model: 'claude-3-5-haiku-20241022',
+          model: 'claude-haiku-4-5-20251001',
           max_tokens: 50,
           messages: [{
             role: 'user',
@@ -441,7 +441,13 @@ Only return the title, nothing else.`
     const sessions = this.store.get('sessions') as Record<string, Session> | undefined;
     if (!sessions) return [];
     // Filter out stub objects that only have sdkSessionId (from old code paths)
-    return Object.values(sessions).filter(s => s.name && s.repoPath);
+    // Apply sessionNames overrides (AI-generated display names) — same as discoverClaudeSessions does
+    return Object.values(sessions)
+      .filter(s => s.name && s.repoPath)
+      .map(s => {
+        const customName = this.store.get(`sessionNames.${s.id}`) as string | undefined;
+        return customName ? { ...s, name: customName } : s;
+      });
   }
 
   private async discoverClaudeSessions(): Promise<Session[]> {
@@ -741,6 +747,7 @@ Only return the title, nothing else.`
       ...originalSession,
       id: forkedSessionId,
       name: forkedName,
+      sdkSessionId: undefined, // Fork gets its own SDK session — sharing causes conflicts on resume
       createdAt: new Date(),
       updatedAt: new Date(),
       // Preserve important metadata
@@ -904,6 +911,7 @@ Only return the title, nothing else.`
       ...parentSession,
       id: forkedSessionId,
       name: `${parentSession.name} (fork)`, // Temporary name, will be replaced by AI generation
+      sdkSessionId: undefined, // Fork gets its own SDK session — sharing causes conflicts on resume
       createdAt: new Date(),
       updatedAt: new Date(),
       forkCreatedAt: new Date(),
@@ -981,7 +989,7 @@ Only return the title, nothing else.`
       console.log('[Session] Generating AI name for fork:', forkedSessionId);
 
       const response = await anthropic.messages.create({
-        model: 'claude-3-5-haiku-20241022',
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 50,
         messages: [{
           role: 'user',

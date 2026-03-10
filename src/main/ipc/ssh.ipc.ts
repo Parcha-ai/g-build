@@ -193,6 +193,11 @@ export function registerSSHHandlers(ipcMain: IpcMain): void {
         // Save session (use individual key pattern like SessionService)
         sessionStore.set(`sessions.${sessionId}`, session);
 
+        // Mark as a brand-new session so getMessages() won't search for old transcripts
+        // at the same remote path. The sentinel 'new' is replaced with the real SDK session
+        // ID on first message send (claude.service.ts stores it on system_id receipt).
+        sessionStore.set(`sdkSessionMappings.${sessionId}`, 'new');
+
         console.log('[SSH IPC] SSH session created:', sessionId);
         return session;
       } catch (error) {

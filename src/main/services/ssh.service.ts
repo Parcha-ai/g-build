@@ -2288,6 +2288,15 @@ export class SSHService {
       return true;
     });
 
+    // Strip --betas flag for OAuth users (no API key) — betas are API-key-only
+    if (!sdkOptions.env.ANTHROPIC_API_KEY) {
+      const betasIdx = filteredArgs.indexOf('--betas');
+      if (betasIdx !== -1) {
+        filteredArgs.splice(betasIdx, 2);
+        console.log('[SSH Service] [Zellij] Stripped --betas flag (OAuth user, no API key)');
+      }
+    }
+
     const escapedArgs = filteredArgs.map(arg => {
       if (arg.includes(' ') || arg.includes('"') || arg.includes("'") || arg.includes('{')) {
         return `'${arg.replace(/'/g, "'\\''")}'`;
@@ -2482,6 +2491,15 @@ exec claude ${escapedArgs} <"${fifoIn}" >"${fifoOut}" 2>&1
     // Ensure --verbose is present (required when using --output-format stream-json)
     if (!filteredArgs.includes('--verbose')) {
       filteredArgs.push('--verbose');
+    }
+
+    // Strip --betas flag for OAuth users (no API key) — betas are API-key-only
+    if (!sdkOptions.env.ANTHROPIC_API_KEY) {
+      const betasIdx = filteredArgs.indexOf('--betas');
+      if (betasIdx !== -1) {
+        filteredArgs.splice(betasIdx, 2); // Remove --betas and its value
+        console.log('[SSH Service] Stripped --betas flag (OAuth user, no API key)');
+      }
     }
 
     // Strip SDK-type MCP servers from --mcp-config

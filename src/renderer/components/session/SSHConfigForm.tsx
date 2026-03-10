@@ -45,6 +45,7 @@ export default function SSHConfigForm({ onBack, onConnect, teleportSource, onTel
 
   // Remote file browser
   const [showFileBrowser, setShowFileBrowser] = useState(false);
+  const [showDirBrowser, setShowDirBrowser] = useState(false);
 
   // Load saved config on mount
   useEffect(() => {
@@ -344,16 +345,31 @@ export default function SSHConfigForm({ onBack, onConnect, teleportSource, onTel
               <label className="block text-[10px] font-bold mb-1 text-claude-text-secondary" style={{ letterSpacing: '0.1em' }}>
                 REMOTE WORKING DIRECTORY
               </label>
-              <div className="relative">
-                <Folder size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-claude-text-secondary" />
-                <input
-                  type="text"
-                  value={remoteWorkdir}
-                  onChange={(e) => setRemoteWorkdir(e.target.value)}
-                  placeholder="/home/ubuntu/project"
-                  className="w-full pl-9 pr-3 py-1.5 text-sm font-mono focus:outline-none focus:border-claude-accent bg-claude-bg border border-claude-border text-claude-text"
+              <div className="flex gap-2">
+                <div className="flex-1 relative">
+                  <Folder size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-claude-text-secondary" />
+                  <input
+                    type="text"
+                    value={remoteWorkdir}
+                    onChange={(e) => setRemoteWorkdir(e.target.value)}
+                    placeholder="/home/ubuntu/project"
+                    className="w-full pl-9 pr-3 py-1.5 text-sm font-mono focus:outline-none focus:border-claude-accent bg-claude-bg border border-claude-border text-claude-text"
+                    style={{ borderRadius: 0 }}
+                  />
+                </div>
+                <button
+                  onClick={() => {
+                    if (isConnectionValid) {
+                      setShowDirBrowser(true);
+                    }
+                  }}
+                  disabled={!isConnectionValid}
+                  className="px-3 py-1.5 bg-claude-surface border border-claude-border hover:bg-claude-surface-hover disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                  title={isConnectionValid ? "Browse remote directories" : "Fill in connection details first"}
                   style={{ borderRadius: 0 }}
-                />
+                >
+                  <FolderSearch size={14} className="text-claude-text-secondary" />
+                </button>
               </div>
               <p className="text-[9px] text-claude-text-secondary mt-1">Where Claude will execute tools</p>
             </div>
@@ -494,7 +510,7 @@ export default function SSHConfigForm({ onBack, onConnect, teleportSource, onTel
         </div>
       </div>
 
-      {/* Remote File Browser Dialog */}
+      {/* Remote File Browser Dialog (for setup script) */}
       {showFileBrowser && (
         <RemoteFileBrowser
           sshConfig={{
@@ -503,7 +519,7 @@ export default function SSHConfigForm({ onBack, onConnect, teleportSource, onTel
             username,
             privateKeyPath,
             passphrase,
-            remoteWorkdir: remoteWorkdir || '~', // Required field, default to home
+            remoteWorkdir: remoteWorkdir || '~',
           }}
           initialPath={remoteWorkdir || '~'}
           onSelect={(path) => {
@@ -511,7 +527,28 @@ export default function SSHConfigForm({ onBack, onConnect, teleportSource, onTel
             setShowFileBrowser(false);
           }}
           onClose={() => setShowFileBrowser(false)}
-          fileFilter={(name) => name.endsWith('.sh')} // Only show .sh files
+          fileFilter={(name) => name.endsWith('.sh')}
+        />
+      )}
+
+      {/* Remote Directory Browser Dialog (for working directory) */}
+      {showDirBrowser && (
+        <RemoteFileBrowser
+          sshConfig={{
+            host,
+            port: parseInt(port) || 22,
+            username,
+            privateKeyPath,
+            passphrase,
+            remoteWorkdir: remoteWorkdir || '~',
+          }}
+          initialPath={remoteWorkdir || '~'}
+          directoryMode
+          onSelect={(path) => {
+            setRemoteWorkdir(path);
+            setShowDirBrowser(false);
+          }}
+          onClose={() => setShowDirBrowser(false)}
         />
       )}
     </div>

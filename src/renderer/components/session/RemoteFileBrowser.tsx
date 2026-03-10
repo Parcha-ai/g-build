@@ -8,6 +8,7 @@ interface RemoteFileBrowserProps {
   onSelect: (path: string) => void;
   onClose: () => void;
   fileFilter?: (name: string) => boolean; // Optional filter for files (e.g., .sh files only)
+  directoryMode?: boolean; // When true, selects directories instead of files
 }
 
 export default function RemoteFileBrowser({
@@ -16,6 +17,7 @@ export default function RemoteFileBrowser({
   onSelect,
   onClose,
   fileFilter,
+  directoryMode,
 }: RemoteFileBrowserProps) {
   const [currentPath, setCurrentPath] = useState(initialPath || '~');
   const [entries, setEntries] = useState<Array<{ name: string; type: 'file' | 'directory'; permissions: string }>>([]);
@@ -90,7 +92,7 @@ export default function RemoteFileBrowser({
       <div className="bg-claude-bg border border-claude-border w-[600px] max-h-[80vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-3 border-b border-claude-border">
-          <h2 className="text-sm font-semibold text-claude-text">Browse Remote Files</h2>
+          <h2 className="text-sm font-semibold text-claude-text">{directoryMode ? 'Select Remote Directory' : 'Browse Remote Files'}</h2>
           <button
             onClick={onClose}
             className="p-1 hover:bg-claude-surface transition-colors"
@@ -168,10 +170,19 @@ export default function RemoteFileBrowser({
         </div>
 
         {/* Footer */}
-        <div className="p-2 border-t border-claude-border bg-claude-surface/30">
+        <div className="p-2 border-t border-claude-border bg-claude-surface/30 flex items-center justify-between">
           <p className="text-[10px] text-claude-text-secondary">
-            Click a file to select, or navigate through directories
+            {directoryMode ? 'Navigate to a directory, then select it' : 'Click a file to select, or navigate through directories'}
           </p>
+          {directoryMode && (
+            <button
+              onClick={() => onSelect(currentPath)}
+              className="px-3 py-1 text-[10px] font-bold bg-claude-accent hover:bg-claude-accent-hover text-white"
+              style={{ borderRadius: 0, letterSpacing: '0.05em' }}
+            >
+              SELECT THIS DIRECTORY
+            </button>
+          )}
         </div>
       </div>
     </div>
