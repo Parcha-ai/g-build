@@ -3,6 +3,7 @@ import { Readable, Writable, PassThrough } from 'stream';
 import { EventEmitter } from 'events';
 import * as fs from 'fs';
 import type { SSHConfig } from '../../shared/types';
+import { IPC_CHANNELS } from '../../shared/constants/channels';
 
 /**
  * Interface matching the Claude Agent SDK's SpawnedProcess
@@ -127,10 +128,31 @@ export class SSHService {
   private connections: Map<string, SSHConnectionInfo> = new Map();
   private connectionTimeout = 30000; // 30 seconds
 
-  // Track active persistent stream connections to avoid duplicate FIFO readers.
+  // Track active persistent stream connections to avoid duplicate readers.
   // The SDK calls spawnClaudeCodeProcess on every query(), so subsequent calls
-  // must reuse the existing streams rather than opening new cat channels.
-  private persistentStreams = new Map<string, { stdin: PassThrough; stdout: PassThrough; active: boolean }>();
+  // must reuse the existing streams rather than opening new read channels.
+  // IMPORTANT: These are MASTER streams that the SSH channel writes to directly.
+  // They are NEVER returned to the SDK. Each SDK call gets its own passThrough
+  // with a forwarding listener from master → SDK passThrough. This prevents
+  // duplication when the SDK holds references to old passThrough objects.
+  private persistentStreams = new Map<string, { stdin: PassThrough; stdout: PassThrough; active: boolean; setupPromise?: Promise<void> }>();
+
+  // Track bytes consumed from the output log file per session.
+  // Survives SSH disconnects — only cleared in killPersistentSession.
+  private persistentOutputOffsets = new Map<string, number>();
+
+  // Track the current active forwarding listener per session so we can
+  // remove the previous one before adding a new one (prevents listener stacking).
+  private persistentForwarders = new Map<string, { output: (data: Buffer) => void; input: (data: Buffer) => void; passThrough: { stdin: PassThrough; stdout: PassThrough } }>();
+
+  // Track SSH read/write channels per session so we can close them when
+  // cleaning up stale streams or creating new ones (prevents duplicate tail -f).
+  private persistentChannels = new Map<string, { read?: ClientChannel; write?: ClientChannel; reconnect?: ClientChannel }>();
+
+  // SSH health check intervals — heartbeats to detect dead connections
+  private healthCheckIntervals = new Map<string, ReturnType<typeof setInterval>>();
+  private healthCheckFailures = new Map<string, number>();
+  private readonly MAX_HEALTH_CHECK_FAILURES = 3;
 
   // Performance optimization: Cache remote transcripts with TTL
   private sshTranscriptCache = new Map<string, {
@@ -139,6 +161,61 @@ export class SSHService {
     sessionId: string;
   }>();
   private readonly SSH_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+  /**
+   * Validate that persistent FIFO proxy streams are genuinely usable.
+   * A stale entry can remain marked active even after stream end/teardown,
+   * which blocks recovery paths by incorrectly "skipping reconnect".
+   */
+  private isPersistentStreamLive(
+    streams: { stdin: PassThrough; stdout: PassThrough; active: boolean } | undefined
+  ): boolean {
+    if (!streams?.active) return false;
+
+    const stdinLive = !streams.stdin.destroyed && !streams.stdin.writableEnded && streams.stdin.writable;
+    const stdoutLive = !streams.stdout.destroyed && !streams.stdout.readableEnded && streams.stdout.readable;
+    return stdinLive && stdoutLive;
+  }
+
+  /**
+   * Close any existing SSH read/write/reconnect channels for a session.
+   * Called before creating new channels to prevent duplicate tail -f processes.
+   */
+  private closePersistentChannels(sessionId: string, which?: 'read' | 'write' | 'reconnect'): void {
+    const channels = this.persistentChannels.get(sessionId);
+    if (!channels) return;
+    if (which) {
+      const ch = channels[which];
+      if (ch) {
+        ch.close();
+        channels[which] = undefined;
+        console.log(`[SSH Service] Closed ${which} channel for session:`, sessionId);
+      }
+    } else {
+      if (channels.read) channels.read.close();
+      if (channels.write) channels.write.close();
+      if (channels.reconnect) channels.reconnect.close();
+      this.persistentChannels.delete(sessionId);
+      console.log('[SSH Service] Closed all channels for session:', sessionId);
+    }
+  }
+
+  /**
+   * Remove the previous forwarding listener pair for a session.
+   * Called before adding a new forwarder to prevent listener stacking.
+   */
+  private cleanupForwarder(
+    sessionId: string,
+    existingStreams: { stdin: PassThrough; stdout: PassThrough }
+  ): void {
+    const prev = this.persistentForwarders.get(sessionId);
+    if (prev) {
+      existingStreams.stdout.removeListener('data', prev.output);
+      prev.passThrough.stdin.removeListener('data', prev.input);
+      this.persistentForwarders.delete(sessionId);
+      console.log('[SSH Service] Removed previous forwarder for session:', sessionId);
+    }
+  }
 
   /**
    * Test an SSH connection and verify Claude Code is installed on the remote
@@ -568,6 +645,7 @@ export class SSHService {
       client.on('ready', () => {
         clearTimeout(timeout);
         this.connections.set(sessionId, { client, config });
+        this.startHealthCheck(sessionId);
         console.log(`[SSH Service] Connected to ${config.host} for session ${sessionId}`);
         resolve();
       });
@@ -580,6 +658,39 @@ export class SSHService {
       client.on('close', () => {
         this.connections.delete(sessionId);
         console.log(`[SSH Service] Connection closed for session ${sessionId}`);
+
+        // Stop health checks for this connection
+        this.stopHealthCheck(sessionId);
+
+        // When the SSH connection drops, we must clean up persistent streams
+        // so the SDK's stream generator terminates and the renderer clears isStreaming.
+        // Without this, the UI gets permanently stuck in "Grep is thinking..." state.
+        const streams = this.persistentStreams.get(sessionId);
+        if (streams) {
+          console.log(`[SSH Service] Cleaning up persistent streams after connection close for ${sessionId}`);
+          // Remove ALL data listeners before ending streams to prevent
+          // orphaned forwarding listeners from writing to dead streams
+          streams.stdout.removeAllListeners('data');
+          streams.stdin.removeAllListeners('data');
+          streams.active = false;
+          this.closePersistentChannels(sessionId);
+          this.persistentStreams.delete(sessionId);
+          this.persistentForwarders.delete(sessionId);
+          // Ending stdout causes the SDK's async generator to complete,
+          // which triggers the safety-net STREAM_END in claude.ipc.ts
+          streams.stdout.end();
+        }
+
+        // Notify renderer of connection loss for immediate UI feedback
+        try {
+          const { BrowserWindow } = require('electron');
+          const windows = BrowserWindow.getAllWindows();
+          for (const win of windows) {
+            win.webContents.send(IPC_CHANNELS.SSH_CONNECTION_LOST, { sessionId, reason: 'SSH connection closed unexpectedly' });
+          }
+        } catch (e) {
+          console.error('[SSH Service] Failed to send connection-lost event:', e);
+        }
       });
 
       // Read private key
@@ -887,8 +998,13 @@ export class SSHService {
    * Disconnect a session's SSH connection
    */
   disconnect(sessionId: string): void {
-    // Clean up persistent stream tracking
+    // Stop health check first
+    this.stopHealthCheck(sessionId);
+
+    // Clean up persistent stream tracking and SSH channels
+    this.closePersistentChannels(sessionId);
     this.persistentStreams.delete(sessionId);
+    this.persistentForwarders.delete(sessionId);
 
     const conn = this.connections.get(sessionId);
     if (conn) {
@@ -902,10 +1018,106 @@ export class SSHService {
   }
 
   /**
+   * Start a health check heartbeat for an SSH connection.
+   * Sends `echo ok` every 30 seconds.
+   *
+   * Important: this check must be non-disruptive. We already rely on ssh2's
+   * keepalive (`keepaliveInterval` / `keepaliveCountMax`) and close/error events
+   * for authoritative connection state. If this exec-based heartbeat times out
+   * under load, force-disconnecting creates reconnect loops and breaks
+   * persistent SSH sessions.
+   */
+  private startHealthCheck(sessionId: string): void {
+    this.stopHealthCheck(sessionId); // Clear any existing interval
+    this.healthCheckFailures.delete(sessionId);
+
+    const interval = setInterval(async () => {
+      const conn = this.connections.get(sessionId);
+      if (!conn) {
+        this.stopHealthCheck(sessionId);
+        return;
+      }
+
+      // Persistent SSH sessions keep long-lived channels open for FIFO I/O.
+      // Skip exec-based heartbeats while those streams are active to avoid
+      // false-positive timeouts from channel pressure.
+      if (this.hasActivePersistentStreams(sessionId)) {
+        this.healthCheckFailures.delete(sessionId);
+        return;
+      }
+
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('Health check timeout')), 10000);
+          conn.client.exec('echo ok', (err, channel) => {
+            if (err) {
+              clearTimeout(timeout);
+              reject(err);
+              return;
+            }
+            // Must consume stdout or the stream stays paused and 'close' never fires
+            channel.on('data', () => { /* drain */ });
+            channel.stderr.on('data', () => { /* drain */ });
+            channel.on('close', () => {
+              clearTimeout(timeout);
+              resolve();
+            });
+            channel.on('error', (e: Error) => {
+              clearTimeout(timeout);
+              reject(e);
+            });
+          });
+        });
+
+        this.healthCheckFailures.delete(sessionId);
+      } catch (error) {
+        const failures = (this.healthCheckFailures.get(sessionId) || 0) + 1;
+        this.healthCheckFailures.set(sessionId, failures);
+        console.warn(
+          `[SSH Service] Health check failed for session ${sessionId} (${failures}/${this.MAX_HEALTH_CHECK_FAILURES}):`,
+          error
+        );
+
+        // Keep the connection alive; let ssh2 keepalive + real close/error events
+        // drive reconnection. Stop noisy heartbeats after repeated failures.
+        if (failures >= this.MAX_HEALTH_CHECK_FAILURES) {
+          console.warn(
+            `[SSH Service] Disabling heartbeat checks for ${sessionId} after repeated failures (connection remains active)`
+          );
+          this.stopHealthCheck(sessionId);
+        }
+      }
+    }, 30000);
+
+    this.healthCheckIntervals.set(sessionId, interval);
+  }
+
+  /**
+   * Stop the health check heartbeat for a session
+   */
+  private stopHealthCheck(sessionId: string): void {
+    const interval = this.healthCheckIntervals.get(sessionId);
+    if (interval) {
+      clearInterval(interval);
+      this.healthCheckIntervals.delete(sessionId);
+    }
+    this.healthCheckFailures.delete(sessionId);
+  }
+
+  /**
    * Check if a session has an active SSH connection
    */
   isConnected(sessionId: string): boolean {
     return this.connections.has(sessionId);
+  }
+
+  /**
+   * Check if a session has active persistent FIFO streams (i.e., an active query).
+   * Used to prevent auto-reconnect from destroying a live query.
+   */
+  hasActivePersistentStreams(sessionId: string): boolean {
+    const streams = this.persistentStreams.get(sessionId);
+    return this.isPersistentStreamLive(streams);
   }
 
   /**
@@ -1939,10 +2151,10 @@ export class SSHService {
         `tmux kill-session -t "${sessionName}" 2>/dev/null || true`
       );
 
-      // Clean up any old FIFO pipes from tmux
+      // Clean up any old FIFO pipes and log files from tmux
       await this.execCommand(
         client,
-        `rm -f /tmp/grep-${sessionId.substring(0, 8)}-in /tmp/grep-${sessionId.substring(0, 8)}-out 2>/dev/null || true`
+        `rm -f /tmp/grep-${sessionId.substring(0, 8)}-in /tmp/grep-${sessionId.substring(0, 8)}-out /tmp/grep-${sessionId.substring(0, 8)}-output.log 2>/dev/null || true`
       );
 
       console.log(`[SSH Service] [Migration] Successfully cleaned up old tmux session: ${sessionName}`);
@@ -1972,10 +2184,10 @@ export class SSHService {
         `zellij kill-session "${zellijSessionName}" 2>/dev/null || true`
       );
 
-      // Clean up FIFO pipes
+      // Clean up FIFO pipes and log files
       await this.execCommand(
         client,
-        `rm -f /tmp/grep-${sessionId.substring(0, 8)}-in /tmp/grep-${sessionId.substring(0, 8)}-out 2>/dev/null || true`
+        `rm -f /tmp/grep-${sessionId.substring(0, 8)}-in /tmp/grep-${sessionId.substring(0, 8)}-out /tmp/grep-${sessionId.substring(0, 8)}-output.log 2>/dev/null || true`
       );
 
       console.log(`[SSH Service] Killed Zellij session: ${zellijSessionName}`);
@@ -1995,8 +2207,11 @@ export class SSHService {
     config: SSHConfig
   ): Promise<{ success: boolean; error?: string }> {
     try {
-      // Clean up persistent stream tracking
+      // Clean up persistent stream tracking, channels, forwarders, and byte offset
+      this.closePersistentChannels(sessionId);
       this.persistentStreams.delete(sessionId);
+      this.persistentForwarders.delete(sessionId);
+      this.persistentOutputOffsets.delete(sessionId);
 
       const client = await this.getConnection(sessionId, config);
       const tmuxSessionName = `grep-${sessionId.substring(0, 8)}`;
@@ -2007,10 +2222,10 @@ export class SSHService {
         `tmux kill-session -t "${tmuxSessionName}" 2>/dev/null || true`
       );
 
-      // Clean up FIFO pipes
+      // Clean up input FIFO and output log file
       await this.execCommand(
         client,
-        `rm -f /tmp/grep-${sessionId.substring(0, 8)}-in /tmp/grep-${sessionId.substring(0, 8)}-out 2>/dev/null || true`
+        `rm -f /tmp/grep-${sessionId.substring(0, 8)}-in /tmp/grep-${sessionId.substring(0, 8)}-output.log 2>/dev/null || true`
       );
 
       console.log(`[SSH Service] Killed persistent session: ${tmuxSessionName}`);
@@ -2105,7 +2320,7 @@ export class SSHService {
         if (existingSession?.isRunning) {
           console.log(`[SSH Service] [Zellij] Reattaching to existing session: ${zellijSessionName}`);
           // Session exists and Claude is running - reattach to the FIFOs
-          await this.attachToExistingSession(client, fifoIn, fifoOut, passThrough, emitter, sdkOptions);
+          await this.attachToExistingSession(client, fifoIn, fifoOut, sessionId, passThrough, emitter, sdkOptions);
         } else {
           // Need to create a new zellij session
           if (existingSession) {
@@ -2142,7 +2357,7 @@ exec claude ${escapedArgs} <"${fifoIn}" >"${fifoOut}" 2>&1
 
           // Step 2: Attach to FIFOs FIRST (this is critical - the launcher script will block on opening FIFOs)
           console.log('[SSH Service] [Zellij] Attaching to FIFOs before starting launcher...');
-          await this.attachToExistingSession(client, fifoIn, fifoOut, passThrough, emitter, sdkOptions);
+          await this.attachToExistingSession(client, fifoIn, fifoOut, sessionId, passThrough, emitter, sdkOptions);
 
           // Step 3: NOW write the launcher script command to the session pane
           // The FIFOs are ready, so the script won't block
@@ -2233,7 +2448,7 @@ exec claude ${escapedArgs} <"${fifoIn}" >"${fifoOut}" 2>&1
     const self = this; // Capture for use in object literal methods
     const tmuxSessionName = `grep-${sessionId.substring(0, 8)}`;
     const fifoIn = `/tmp/grep-${sessionId.substring(0, 8)}-in`;
-    const fifoOut = `/tmp/grep-${sessionId.substring(0, 8)}-out`;
+    const logFile = `/tmp/grep-${sessionId.substring(0, 8)}-output.log`;
 
     // Build environment exports
     const includeVars = [
@@ -2307,36 +2522,79 @@ exec claude ${escapedArgs} <"${fifoIn}" >"${fifoOut}" 2>&1
       killed = true;
       // Don't kill the tmux session on abort - that's the point of persistence
       // Just close our local streams and clean up the stream tracking
+      this.closePersistentChannels(sessionId);
       this.persistentStreams.delete(sessionId);
+      this.persistentForwarders.delete(sessionId);
       passThrough.stdout.end();
     };
     sdkOptions.signal.addEventListener('abort', abortHandler);
 
     // Start async connection and tmux setup
     (async () => {
+      // Declared outside try so catch can resolve it if setup fails
+      let resolveSetup: (() => void) | undefined;
+
       try {
-        // Check if we already have active streams for this session.
+        // Check if we already have active streams or an in-progress setup for this session.
         // The SDK calls spawnClaudeCodeProcess on every query(), so we must
         // reuse existing FIFO connections rather than opening duplicate cat readers.
-        const existing = this.persistentStreams.get(sessionId);
-        if (existing?.active) {
-          console.log('[SSH Service] Reusing existing persistent streams for session:', sessionId);
-          // Forward data from the original FIFO-connected streams to the new passThrough.
-          // The original existing.stdout receives data from the FIFO read channel;
-          // we add a named listener so we can cleanly remove just this one later.
-          const forwardOutput = (data: Buffer) => passThrough.stdout.write(data);
-          const forwardInput = (data: Buffer) => existing.stdin.write(data);
-          existing.stdout.on('data', forwardOutput);
-          passThrough.stdin.on('data', forwardInput);
-          // Clean up only our forwarding listeners when this caller's streams close
-          passThrough.stdout.once('close', () => {
-            existing.stdout.removeListener('data', forwardOutput);
-          });
-          passThrough.stdin.once('close', () => {
-            passThrough.stdin.removeListener('data', forwardInput);
-          });
-          return; // Don't create new cat channels
+        let existing = this.persistentStreams.get(sessionId);
+
+        // Clean up stale stream entries that still have active=true but
+        // underlying pass-through streams are no longer writable/readable.
+        if (existing?.active && !this.isPersistentStreamLive(existing)) {
+          console.warn('[SSH Service] Found stale persistent stream entry; recreating channels for session:', sessionId);
+          this.closePersistentChannels(sessionId);
+          this.persistentStreams.delete(sessionId);
+          this.persistentForwarders.delete(sessionId);
+          existing = undefined;
         }
+
+        // If another call is currently setting up, wait for it then reuse
+        if (existing?.setupPromise) {
+          console.log('[SSH Service] Waiting for in-progress setup to complete for session:', sessionId);
+          await existing.setupPromise;
+          const nowReady = this.persistentStreams.get(sessionId);
+          if (nowReady && this.isPersistentStreamLive(nowReady)) {
+            console.log('[SSH Service] Setup completed, reusing streams for session:', sessionId);
+            const readyStreams = nowReady; // capture for closures (TS narrowing)
+            // Remove previous forwarder to prevent listener stacking
+            this.cleanupForwarder(sessionId, readyStreams);
+            const forwardOutput = (data: Buffer) => passThrough.stdout.write(data);
+            const forwardInput = (data: Buffer) => readyStreams.stdin.write(data);
+            readyStreams.stdout.on('data', forwardOutput);
+            passThrough.stdin.on('data', forwardInput);
+            this.persistentForwarders.set(sessionId, { output: forwardOutput, input: forwardInput, passThrough });
+            return;
+          }
+        }
+
+        if (existing && this.isPersistentStreamLive(existing)) {
+          console.log('[SSH Service] Reusing existing persistent streams for session:', sessionId);
+          // Forward data from the original log-connected streams to the new passThrough.
+          // Remove previous forwarder first to prevent listener stacking — the SDK
+          // calls spawnClaudeCodeProcess on every query(), so forwarders accumulate.
+          const existingStreams = existing; // capture for closures (TS narrowing)
+          this.cleanupForwarder(sessionId, existingStreams);
+          const forwardOutput = (data: Buffer) => passThrough.stdout.write(data);
+          const forwardInput = (data: Buffer) => existingStreams.stdin.write(data);
+          existingStreams.stdout.on('data', forwardOutput);
+          passThrough.stdin.on('data', forwardInput);
+          this.persistentForwarders.set(sessionId, { output: forwardOutput, input: forwardInput, passThrough });
+          return; // Don't create new tail channels
+        }
+
+        // Create MASTER streams that the SSH channel writes to directly.
+        // These are NEVER returned to the SDK. Each SDK call gets its own
+        // passThrough with a forwarding listener from master → SDK.
+        const masterStdin = new PassThrough();
+        const masterStdout = new PassThrough();
+        const masterStreams = { stdin: masterStdin, stdout: masterStdout };
+
+        // Set a sentinel entry with a pending promise BEFORE starting async setup.
+        // This prevents a second query() call from creating duplicate readers.
+        const setupPromise = new Promise<void>((resolve) => { resolveSetup = resolve; });
+        this.persistentStreams.set(sessionId, { stdin: masterStdin, stdout: masterStdout, active: false, setupPromise });
 
         console.log('[SSH Service] Getting connection for persistent process...');
         const client = await this.getConnection(sessionId, config);
@@ -2346,62 +2604,56 @@ exec claude ${escapedArgs} <"${fifoIn}" >"${fifoOut}" 2>&1
         const existingSession = await this.checkPersistentSession(sessionId, config);
         console.log('[SSH Service] Existing session check result:', existingSession);
 
+        // Determine if we can reattach or need to create a new session.
+        let reattached = false;
+
         if (existingSession?.isRunning) {
-          console.log(`[SSH Service] Reattaching to existing persistent session: ${tmuxSessionName}`);
-          await this.attachToExistingSession(client, fifoIn, fifoOut, passThrough, emitter, sdkOptions);
+          // Check if this is an old FIFO-based session that needs migration.
+          const oldFifo = `/tmp/grep-${sessionId.substring(0, 8)}-out`;
+          const migrationCheck = await this.execCommand(client,
+            `if [ -p "${oldFifo}" ] && ! [ -s "${logFile}" ]; then echo "NEEDS_MIGRATION"; else echo "OK"; fi`
+          );
 
-          // Verify Claude is responsive — if no data within 10s, it's stuck
-          const gotData = await new Promise<boolean>((resolve) => {
-            const timeout = setTimeout(() => resolve(false), 10000);
-            const handler = (chunk: Buffer | string) => {
-              clearTimeout(timeout);
-              passThrough.stdout.removeListener('data', handler);
-              resolve(true);
-            };
-            passThrough.stdout.on('data', handler);
-          });
-
-          if (!gotData) {
-            console.log(`[SSH Service] No response after 10s — Claude is stuck. Killing and recreating...`);
+          if (migrationCheck.trim() === 'NEEDS_MIGRATION') {
+            console.log(`[SSH Service] Old FIFO-based session detected, killing and recreating with log file: ${tmuxSessionName}`);
             await this.killPersistentSession(sessionId, config);
-            // Need fresh FIFOs and cat channels — create new session
-            // The old passThrough streams are already returned to the SDK,
-            // so we pipe new internal streams through them
-            const innerPassThrough = {
-              stdin: new PassThrough(),
-              stdout: new PassThrough(),
-            };
-            innerPassThrough.stdout.on('data', (data: Buffer) => passThrough.stdout.write(data));
-            innerPassThrough.stdout.on('end', () => passThrough.stdout.end());
-            passThrough.stdin.on('data', (data: Buffer) => innerPassThrough.stdin.write(data));
-            passThrough.stdin.on('end', () => innerPassThrough.stdin.end());
-
-            await this.createNewPersistentSession(
-              client, config, tmuxSessionName, fifoIn, fifoOut,
-              claudePaths, envExports, escapedArgs, innerPassThrough, emitter, sdkOptions
-            );
           } else {
-            console.log(`[SSH Service] Claude is responsive — reattach successful`);
+            console.log(`[SSH Service] Reattaching to existing persistent session: ${tmuxSessionName}`);
+            await this.attachToExistingSession(client, fifoIn, logFile, sessionId, masterStreams, emitter, sdkOptions);
+            console.log('[SSH Service] Reattached to existing persistent session');
+            reattached = true;
           }
-        } else {
-          // Need to create a new tmux session — kill any stale one first
-          if (existingSession) {
+        }
+
+        if (!reattached) {
+          if (existingSession && existingSession.isRunning === false) {
             console.log(`[SSH Service] Existing session found but Claude not running, recreating...`);
           }
           await this.killPersistentSession(sessionId, config);
 
           console.log(`[SSH Service] Creating new persistent session: ${tmuxSessionName}`);
           await this.createNewPersistentSession(
-            client, config, tmuxSessionName, fifoIn, fifoOut,
-            claudePaths, envExports, escapedArgs, passThrough, emitter, sdkOptions
+            client, config, tmuxSessionName, fifoIn, logFile, sessionId,
+            claudePaths, envExports, escapedArgs, masterStreams, emitter, sdkOptions
           );
         }
 
-        // Store streams for reuse by subsequent SDK query() calls.
-        // This must happen after both the reattach and create-new paths.
-        this.persistentStreams.set(sessionId, { stdin: passThrough.stdin, stdout: passThrough.stdout, active: true });
+        // Store master streams for reuse by subsequent SDK query() calls.
+        this.persistentStreams.set(sessionId, { stdin: masterStdin, stdout: masterStdout, active: true });
+
+        // Set up forwarding from master → this SDK call's passThrough
+        const forwardOutput = (data: Buffer) => passThrough.stdout.write(data);
+        const forwardInput = (data: Buffer) => masterStdin.write(data);
+        masterStdout.on('data', forwardOutput);
+        passThrough.stdin.on('data', forwardInput);
+        this.persistentForwarders.set(sessionId, { output: forwardOutput, input: forwardInput, passThrough });
+
+        resolveSetup?.();
       } catch (error) {
+        this.closePersistentChannels(sessionId);
         this.persistentStreams.delete(sessionId);
+        this.persistentForwarders.delete(sessionId);
+        resolveSetup?.();
         emitter.emit('error', error instanceof Error ? error : new Error(String(error)));
         passThrough.stdout.end();
         sdkOptions.signal.removeEventListener('abort', abortHandler);
@@ -2419,7 +2671,9 @@ exec claude ${escapedArgs} <"${fifoIn}" >"${fifoOut}" 2>&1
         // Note: We intentionally don't kill the tmux session here
         // The user can explicitly kill it via killPersistentSession
         // Clean up stream tracking so next call creates fresh connections
+        self.closePersistentChannels(sessionId);
         self.persistentStreams.delete(sessionId);
+        self.persistentForwarders.delete(sessionId);
         passThrough.stdout.end();
         return true;
       },
@@ -2436,21 +2690,48 @@ exec claude ${escapedArgs} <"${fifoIn}" >"${fifoOut}" 2>&1
   }
 
   /**
-   * Attach to an existing tmux session's FIFO pipes
+   * Attach to an existing tmux session's input FIFO and output log file.
+   * Uses `tail -c +offset -f` to read from the log file at the correct
+   * byte position, so reconnects pick up exactly where we left off.
    */
   private async attachToExistingSession(
     client: Client,
     fifoIn: string,
-    fifoOut: string,
-    passThrough: { stdin: PassThrough; stdout: PassThrough },
+    logFile: string,
+    sessionId: string,
+    masterStreams: { stdin: PassThrough; stdout: PassThrough },
     emitter: EventEmitter,
     sdkOptions: SDKSpawnOptions
   ): Promise<void> {
-    // Wait for both FIFO channels to be established before returning
-    await Promise.all([
-      // Open a channel to read from the output FIFO
+    // Ensure the log file exists before tailing it.
+    // For new sessions, createNewPersistentSession already creates it.
+    // For reconnects to existing sessions, we need it to exist for tail -f.
+    await this.execCommand(client, `touch "${logFile}"`);
+
+    // Close any existing SSH channels for this session before creating new ones.
+    // This prevents duplicate tail -f processes from running simultaneously.
+    this.closePersistentChannels(sessionId);
+
+    // If we have no tracked offset (first connect to an existing session),
+    // skip to the END of the log file. Historical data contains stale `result`
+    // events that would make the SDK think new queries completed immediately.
+    // The remote transcript provides full history; we only need live data here.
+    if (!this.persistentOutputOffsets.has(sessionId)) {
+      const fileSizeStr = await this.execCommand(client, `stat -c %s "${logFile}" 2>/dev/null || stat -f %z "${logFile}" 2>/dev/null || echo 0`);
+      const fileSize = parseInt(fileSizeStr.trim(), 10) || 0;
+      console.log(`[SSH Service] First connect — skipping to end of log file (${fileSize} bytes)`);
+      this.persistentOutputOffsets.set(sessionId, fileSize);
+    }
+
+    // Wait for both channels to be established before returning.
+    // Wrap in a 30-second timeout to avoid hanging forever.
+    const channelSetup = Promise.all([
+      // Open a channel to read from the output log file via tail -f
       new Promise<void>((resolve, reject) => {
-        const readCmd = `cat "${fifoOut}"`;
+        const offset = this.persistentOutputOffsets.get(sessionId) ?? 0;
+        // tail -c +N starts reading at byte N (1-indexed), so +1 means from start
+        const readCmd = `tail -c +${offset + 1} -f "${logFile}"`;
+        console.log(`[SSH Service] Starting log reader at byte offset ${offset}: ${readCmd}`);
         client.exec(readCmd, (err, readChannel) => {
           if (err) {
             emitter.emit('error', err);
@@ -2458,21 +2739,28 @@ exec claude ${escapedArgs} <"${fifoIn}" >"${fifoOut}" 2>&1
             return;
           }
 
+          // Store the read channel so we can close it on cleanup
+          const channels = this.persistentChannels.get(sessionId) || {};
+          channels.read = readChannel;
+          this.persistentChannels.set(sessionId, channels);
+
           readChannel.on('data', (data: Buffer) => {
             console.log('[SSH Service] Received from persistent session:', data.toString().substring(0, 200));
-            passThrough.stdout.write(data);
+            // Track bytes consumed so reconnects resume from the right position
+            this.persistentOutputOffsets.set(sessionId,
+              (this.persistentOutputOffsets.get(sessionId) ?? 0) + data.length);
+            masterStreams.stdout.write(data);
           });
 
           readChannel.on('close', () => {
             console.log('[SSH Service] Read channel closed');
-            passThrough.stdout.end();
+            masterStreams.stdout.end();
           });
 
           readChannel.on('error', (error: Error) => {
             emitter.emit('error', error);
           });
 
-          // Resolve once channel is established
           console.log('[SSH Service] Read channel established');
           resolve();
         });
@@ -2488,35 +2776,44 @@ exec claude ${escapedArgs} <"${fifoIn}" >"${fifoOut}" 2>&1
             return;
           }
 
-          // Pipe our stdin to the write channel
-          passThrough.stdin.on('data', (data: Buffer) => {
+          // Store the write channel so we can close it on cleanup
+          const wChannels = this.persistentChannels.get(sessionId) || {};
+          wChannels.write = writeChannel;
+          this.persistentChannels.set(sessionId, wChannels);
+
+          masterStreams.stdin.on('data', (data: Buffer) => {
             console.log('[SSH Service] Sending to persistent session:', data.toString().substring(0, 100));
             writeChannel.stdin.write(data);
           });
 
-          passThrough.stdin.on('end', () => {
+          masterStreams.stdin.on('end', () => {
             writeChannel.stdin.end();
+          });
+
+          // Detect write channel death (Claude crash, FIFO deleted)
+          writeChannel.on('close', () => {
+            console.log('[SSH Service] Write channel closed — Claude process may have died');
+            emitter.emit('error', new Error('Write channel to persistent session closed'));
+            masterStreams.stdout.end();
           });
 
           writeChannel.on('error', (error: Error) => {
             console.error('[SSH Service] Write channel error:', error);
           });
 
-          // Resolve once channel is established
           console.log('[SSH Service] Write channel established');
           resolve();
         });
       })
     ]);
 
-    console.log('[SSH Service] Both FIFO channels established');
+    const setupTimeout = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('Channel setup timed out after 30 seconds')), 30000);
+    });
 
-    // CRITICAL: Wait for the remote cat commands to actually open the FIFOs
-    // The exec callbacks fire when channels are created, not when cat opens the pipes
-    // Give cat processes time to block on the FIFOs before starting Claude
-    console.log('[SSH Service] Waiting for FIFO readers to open pipes...');
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    console.log('[SSH Service] FIFO readers should be ready, starting tmux');
+    await Promise.race([channelSetup, setupTimeout]);
+
+    console.log('[SSH Service] Both channels established (log reader + input FIFO)');
   }
 
   /**
@@ -2527,42 +2824,33 @@ exec claude ${escapedArgs} <"${fifoIn}" >"${fifoOut}" 2>&1
   async reconnectPersistentSession(
     sessionId: string,
     config: SSHConfig,
-    onData: (data: string) => void
+    _onData?: (data: string) => void
   ): Promise<{ success: boolean; error?: string }> {
     try {
+      // If we already have active persistent streams for this session,
+      // don't reconnect — the existing reader is live and killing it would
+      // break the active data pipeline.
+      const activeStreams = this.persistentStreams.get(sessionId);
+      if (activeStreams?.active) {
+        console.log(`[SSH Service] Skipping reconnect — active streams exist for session: ${sessionId.substring(0, 8)}`);
+        return { success: true };
+      }
+
       const existing = await this.checkPersistentSession(sessionId, config);
       if (!existing?.isRunning) {
         return { success: false, error: 'No running persistent session found' };
       }
 
       const client = await this.getConnection(sessionId, config);
-      const fifoOut = `/tmp/grep-${sessionId.substring(0, 8)}-out`;
+      const logFile = `/tmp/grep-${sessionId.substring(0, 8)}-output.log`;
 
-      console.log(`[SSH Service] Reconnecting output reader to persistent session: grep-${sessionId.substring(0, 8)}`);
+      console.log(`[SSH Service] Persistent session confirmed running: grep-${sessionId.substring(0, 8)}`);
 
-      // Just attach a reader to the output FIFO to flush any buffered data
-      // and keep receiving Claude's output
-      return new Promise((resolve) => {
-        client.exec(`cat "${fifoOut}"`, (err, channel) => {
-          if (err) {
-            resolve({ success: false, error: err.message });
-            return;
-          }
-
-          channel.on('data', (data: Buffer) => {
-            const str = data.toString();
-            console.log('[SSH Service] Reconnect flush:', str.substring(0, 200));
-            onData(str);
-          });
-
-          channel.on('close', () => {
-            console.log('[SSH Service] Reconnect reader closed');
-          });
-
-          console.log('[SSH Service] Reconnect reader attached, flushing buffered output');
-          resolve({ success: true });
-        });
-      });
+      // The log file approach means Claude never blocks on output.
+      // We don't need to create a separate reader here — the SDK's
+      // createPersistentRemoteProcess will start a tail -f when the
+      // next query() call happens. Just confirm the session is alive.
+      return { success: true };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error('[SSH Service] Failed to reconnect persistent session:', msg);
@@ -2587,23 +2875,27 @@ exec claude ${escapedArgs} <"${fifoIn}" >"${fifoOut}" 2>&1
     config: SSHConfig,
     tmuxSessionName: string,
     fifoIn: string,
-    fifoOut: string,
+    logFile: string,
+    sessionId: string,
     claudePaths: string,
     envExports: string,
     escapedArgs: string,
-    passThrough: { stdin: PassThrough; stdout: PassThrough },
+    masterStreams: { stdin: PassThrough; stdout: PassThrough },
     emitter: EventEmitter,
     sdkOptions: SDKSpawnOptions
   ): Promise<void> {
-    // Step 1: Create FIFOs and launcher script
+    // Step 1: Create input FIFO, touch output log file, and write launcher script
     const launcherScript = `/tmp/grep-launcher-${tmuxSessionName}.sh`;
-    console.log('[SSH Service] Creating FIFOs and launcher script...');
+    console.log('[SSH Service] Creating input FIFO + output log file and launcher script...');
 
-    await this.execCommand(client, `rm -f "${fifoIn}" "${fifoOut}"; mkfifo "${fifoIn}" "${fifoOut}"`);
+    // Only the input pipe is a FIFO; output is a regular file so writes never block
+    await this.execCommand(client, `rm -f "${fifoIn}" "${logFile}"; mkfifo "${fifoIn}"; touch "${logFile}"`);
 
-    // The launcher opens FIFOs in read-write mode (O_RDWR) which prevents
-    // blocking on open(). This lets Claude start immediately while SSH cat
-    // channels connect later.
+    // Reset byte offset for this new session
+    this.persistentOutputOffsets.set(sessionId, 0);
+
+    // The launcher opens the input FIFO in read-write mode (O_RDWR) to prevent
+    // blocking on open(). Output goes to a regular log file via append (>>).
     const scriptContent = [
       '#!/bin/bash',
       `export PATH="${claudePaths}:$PATH"`,
@@ -2615,12 +2907,11 @@ exec claude ${escapedArgs} <"${fifoIn}" >"${fifoOut}" 2>&1
       `echo "PATH=$PATH" >> /tmp/grep-launcher-${tmuxSessionName}.log`,
       `which claude >> /tmp/grep-launcher-${tmuxSessionName}.log 2>&1`,
       '',
-      '# Open FIFOs in read-write mode to prevent blocking',
+      '# Open input FIFO in read-write mode to prevent blocking',
       `exec 3<>"${fifoIn}"`,
-      `exec 4<>"${fifoOut}"`,
       '',
-      '# Start Claude with FD redirection, log errors',
-      `claude ${escapedArgs} <&3 >&4 2>&4`,
+      '# Start Claude: input from FIFO, output appended to log file (never blocks)',
+      `claude ${escapedArgs} <&3 >> "${logFile}" 2>&1`,
       `echo "CLAUDE_EXIT_CODE=$?" >> /tmp/grep-launcher-${tmuxSessionName}.log`,
     ].join('\n');
 
@@ -2654,9 +2945,9 @@ exec claude ${escapedArgs} <"${fifoIn}" >"${fifoOut}" 2>&1
 
     console.log('[SSH Service] tmux session created, now attaching FIFO channels...');
 
-    // Step 3: Now attach SSH cat channels to FIFOs
-    // Claude is already running, so FIFOs have a reader/writer and cat won't block
-    await this.attachToExistingSession(client, fifoIn, fifoOut, passThrough, emitter, sdkOptions);
+    // Step 3: Attach SSH channels — tail -f on the log file, cat > on the input FIFO
+    // Claude is already running, so input FIFO has a reader and cat won't block
+    await this.attachToExistingSession(client, fifoIn, logFile, sessionId, masterStreams, emitter, sdkOptions);
 
     console.log('[SSH Service] Persistent session fully connected');
   }

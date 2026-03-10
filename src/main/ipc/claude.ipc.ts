@@ -113,6 +113,7 @@ export function registerClaudeHandlers(ipcMain: IpcMain): void {
 
       let fullMessageContent = '';
       let hadError = false;
+      let sentStreamEnd = false;
       let needsCompactionRetry = false;
 
         try {
@@ -202,6 +203,7 @@ export function registerClaudeHandlers(ipcMain: IpcMain): void {
                             content: fullMessageContent,
                             timestamp: new Date(),
                           };
+                          sentStreamEnd = true;
                           mainWindow.webContents.send(IPC_CHANNELS.CLAUDE_STREAM_END, {
                             sessionId,
                             message: retryMessage,
@@ -242,6 +244,7 @@ export function registerClaudeHandlers(ipcMain: IpcMain): void {
                   content: fullMessageContent,
                   timestamp: new Date(),
                 };
+                sentStreamEnd = true;
                 mainWindow.webContents.send(IPC_CHANNELS.CLAUDE_STREAM_END, {
                   sessionId,
                   message: finalMessage,
@@ -286,7 +289,25 @@ export function registerClaudeHandlers(ipcMain: IpcMain): void {
             error: error instanceof Error ? error.message : 'Unknown error',
           });
           hadError = true;
+        } finally {
+          // Safety net: if the generator exited without sending STREAM_END or STREAM_ERROR
+          // (e.g., SSH connection stalled, silent timeout, generator yielded error then returned),
+          // send a synthetic STREAM_END so the renderer clears isStreaming.
+          // Without this, the UI gets permanently stuck in "thinking..." state.
+          if (!hadError && !sentStreamEnd) {
+            console.log('[Claude IPC] Safety net: generator exited without STREAM_END or error for', sessionId);
+            mainWindow.webContents.send(IPC_CHANNELS.CLAUDE_STREAM_END, {
+              sessionId,
+              message: {
+                id: Date.now().toString(),
+                role: 'assistant' as const,
+                content: fullMessageContent || '',
+                timestamp: new Date(),
+              },
+            });
+          }
         }
+
     }
   );
 

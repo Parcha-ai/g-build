@@ -378,6 +378,8 @@ Only return the title, nothing else.`
           // Preserve user settings
           s.model = existing.model;
           s.lastBrowserUrl = existing.lastBrowserUrl;
+          s.isStarred = existing.isStarred;
+          s.starredAt = existing.starredAt;
         }
         this.discoveredSessionsCache.set(s.id, s);
       });
@@ -421,6 +423,8 @@ Only return the title, nothing else.`
           ...s,
           model: existing.model,
           lastBrowserUrl: existing.lastBrowserUrl,
+          isStarred: existing.isStarred,
+          starredAt: existing.starredAt,
         });
       } else {
         sessionMap.set(id, s);

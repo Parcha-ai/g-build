@@ -61,6 +61,36 @@ export interface ModelInfo {
   description: string;
 }
 
+// SSH streaming watchdog — DISABLED.
+// The 60s timeout was too aggressive: Claude routinely spends >60s executing tools
+// (bash commands, research, etc.) without sending text deltas back to the renderer.
+// The watchdog kept firing mid-work, spamming reconnect messages and disrupting sessions.
+// The safety net in claude.ipc.ts (finally block sending synthetic STREAM_END) handles
+// true stalls when the SSH connection drops silently.
+
+// Cooldown to prevent infinite reconnect loops — tracks last reconnect attempt per session
+const reconnectCooldowns = new Map<string, number>();
+const RECONNECT_COOLDOWN_MS = 30000; // Minimum 30s between auto-reconnects
+
+function resetStreamingWatchdog(_sessionId: string, _getState: () => SessionState) {
+  // no-op — watchdog disabled
+}
+
+function canAutoReconnect(sessionId: string): boolean {
+  const lastAttempt = reconnectCooldowns.get(sessionId) || 0;
+  const now = Date.now();
+  if (now - lastAttempt < RECONNECT_COOLDOWN_MS) {
+    console.log(`[SessionStore] Skipping auto-reconnect for ${sessionId} — cooldown active (${Math.round((RECONNECT_COOLDOWN_MS - (now - lastAttempt)) / 1000)}s remaining)`);
+    return false;
+  }
+  reconnectCooldowns.set(sessionId, now);
+  return true;
+}
+
+function clearStreamingWatchdog(_sessionId: string) {
+  // no-op — watchdog disabled
+}
+
 interface SessionState {
   sessions: Session[];
   activeSessionId: string | null;
@@ -645,6 +675,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   setStreaming: (sessionId, isStreaming) => {
     console.log(`[SessionStore] setStreaming called for ${sessionId}: ${isStreaming}`);
 
+    // Manage SSH streaming watchdog
+    if (isStreaming) {
+      const session = get().sessions.find(s => s.id === sessionId);
+      if (session?.sshConfig) {
+        resetStreamingWatchdog(sessionId, get);
+      }
+    } else {
+      clearStreamingWatchdog(sessionId);
+    }
+
     set((state) => ({
       isStreaming: { ...state.isStreaming, [sessionId]: isStreaming },
       streamEvents: isStreaming
@@ -1010,21 +1050,33 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!hasElectronAPI) return () => {};
     const { addMessage, updateStreamContent, updateThinkingContent, addToolCall, updateToolCall, setStreaming, setSystemInfo } = get();
 
+    // Helper to reset SSH watchdog on any stream activity
+    const resetWatchdog = (sessionId: string) => {
+      const session = get().sessions.find(s => s.id === sessionId);
+      if (session?.sshConfig && get().isStreaming[sessionId]) {
+        resetStreamingWatchdog(sessionId, get);
+      }
+    };
+
     const unsubChunk = window.electronAPI.claude.onStreamChunk(({ sessionId, content, agentId }) => {
+      resetWatchdog(sessionId);
       updateStreamContent(sessionId, content, agentId);
     });
 
     const unsubThinking = window.electronAPI.claude.onThinkingChunk(({ sessionId, content }) => {
+      resetWatchdog(sessionId);
       updateThinkingContent(sessionId, content);
     });
 
     const unsubToolCall = window.electronAPI.claude.onToolCall(({ sessionId, toolCall }) => {
+      resetWatchdog(sessionId);
       const tc = toolCall as ToolCall;
       console.log('[SessionStore] onToolCall received:', tc?.name, 'input:', JSON.stringify(tc?.input || {}));
       addToolCall(sessionId, tc);
     });
 
     const unsubToolResult = window.electronAPI.claude.onToolResult(async ({ sessionId, toolCall }) => {
+      resetWatchdog(sessionId);
       if (!toolCall) return;
       const tc = toolCall as ToolCall;
       console.log('[SessionStore] onToolResult received:', tc.name, 'input:', JSON.stringify(tc.input || {}));
@@ -1267,6 +1319,105 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }));
     });
 
+    // Listen for SSH connection lost events — auto-reconnect immediately
+    const unsubConnectionLost = window.electronAPI.ssh.onConnectionLost(async ({ sessionId, reason }) => {
+      console.warn(`[SessionStore] SSH connection lost for ${sessionId}: ${reason}`);
+      const currentState = get();
+
+      // Ignore stale connection-lost events when nothing is actively running.
+      // During reconnect races, old SSH clients can emit close after a new
+      // query has already reattached healthy streams.
+      let hasActiveQuery = false;
+      try {
+        hasActiveQuery = await window.electronAPI.claude.hasActiveQuery(sessionId);
+      } catch (error) {
+        console.warn('[SessionStore] Failed to check active query state on connection-lost:', error);
+      }
+      if (!currentState.isStreaming[sessionId] && !hasActiveQuery) {
+        console.log(`[SessionStore] Ignoring stale connection-lost event for ${sessionId} (no active stream/query)`);
+        return;
+      }
+
+      // Clear streaming state immediately so UI unblocks
+      if (currentState.isStreaming[sessionId]) {
+        clearStreamingWatchdog(sessionId);
+        set((state) => ({
+          isStreaming: { ...state.isStreaming, [sessionId]: false },
+          currentStreamContent: { ...state.currentStreamContent, [sessionId]: '' },
+          currentThinkingContent: { ...state.currentThinkingContent, [sessionId]: '' },
+          streamEvents: { ...state.streamEvents, [sessionId]: [] },
+        }));
+      }
+
+      if (canAutoReconnect(sessionId)) {
+        addMessage(sessionId, {
+          id: `conn-lost-${Date.now()}`,
+          role: 'assistant',
+          content: '⚠️ SSH connection lost — attempting automatic reconnection...',
+          timestamp: new Date(),
+        });
+
+        // Attempt automatic reconnection
+        try {
+          // Brief delay to let the disconnect fully settle
+          await new Promise(resolve => setTimeout(resolve, 1000));
+
+          // Re-check: if streaming restarted during the delay (user sent a new message),
+          // abort the reconnect — the new query has already re-established streams
+          if (get().isStreaming[sessionId]) {
+            console.log(`[SessionStore] Aborting auto-reconnect — streaming resumed for ${sessionId}`);
+            return;
+          }
+
+          // Re-check query state after delay. If query ended and we're idle, this
+          // was likely a stale close event from an old client; don't reconnect.
+          try {
+            hasActiveQuery = await window.electronAPI.claude.hasActiveQuery(sessionId);
+          } catch (error) {
+            console.warn('[SessionStore] Failed active-query check before auto-reconnect:', error);
+          }
+          if (!hasActiveQuery) {
+            console.log(`[SessionStore] Aborting auto-reconnect — no active query for ${sessionId}`);
+            return;
+          }
+
+          const result = await window.electronAPI.ssh.reconnect(sessionId);
+          if (result.success) {
+            addMessage(sessionId, {
+              id: `conn-restored-${Date.now()}`,
+              role: 'assistant',
+              content: result.hadPersistentSession
+                ? '✅ Reconnected. Your tmux session is still running — send a message to continue.'
+                : '✅ Reconnected. Send a new message to continue.',
+              timestamp: new Date(),
+            });
+          } else {
+            addMessage(sessionId, {
+              id: `conn-failed-${Date.now()}`,
+              role: 'assistant',
+              content: `⚠️ Auto-reconnect failed: ${result.error || 'Unknown error'}. Try reconnecting manually.`,
+              timestamp: new Date(),
+            });
+          }
+        } catch (err) {
+          console.error('[SessionStore] Auto-reconnect after connection loss failed:', err);
+          addMessage(sessionId, {
+            id: `conn-error-${Date.now()}`,
+            role: 'assistant',
+            content: '⚠️ Auto-reconnect failed. Please try reconnecting manually.',
+            timestamp: new Date(),
+          });
+        }
+      } else {
+        addMessage(sessionId, {
+          id: `conn-lost-${Date.now()}`,
+          role: 'assistant',
+          content: '⚠️ SSH connection lost. Reconnect cooldown active — try reconnecting manually in a moment.',
+          timestamp: new Date(),
+        });
+      }
+    });
+
     return () => {
       unsubChunk();
       unsubThinking();
@@ -1280,6 +1431,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       unsubPlanContent();
       unsubPlanApproval();
       unsubPermissionModeChanged();
+      unsubConnectionLost();
     };
   },
 

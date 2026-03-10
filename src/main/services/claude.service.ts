@@ -1756,7 +1756,7 @@ ${memoriesPrompt}
           toolName,
           toolInput: input,  // Use toolInput to match PermissionRequest type
         };
-        console.log('[Claude Service] Sending permission request to renderer:', toolName, 'input:', JSON.stringify(input));
+        console.log('[Claude Service] Sending permission request to renderer:', toolName, 'sessionId:', sessionId, 'requestId:', requestId, 'input:', JSON.stringify(input));
         this.mainWindow.webContents.send(IPC_CHANNELS.CLAUDE_PERMISSION_REQUEST, request);
       } else {
         reject(new Error('Main window not available'));
@@ -3973,9 +3973,8 @@ Begin by creating the task structure now.
    * @param limit - Optional limit on number of messages to return (most recent). Default 200 for performance.
    */
   async getMessages(sessionId: string, limit: number = 200): Promise<ChatMessage[]> {
-    // Check if this is a teleported session (imported from claude.ai)
-    // Teleported sessions don't have local transcripts - the SDK will resume from the remote session
     const session = this.sessionStore.get(`sessions.${sessionId}`) as Session | undefined;
+    console.log(`[Claude] getMessages called for ${sessionId.substring(0, 8)}, hasSSH: ${!!session?.sshConfig}, hasTeleport: ${!!session?.isTeleported}`);
     if (session?.isTeleported) {
       console.log('[Claude] Teleported session - no local transcript, will resume from remote:', sessionId);
       return [];
@@ -3994,10 +3993,42 @@ Begin by creating the task structure now.
 
     // For SSH sessions, fetch transcript from the remote machine
     if (session?.sshConfig) {
-      // If this is a NEW SSH session (no stored SDK ID), start fresh - don't load old transcripts
+      // If no stored SDK ID, try to find the most recent transcript on the remote.
+      // This handles the case where the mapping was lost (repair, migration, etc.)
+      // but the conversation still exists on the remote.
       if (!hasStoredSdkSessionId) {
-        console.log('[Claude] New SSH session without stored SDK ID - starting fresh');
-        return [];
+        console.log('[Claude] SSH session without stored SDK ID — searching for latest transcript');
+        try {
+          const transcripts = await sshService.listRemoteTranscripts(
+            sessionId,
+            session.sshConfig,
+            session.sshConfig.remoteWorkdir
+          );
+          if (transcripts.length > 0) {
+            // Use the most recent transcript (last modified)
+            const latest = transcripts[transcripts.length - 1];
+            console.log('[Claude] Found orphaned transcript, restoring mapping:', latest.sessionId);
+            // Restore the mapping so future loads don't need to search
+            this.sessionStore.set(`sdkSessionMappings.${sessionId}`, latest.sessionId);
+            const content = await sshService.fetchRemoteTranscript(
+              sessionId,
+              session.sshConfig,
+              latest.sessionId,
+              session.sshConfig.remoteWorkdir
+            );
+            if (content) {
+              const messages = this.parseTranscriptContent(content);
+              const limited = limit > 0 ? messages.slice(-limit) : messages;
+              console.log(`[Claude] Returning ${limited.length}/${messages.length} SSH messages (restored mapping)`);
+              return limited;
+            }
+          }
+          console.log('[Claude] No transcripts found on remote — starting fresh');
+          return [];
+        } catch (error) {
+          console.error('[Claude] Error searching for orphaned transcripts:', error);
+          return [];
+        }
       }
 
       console.log('[Claude] SSH session - fetching transcript from remote:', sdkSessionId);

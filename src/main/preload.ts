@@ -744,8 +744,14 @@ const electronAPI = {
     },
     reconnect: (sessionId: string): Promise<{
       success: boolean;
+      hadPersistentSession?: boolean;
       error?: string;
     }> => ipcRenderer.invoke(IPC_CHANNELS.SSH_RECONNECT, sessionId),
+    onConnectionLost: (callback: (data: { sessionId: string; reason?: string }) => void) => {
+      const handler = (_: IpcRendererEvent, data: { sessionId: string; reason?: string }) => callback(data);
+      ipcRenderer.on(IPC_CHANNELS.SSH_CONNECTION_LOST, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.SSH_CONNECTION_LOST, handler);
+    },
     browseRemoteFiles: (config: SSHConfig, remotePath: string): Promise<{
       success: boolean;
       entries: Array<{ name: string; type: 'file' | 'directory'; permissions: string }>;

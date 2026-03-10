@@ -185,6 +185,7 @@ export const IPC_CHANNELS = {
   SSH_DOWNLOAD_SESSION: 'ssh:download-session',
   SSH_DOWNLOAD_PROGRESS: 'ssh:download-progress',
   SSH_RECONNECT: 'ssh:reconnect',
+  SSH_CONNECTION_LOST: 'ssh:connection-lost',
   SSH_BROWSE_REMOTE_FILES: 'ssh:browse-remote-files',
 
   // Secure Keys channels (API key/token interception)
