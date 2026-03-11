@@ -61,9 +61,10 @@ export default function MainContent() {
 
         // If browser panel is open, refresh the browser instead
         if (isBrowserPanelOpen && activeSessionId) {
-          // Dispatch custom event for BrowserPreview to handle
+          // Dispatch custom event for BrowserPreview to handle (use root session ID)
+          const rootId = sessions.find(s => s.id === activeSessionId)?.parentSessionId || activeSessionId;
           window.dispatchEvent(new CustomEvent('grep-browser-refresh', {
-            detail: { sessionId: activeSessionId }
+            detail: { sessionId: rootId }
           }));
         }
         // Otherwise, just do nothing (CMD+R is disabled)
@@ -79,16 +80,45 @@ export default function MainContent() {
   const activeSetupProgress = activeSessionId ? setupProgress[activeSessionId] : null;
   const isSessionSetup = activeSession?.status === 'setup' || activeSetupProgress?.status === 'running';
 
-  // Auto-enable browser for active session when browser panel is opened
-  useEffect(() => {
-    if (isBrowserPanelOpen && activeSessionId && !sessionBrowsersEnabled[activeSessionId]) {
-      enableSessionBrowser(activeSessionId);
+  // Helper: get root session ID (walk up parentSessionId chain)
+  const getRootSessionId = useCallback((sessionId: string): string => {
+    let rootId = sessionId;
+    let session = sessions.find(s => s.id === rootId);
+    while (session?.parentSessionId) {
+      rootId = session.parentSessionId;
+      session = sessions.find(s => s.id === rootId);
     }
-  }, [isBrowserPanelOpen, activeSessionId, sessionBrowsersEnabled, enableSessionBrowser]);
+    return rootId;
+  }, [sessions]);
 
-  // Get all sessions that have browsers enabled (for rendering multiple BrowserPreview instances)
+  // Auto-enable browser for active session's ROOT when browser panel is opened
+  useEffect(() => {
+    if (isBrowserPanelOpen && activeSessionId) {
+      const rootId = getRootSessionId(activeSessionId);
+      if (!sessionBrowsersEnabled[rootId]) {
+        enableSessionBrowser(rootId);
+      }
+    }
+  }, [isBrowserPanelOpen, activeSessionId, sessionBrowsersEnabled, enableSessionBrowser, getRootSessionId]);
+
+  // Get unique root sessions that have browsers enabled (one BrowserPreview per root, shared across forks)
   const sessionsWithBrowsers = useMemo(() => {
-    return sessions.filter(s => sessionBrowsersEnabled[s.id]);
+    const enabledRootIds = new Set<string>();
+    const result: typeof sessions = [];
+    for (const s of sessions) {
+      if (sessionBrowsersEnabled[s.id]) {
+        // Already a root or has no parent — add directly
+        const rootId = s.parentSessionId
+          ? (sessions.find(p => p.id === s.parentSessionId)?.id || s.id)
+          : s.id;
+        if (!enabledRootIds.has(rootId)) {
+          enabledRootIds.add(rootId);
+          const rootSession = sessions.find(p => p.id === rootId) || s;
+          result.push(rootSession);
+        }
+      }
+    }
+    return result;
   }, [sessions, sessionBrowsersEnabled]);
 
   // Calculate flex basis percentages based on split ratio
@@ -331,22 +361,29 @@ export default function MainContent() {
                       >
                         {/* Render a BrowserPreview for each session with browser enabled */}
                         {/* Only the active session's browser is visible, others stay mounted but hidden */}
-                        {sessionsWithBrowsers.map(session => (
-                          <div
-                            key={session.id}
-                            className="absolute inset-0"
-                            style={{ display: session.id === activeSessionId ? 'block' : 'none' }}
-                          >
-                            <BrowserPreview
-                              session={session}
-                              isVisible={session.id === activeSessionId}
-                            />
-                          </div>
-                        ))}
-                        {/* Fallback for active session if not in sessionsWithBrowsers yet */}
-                        {activeSession && !sessionBrowsersEnabled[activeSession.id] && (
-                          <BrowserPreview session={activeSession} isVisible={true} />
-                        )}
+                        {sessionsWithBrowsers.map(session => {
+                          const activeRootId = activeSessionId ? getRootSessionId(activeSessionId) : null;
+                          const isActive = session.id === activeRootId;
+                          return (
+                            <div
+                              key={session.id}
+                              className="absolute inset-0"
+                              style={{ display: isActive ? 'block' : 'none' }}
+                            >
+                              <BrowserPreview
+                                session={session}
+                                isVisible={isActive}
+                              />
+                            </div>
+                          );
+                        })}
+                        {/* Fallback for active session if its root isn't in sessionsWithBrowsers yet */}
+                        {activeSession && (() => {
+                          const rootId = getRootSessionId(activeSession.id);
+                          return !sessionBrowsersEnabled[rootId] ? (
+                            <BrowserPreview session={sessions.find(s => s.id === rootId) || activeSession} isVisible={true} />
+                          ) : null;
+                        })()}
                       </div>
                       {/* Vertical resize handle for mobile browser - only in mobile mode */}
                       {viewportMode === 'mobile' && (

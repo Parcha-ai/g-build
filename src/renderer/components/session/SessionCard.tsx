@@ -101,7 +101,7 @@ export default function SessionCard({ session, isActive, onClick, isFork = false
       // Small delay to ensure clean stop
       await new Promise(resolve => setTimeout(resolve, 500));
 
-      // Restart the session (will check for tmux persistence)
+      // Restart the session
       await startSession(session.id);
     } catch (error) {
       console.error('Failed to reconnect:', error);
@@ -308,7 +308,7 @@ export default function SessionCard({ session, isActive, onClick, isFork = false
               onClick={handleReconnect}
               className="p-1 transition-colors hover:bg-blue-500/20 text-blue-400"
               style={{ borderRadius: 0 }}
-              title="Reconnect (check tmux persistence)"
+              title="Reconnect SSH session"
             >
               <RefreshCw size={12} />
             </button>

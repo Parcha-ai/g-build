@@ -2400,14 +2400,12 @@ Begin by creating the task structure now.
           ...(sdkSessionId ? { resume: sdkSessionId } : {}),
           // Add MCP servers (browser tools + QMD semantic search if available)
           mcpServers: mcpServersConfig,
-          // SSH remote execution: spawn Claude Code on remote machine via persistent tmux/FIFO session.
-          // The persistent approach survives app restarts and reuses FIFO connections across
-          // SDK query() calls to avoid duplicate cat readers competing for data.
+          // SSH remote execution: spawn Claude Code on remote machine via direct SSH exec.
           ...(session.sshConfig ? {
             spawnClaudeCodeProcess: (options: { command: string; args: string[]; cwd?: string; env: Record<string, string | undefined>; signal: AbortSignal }) => {
-              console.log('[Claude Service] Creating persistent SSH remote process for session:', sessionId);
+              console.log('[Claude Service] Creating SSH remote process for session:', sessionId);
               console.log('[Claude Service] SDK spawn options:', { command: options.command, args: options.args, cwd: options.cwd });
-              return sshService.createPersistentRemoteProcess(
+              return sshService.createRemoteProcess(
                 sessionId,
                 session.sshConfig!,
                 options
@@ -3123,32 +3121,15 @@ Begin by creating the task structure now.
               const repaired = await this.repairOversizedImages(sessionId, sdkSessionId);
 
               if (repaired) {
-                // Kill persistent SSH session so it restarts with repaired transcript
-                if (session.sshConfig) {
-                  try {
-                    await sshService.killPersistentSession(sessionId, session.sshConfig);
-                  } catch (e) {
-                    console.error('[Claude SDK] Failed to kill persistent SSH session after repair:', e);
-                  }
-                }
                 yield {
                   type: 'error',
                   error: '⚠️ An image in the conversation was too large. The problematic message has been removed. Please try again.'
                 };
               } else {
-                // Repair failed (e.g. SSH session where transcript is remote) — clear SDK session and kill persistent process to start fresh
+                // Repair failed (e.g. SSH session where transcript is remote) — clear SDK session to start fresh
                 console.log('[Claude SDK] Repair failed, clearing SDK session to start fresh for:', sessionId);
                 this.sessionStore.delete(`sessions.${sessionId}.sdkSessionId`);
                 this.sessionStore.delete(`sdkSessionMappings.${sessionId}`);
-                // Kill the persistent SSH session so the remote claude process restarts fresh
-                if (session.sshConfig) {
-                  try {
-                    await sshService.killPersistentSession(sessionId, session.sshConfig);
-                    console.log('[Claude SDK] Killed persistent SSH session for fresh start:', sessionId);
-                  } catch (e) {
-                    console.error('[Claude SDK] Failed to kill persistent SSH session:', e);
-                  }
-                }
                 yield {
                   type: 'error',
                   error: '⚠️ An image in the conversation history was too large. Starting fresh conversation — please try your message again.'
@@ -3208,7 +3189,7 @@ Begin by creating the task structure now.
         }
       }
 
-      // Detect abnormal stream termination (e.g., tmux session killed externally)
+      // Detect abnormal stream termination (e.g., remote process killed externally)
       // If the message loop exits without receiving a 'result' message, the remote
       // process likely died. Emit an error so the UI doesn't hang on "thinking...".
       if (!queryComplete && session?.sshConfig) {

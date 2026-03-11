@@ -704,25 +704,6 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.SSH_SETUP_PROGRESS, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.SSH_SETUP_PROGRESS, handler);
     },
-    // Persistent session management (tmux-based)
-    checkPersistentSession: (sessionId: string, config: SSHConfig): Promise<{
-      tmuxSessionName: string;
-      isRunning: boolean;
-      claudeProcessPid?: number;
-    } | null> => ipcRenderer.invoke(IPC_CHANNELS.SSH_CHECK_PERSISTENT_SESSION, { sessionId, config }),
-    killPersistentSession: (sessionId: string, config: SSHConfig): Promise<{
-      success: boolean;
-      error?: string;
-    }> => ipcRenderer.invoke(IPC_CHANNELS.SSH_KILL_PERSISTENT_SESSION, { sessionId, config }),
-    reconnectPersistentSession: (sessionId: string, config: SSHConfig): Promise<{
-      success: boolean;
-      error?: string;
-    }> => ipcRenderer.invoke(IPC_CHANNELS.SSH_RECONNECT_PERSISTENT_SESSION, { sessionId, config }),
-    onPersistentSessionData: (callback: (data: { sessionId: string; data: string }) => void): (() => void) => {
-      const handler = (_event: IpcRendererEvent, data: { sessionId: string; data: string }) => callback(data);
-      ipcRenderer.on(IPC_CHANNELS.SSH_RECONNECT_PERSISTENT_SESSION + ':data', handler);
-      return () => ipcRenderer.removeListener(IPC_CHANNELS.SSH_RECONNECT_PERSISTENT_SESSION + ':data', handler);
-    },
     checkConnection: (config: SSHConfig): Promise<{
       connected: boolean;
       error?: string;
@@ -744,7 +725,6 @@ const electronAPI = {
     },
     reconnect: (sessionId: string): Promise<{
       success: boolean;
-      hadPersistentSession?: boolean;
       error?: string;
     }> => ipcRenderer.invoke(IPC_CHANNELS.SSH_RECONNECT, sessionId),
     onConnectionLost: (callback: (data: { sessionId: string; reason?: string }) => void) => {

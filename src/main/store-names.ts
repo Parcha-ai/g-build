@@ -7,6 +7,5 @@ import { app } from 'electron';
  * Dev uses 'claudette-sessions-dev', prod uses 'claudette-sessions'.
  */
 export function getSessionStoreName(): string {
-  const isDev = !app.isPackaged;
-  return isDev ? 'claudette-sessions-dev' : 'claudette-sessions';
+  return 'claudette-sessions';
 }
