@@ -721,7 +721,17 @@ export class SSHService {
   private async getConnection(sessionId: string, config: SSHConfig): Promise<Client> {
     const existing = this.connections.get(sessionId);
     if (existing) {
-      return existing.client;
+      // Verify the connection is still alive — half-dead TCP connections
+      // may linger in the map without triggering the 'close' event
+      const socket = (existing.client as any)._sock;
+      if (socket && (socket.destroyed || !socket.writable)) {
+        console.warn(`[SSH Service] Cached connection for ${sessionId} has a dead socket — removing stale entry`);
+        this.connections.delete(sessionId);
+        this.stopHealthCheck(sessionId);
+        // Fall through to create a new connection
+      } else {
+        return existing.client;
+      }
     }
 
     await this.connect(sessionId, config);
@@ -1941,7 +1951,7 @@ export class SSHService {
 
   /**
    * Install a skill on a remote machine via SSH
-   * Runs npx add-skill on the remote server
+   * Runs npx skills add on the remote server
    */
   async installRemoteSkill(
     sessionId: string,
@@ -1953,8 +1963,8 @@ export class SSHService {
     try {
       const client = await this.getConnection(sessionId, config);
 
-      // Build the npx add-skill command
-      const args = ['add-skill', source];
+      // Build the npx skills add command
+      const args = ['skills', 'add', source];
 
       // Add --yes flag for non-interactive mode
       args.push('-y');

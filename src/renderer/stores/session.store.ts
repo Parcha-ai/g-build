@@ -1324,17 +1324,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       console.warn(`[SessionStore] SSH connection lost for ${sessionId}: ${reason}`);
       const currentState = get();
 
-      // Ignore stale connection-lost events when nothing is actively running.
-      // During reconnect races, old SSH clients can emit close after a new
-      // query has already reattached healthy streams.
+      // Check if there's an active query running
       let hasActiveQuery = false;
       try {
         hasActiveQuery = await window.electronAPI.claude.hasActiveQuery(sessionId);
       } catch (error) {
         console.warn('[SessionStore] Failed to check active query state on connection-lost:', error);
       }
+
+      // Even when not streaming, we still need to notify the user so they know
+      // the connection died. Otherwise the next message goes into a void.
       if (!currentState.isStreaming[sessionId] && !hasActiveQuery) {
-        console.log(`[SessionStore] Ignoring stale connection-lost event for ${sessionId} (no active stream/query)`);
+        console.log(`[SessionStore] SSH connection lost for idle session ${sessionId} — notifying user`);
+        addMessage(sessionId, {
+          id: `conn-lost-idle-${Date.now()}`,
+          role: 'assistant',
+          content: '⚠️ SSH connection lost. Your tmux session is still running on the remote — it will auto-reconnect when you send your next message.',
+          timestamp: new Date(),
+        });
         return;
       }
 

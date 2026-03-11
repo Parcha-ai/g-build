@@ -2369,8 +2369,8 @@ Begin by creating the task structure now.
           permissionMode: sdkPermissionMode,
           ...(requiresDangerFlag ? { allowDangerouslySkipPermissions: true } : {}),
           includePartialMessages: true,
-          // Use selected model or default to Claude Opus 4.6
-          model: model || 'claude-opus-4-6',
+          // Use computed model (respects UI selection → session saved model → Foundry → default)
+          model: selectedModel,
           // CRITICAL: Always send context-1m beta header for 1M context window
           // This is essential to avoid hitting the 200K limit too quickly
           // Note: When Computer Use is enabled, the SDK also adds computer-use beta automatically,
@@ -2563,17 +2563,16 @@ Begin by creating the task structure now.
                   // Clean up cached plan content
                   this.sessionPlanFiles.delete(sessionId);
 
-                  // Restore the pre-plan permission mode so the agent can execute its plan
-                  const prePlanMode = this.prePlanPermissionModes.get(sessionId) || 'acceptEdits';
-                  this.sessionPermissionModes.set(sessionId, prePlanMode);
+                  // Switch to bypassPermissions (GREP IT) mode so the agent can execute its plan without interruptions
+                  this.sessionPermissionModes.set(sessionId, 'bypassPermissions');
                   this.prePlanPermissionModes.delete(sessionId); // Clean up
-                  console.log(`[Claude Service] Permission mode restored to ${prePlanMode} for plan execution`);
+                  console.log('[Claude Service] Plan approved — switching to bypassPermissions mode for execution');
 
                   // Notify the renderer to update its permission mode state
                   if (this.mainWindow) {
                     this.mainWindow.webContents.send(IPC_CHANNELS.CLAUDE_PERMISSION_MODE_CHANGED, {
                       sessionId,
-                      mode: prePlanMode,
+                      mode: 'bypassPermissions',
                     });
                   }
 

@@ -131,7 +131,7 @@ export function registerExtensionHandlers(ipcMain: IpcMain): void {
     }
   });
 
-  // Install a skill using npx add-skill (supports SSH sessions via sessionId)
+  // Install a skill using npx skills add (supports SSH sessions via sessionId)
   ipcMain.handle(
     IPC_CHANNELS.EXTENSION_INSTALL_SKILL,
     async (_event, source: string, options?: { global?: boolean; skills?: string[]; projectPath?: string; sessionId?: string }): Promise<SkillInstallResult> => {
@@ -154,7 +154,7 @@ export function registerExtensionHandlers(ipcMain: IpcMain): void {
 
         // Local installation
         return new Promise((resolve) => {
-          const args = ['add-skill', source];
+          const args = ['skills', 'add', source];
 
           // Add --yes flag for non-interactive mode
           args.push('-y');
@@ -237,7 +237,7 @@ export function registerExtensionHandlers(ipcMain: IpcMain): void {
     IPC_CHANNELS.EXTENSION_LIST_AVAILABLE_SKILLS,
     async (_event, source: string): Promise<{ success: boolean; skills?: AvailableSkill[]; error?: string }> => {
       return new Promise((resolve) => {
-        const args = ['add-skill', source, '--list'];
+        const args = ['skills', 'list', source];
 
         console.log('[Extension IPC] Running: npx', args.join(' '));
 

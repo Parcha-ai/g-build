@@ -315,8 +315,8 @@ export default function BrowserPreview({ session, isVisible = true }: BrowserPre
     const handleBrowserRefresh = () => {
       const webview = webviewRef.current;
       if (webview && isVisible) {
-        console.log('[BrowserPreview] CMD+R refresh triggered');
-        webview.reload();
+        console.log('[BrowserPreview] CMD+R hard refresh triggered');
+        webview.reloadIgnoringCache();
       }
     };
 
@@ -649,8 +649,8 @@ export default function BrowserPreview({ session, isVisible = true }: BrowserPre
   useEffect(() => {
     const handleRefresh = (e: CustomEvent<{ sessionId: string }>) => {
       if (e.detail.sessionId === session.id) {
-        console.log('[BrowserPreview] Refreshing browser via Cmd+R');
-        webviewRef.current?.reload();
+        console.log('[BrowserPreview] Hard refreshing browser via Cmd+R');
+        webviewRef.current?.reloadIgnoringCache();
       }
     };
 
@@ -662,8 +662,8 @@ export default function BrowserPreview({ session, isVisible = true }: BrowserPre
   useEffect(() => {
     const handleTextEditReload = (e: CustomEvent<{ sessionId: string }>) => {
       if (e.detail.sessionId === session.id) {
-        console.log('[BrowserPreview] Reloading browser after text replacement edit');
-        webviewRef.current?.reload();
+        console.log('[BrowserPreview] Hard reloading browser after text replacement edit');
+        webviewRef.current?.reloadIgnoringCache();
       }
     };
 
@@ -1390,8 +1390,8 @@ ${data.textContent ? `**Text Content:** "${data.textContent.slice(0, 100)}${data
 
       console.log('[BrowserPreview] All storage cleared successfully');
 
-      // Reload the page to start fresh
-      webview.reload();
+      // Hard reload the page to start fresh
+      webview.reloadIgnoringCache();
     } catch (error) {
       console.error('[BrowserPreview] Failed to clear storage:', error);
     }
@@ -1431,8 +1431,9 @@ ${data.textContent ? `**Text Content:** "${data.textContent.slice(0, 100)}${data
           <ArrowRight size={16} />
         </button>
         <button
-          onClick={() => webviewRef.current?.reload()}
+          onClick={() => webviewRef.current?.reloadIgnoringCache()}
           className="p-1.5 rounded hover:bg-claude-bg transition-colors"
+          title="Hard refresh (ignore cache)"
         >
           <RotateCw size={16} className={isLoading ? 'animate-spin' : ''} />
         </button>
