@@ -730,7 +730,27 @@ export class SSHService {
         this.stopHealthCheck(sessionId);
         // Fall through to create a new connection
       } else {
-        return existing.client;
+        // Active liveness probe — run a trivial command to confirm the connection
+        // actually works. Tailscale can keep the TCP socket alive while blocking SSH.
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error('SSH ping timeout')), 5000);
+            existing.client.exec('echo ok', (err, channel) => {
+              clearTimeout(timeout);
+              if (err) return reject(err);
+              channel.on('close', () => resolve());
+              channel.on('data', () => {}); // drain
+              channel.stderr.on('data', () => {}); // drain
+            });
+          });
+          return existing.client;
+        } catch (err) {
+          console.warn(`[SSH Service] Cached connection for ${sessionId} failed liveness probe: ${err} — reconnecting`);
+          existing.client.end();
+          this.connections.delete(sessionId);
+          this.stopHealthCheck(sessionId);
+          // Fall through to create a new connection
+        }
       }
     }
 
