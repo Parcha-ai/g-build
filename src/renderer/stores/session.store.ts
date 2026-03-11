@@ -68,23 +68,8 @@ export interface ModelInfo {
 // The safety net in claude.ipc.ts (finally block sending synthetic STREAM_END) handles
 // true stalls when the SSH connection drops silently.
 
-// Cooldown to prevent infinite reconnect loops — tracks last reconnect attempt per session
-const reconnectCooldowns = new Map<string, number>();
-const RECONNECT_COOLDOWN_MS = 30000; // Minimum 30s between auto-reconnects
-
 function resetStreamingWatchdog(_sessionId: string, _getState: () => SessionState) {
   // no-op — watchdog disabled
-}
-
-function canAutoReconnect(sessionId: string): boolean {
-  const lastAttempt = reconnectCooldowns.get(sessionId) || 0;
-  const now = Date.now();
-  if (now - lastAttempt < RECONNECT_COOLDOWN_MS) {
-    console.log(`[SessionStore] Skipping auto-reconnect for ${sessionId} — cooldown active (${Math.round((RECONNECT_COOLDOWN_MS - (now - lastAttempt)) / 1000)}s remaining)`);
-    return false;
-  }
-  reconnectCooldowns.set(sessionId, now);
-  return true;
 }
 
 function clearStreamingWatchdog(_sessionId: string) {
@@ -285,39 +270,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // 4. Load messages in background (non-blocking)
       loadMessages(sessionId); // Don't await
 
-      // 5. For SSH sessions, check persistence in background (non-blocking)
-      if (session?.sshConfig) {
-        const currentlyStreaming = get().isStreaming[sessionId];
-        if (!currentlyStreaming) {
-          console.log(`[SessionStore] SSH session not streaming, state is already clear`);
-        } else {
-          console.log(`[SessionStore] SSH session IS streaming, preserving state`);
-        }
-
-        window.electronAPI.ssh.checkPersistentSession(sessionId, session.sshConfig)
-          .then(persistentInfo => {
-            if (persistentInfo?.isRunning) {
-              console.log(`[SessionStore] SSH session ${sessionId} has active remote Claude in tmux — reconnecting to flush output buffer`);
-              // Immediately reconnect the output FIFO reader to unblock Claude.
-              // Any buffered output will flush through. We don't process it here —
-              // the transcript will have it. This just ensures Claude doesn't stay
-              // blocked on write() waiting for a reader.
-              window.electronAPI.ssh.reconnectPersistentSession(sessionId, session.sshConfig!)
-                .then(result => {
-                  if (result.success) {
-                    console.log(`[SessionStore] Output reader reconnected for ${sessionId} — Claude unblocked`);
-                  } else {
-                    console.error(`[SessionStore] Failed to reconnect:`, result.error);
-                  }
-                });
-            }
-          })
-          .catch(error => {
-            console.error('[SessionStore] Failed to check persistent session:', error);
-          });
-      }
-
-      // 6. Check if this session has worktree instructions that haven't been sent yet
+      // 5. Check if this session has worktree instructions that haven't been sent yet
       const currentSession = get().sessions.find(s => s.id === sessionId);
       if (currentSession?.worktreeInstructions && !currentSession.worktreeInstructionsSent) {
         console.log('[SessionStore] Session has worktree instructions, sending as first message');
@@ -1319,31 +1272,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }));
     });
 
-    // Listen for SSH connection lost events — auto-reconnect immediately
+    // Listen for SSH connection lost events — notify user
     const unsubConnectionLost = window.electronAPI.ssh.onConnectionLost(async ({ sessionId, reason }) => {
       console.warn(`[SessionStore] SSH connection lost for ${sessionId}: ${reason}`);
       const currentState = get();
-
-      // Check if there's an active query running
-      let hasActiveQuery = false;
-      try {
-        hasActiveQuery = await window.electronAPI.claude.hasActiveQuery(sessionId);
-      } catch (error) {
-        console.warn('[SessionStore] Failed to check active query state on connection-lost:', error);
-      }
-
-      // Even when not streaming, we still need to notify the user so they know
-      // the connection died. Otherwise the next message goes into a void.
-      if (!currentState.isStreaming[sessionId] && !hasActiveQuery) {
-        console.log(`[SessionStore] SSH connection lost for idle session ${sessionId} — notifying user`);
-        addMessage(sessionId, {
-          id: `conn-lost-idle-${Date.now()}`,
-          role: 'assistant',
-          content: '⚠️ SSH connection lost. Your tmux session is still running on the remote — it will auto-reconnect when you send your next message.',
-          timestamp: new Date(),
-        });
-        return;
-      }
 
       // Clear streaming state immediately so UI unblocks
       if (currentState.isStreaming[sessionId]) {
@@ -1356,73 +1288,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         }));
       }
 
-      if (canAutoReconnect(sessionId)) {
-        addMessage(sessionId, {
-          id: `conn-lost-${Date.now()}`,
-          role: 'assistant',
-          content: '⚠️ SSH connection lost — attempting automatic reconnection...',
-          timestamp: new Date(),
-        });
-
-        // Attempt automatic reconnection
-        try {
-          // Brief delay to let the disconnect fully settle
-          await new Promise(resolve => setTimeout(resolve, 1000));
-
-          // Re-check: if streaming restarted during the delay (user sent a new message),
-          // abort the reconnect — the new query has already re-established streams
-          if (get().isStreaming[sessionId]) {
-            console.log(`[SessionStore] Aborting auto-reconnect — streaming resumed for ${sessionId}`);
-            return;
-          }
-
-          // Re-check query state after delay. If query ended and we're idle, this
-          // was likely a stale close event from an old client; don't reconnect.
-          try {
-            hasActiveQuery = await window.electronAPI.claude.hasActiveQuery(sessionId);
-          } catch (error) {
-            console.warn('[SessionStore] Failed active-query check before auto-reconnect:', error);
-          }
-          if (!hasActiveQuery) {
-            console.log(`[SessionStore] Aborting auto-reconnect — no active query for ${sessionId}`);
-            return;
-          }
-
-          const result = await window.electronAPI.ssh.reconnect(sessionId);
-          if (result.success) {
-            addMessage(sessionId, {
-              id: `conn-restored-${Date.now()}`,
-              role: 'assistant',
-              content: result.hadPersistentSession
-                ? '✅ Reconnected. Your tmux session is still running — send a message to continue.'
-                : '✅ Reconnected. Send a new message to continue.',
-              timestamp: new Date(),
-            });
-          } else {
-            addMessage(sessionId, {
-              id: `conn-failed-${Date.now()}`,
-              role: 'assistant',
-              content: `⚠️ Auto-reconnect failed: ${result.error || 'Unknown error'}. Try reconnecting manually.`,
-              timestamp: new Date(),
-            });
-          }
-        } catch (err) {
-          console.error('[SessionStore] Auto-reconnect after connection loss failed:', err);
-          addMessage(sessionId, {
-            id: `conn-error-${Date.now()}`,
-            role: 'assistant',
-            content: '⚠️ Auto-reconnect failed. Please try reconnecting manually.',
-            timestamp: new Date(),
-          });
-        }
-      } else {
-        addMessage(sessionId, {
-          id: `conn-lost-${Date.now()}`,
-          role: 'assistant',
-          content: '⚠️ SSH connection lost. Reconnect cooldown active — try reconnecting manually in a moment.',
-          timestamp: new Date(),
-        });
-      }
+      // Notify the user — the next message they send will create a fresh connection
+      addMessage(sessionId, {
+        id: `conn-lost-${Date.now()}`,
+        role: 'assistant',
+        content: 'SSH connection lost. Send a new message to reconnect automatically.',
+        timestamp: new Date(),
+      });
     });
 
     return () => {
@@ -1961,9 +1833,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         return;
       }
 
-      // Skip auto-resume for SSH sessions - the remote Claude process persists in tmux
+      // Skip auto-resume for SSH sessions - no local process to resume
       if (session.sshConfig) {
-        console.log('[SessionStore] Skipping auto-resume for SSH session (tmux persistence):', sessionId);
+        console.log('[SessionStore] Skipping auto-resume for SSH session:', sessionId);
         return;
       }
 

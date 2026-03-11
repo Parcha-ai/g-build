@@ -254,73 +254,6 @@ export function registerSSHHandlers(ipcMain: IpcMain): void {
   );
 
   /**
-   * Check if a persistent tmux session exists on the remote
-   */
-  ipcMain.handle(
-    IPC_CHANNELS.SSH_CHECK_PERSISTENT_SESSION,
-    async (_event, data: { sessionId: string; config: SSHConfig }) => {
-      console.log('[SSH IPC] Checking persistent session for', data.sessionId);
-      try {
-        const result = await sshService.checkPersistentSession(data.sessionId, data.config);
-        return result;
-      } catch (error) {
-        console.error('[SSH IPC] Failed to check persistent session:', error);
-        return null;
-      }
-    }
-  );
-
-  /**
-   * Kill a persistent tmux session on the remote
-   */
-  ipcMain.handle(
-    IPC_CHANNELS.SSH_KILL_PERSISTENT_SESSION,
-    async (_event, data: { sessionId: string; config: SSHConfig }) => {
-      console.log('[SSH IPC] Killing persistent session for', data.sessionId);
-      try {
-        const result = await sshService.killPersistentSession(data.sessionId, data.config);
-        return result;
-      } catch (error) {
-        console.error('[SSH IPC] Failed to kill persistent session:', error);
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        };
-      }
-    }
-  );
-
-  /**
-   * Reconnect to a running persistent session (flush output on app startup)
-   */
-  ipcMain.handle(
-    IPC_CHANNELS.SSH_RECONNECT_PERSISTENT_SESSION,
-    async (event, data: { sessionId: string; config: SSHConfig }) => {
-      console.log('[SSH IPC] Reconnecting persistent session for', data.sessionId);
-      try {
-        const result = await sshService.reconnectPersistentSession(
-          data.sessionId,
-          data.config,
-          (jsonData: string) => {
-            // Forward the streamed data to the renderer as Claude messages
-            event.sender.send(IPC_CHANNELS.SSH_RECONNECT_PERSISTENT_SESSION + ':data', {
-              sessionId: data.sessionId,
-              data: jsonData,
-            });
-          }
-        );
-        return result;
-      } catch (error) {
-        console.error('[SSH IPC] Failed to reconnect persistent session:', error);
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        };
-      }
-    }
-  );
-
-  /**
    * Check if SSH connection is available (quick ping)
    */
   ipcMain.handle(
@@ -833,7 +766,7 @@ export function registerSSHHandlers(ipcMain: IpcMain): void {
   );
 
   /**
-   * Reconnect an SSH session (disconnect, re-establish, and reattach tmux)
+   * Reconnect an SSH session (disconnect and re-establish connection)
    */
   ipcMain.handle(
     IPC_CHANNELS.SSH_RECONNECT,
@@ -849,14 +782,6 @@ export function registerSSHHandlers(ipcMain: IpcMain): void {
 
         const config = session.sshConfig;
 
-        // Guard: don't reconnect if there's an active query with live FIFO streams.
-        // Auto-reconnect from the renderer can fire from stale events and would
-        // destroy an active, working session.
-        if (sshService.hasActivePersistentStreams(sessionId)) {
-          console.log('[SSH IPC] Skipping reconnect — active persistent streams exist for', sessionId);
-          return { success: true, hadPersistentSession: true };
-        }
-
         // 1. Clean disconnect
         sshService.disconnect(sessionId);
         console.log('[SSH IPC] Disconnected session:', sessionId);
@@ -869,21 +794,7 @@ export function registerSSHHandlers(ipcMain: IpcMain): void {
         await sshService.connect(sessionId, config);
         console.log('[SSH IPC] SSH connection re-established');
 
-        // 3. Check if tmux session is still alive on the remote
-        let hadPersistentSession = false;
-        const persistentSession = await sshService.checkPersistentSession(sessionId, config);
-        console.log('[SSH IPC] Persistent session check:', persistentSession);
-
-        if (persistentSession?.isRunning) {
-          // 4. Reattach FIFO reader to the existing tmux session
-          console.log('[SSH IPC] Reattaching to persistent tmux session');
-          hadPersistentSession = true;
-          // The next query() call from the SDK will reattach via
-          // createPersistentRemoteProcess — no manual reattach needed here.
-          // We just need the connection to be live.
-        }
-
-        return { success: true, hadPersistentSession };
+        return { success: true };
       } catch (error) {
         console.error('[SSH IPC] Reconnect failed:', error);
         return {
