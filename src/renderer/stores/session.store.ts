@@ -110,6 +110,11 @@ interface SessionState {
   // Agent teams tracking — maps agentId to assigned colour index per session
   agentColorMap: Record<string, Record<string, number>>; // sessionId -> { agentId -> colorIndex }
 
+  // Ephemeral /btw side question state
+  btw: Record<string, { question: string; response: string; isStreaming: boolean } | null>;
+  // Remote control session state
+  remoteControl: Record<string, { url: string; startedAt: Date } | null>;
+
   // Conversation fork tracking
   activeForkGroup: string | null; // Root session ID when viewing a fork group
   visibleForkIds: Record<string, string[]>; // rootId → array of visible fork IDs
@@ -189,6 +194,16 @@ interface SessionState {
   createForkFromCurrent: (userMessage: string) => Promise<void>;
   getForkSiblings: (sessionId: string) => Session[];
   cycleForkTabs: (direction: 'next' | 'prev') => void;
+  // Ephemeral /btw side question
+  askBtw: (sessionId: string, question: string) => Promise<void>;
+  dismissBtw: (sessionId: string) => void;
+  subscribeToBtw: () => () => void;
+  // Remote control
+  startRemoteControl: (sessionId: string) => Promise<void>;
+  stopRemoteControl: (sessionId: string) => void;
+  setRemoteControl: (sessionId: string, url: string) => void;
+  clearRemoteControl: (sessionId: string) => void;
+  subscribeToRemoteControl: () => () => void;
 }
 
 export const useSessionStore = create<SessionState>((set, get) => ({
@@ -217,6 +232,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   backgroundTasks: {},
   securedKeys: {},
   agentColorMap: {},
+
+  // Ephemeral /btw and remote control state
+  btw: {},
+  remoteControl: {},
 
   // Fork tracking initialization
   activeForkGroup: null,
@@ -443,13 +462,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   refreshSessionBranch: async (sessionId) => {
     if (!hasElectronAPI) return null;
     try {
-      const status = await window.electronAPI.git.getStatus(sessionId);
-      const currentBranch = status?.current;
+      const session = get().sessions.find(s => s.id === sessionId);
+      if (!session) return null;
+
+      // For SSH sessions, use the remote branch query
+      let currentBranch: string | null = null;
+      if (session.sshConfig) {
+        currentBranch = await window.electronAPI.git.getRemoteBranch(sessionId);
+      } else {
+        const status = await window.electronAPI.git.getStatus(sessionId);
+        currentBranch = status?.current || null;
+      }
       if (!currentBranch) return null;
 
       // Check if branch changed
-      const session = get().sessions.find(s => s.id === sessionId);
-      if (session && session.branch !== currentBranch) {
+      if (session.branch !== currentBranch) {
         // Update the session with the new branch
         const updatedSession = await window.electronAPI.sessions.update(sessionId, { branch: currentBranch });
         set((state) => ({
@@ -2041,5 +2068,86 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const nextIndex = (currentIndex + delta + siblings.length) % siblings.length;
 
     setActiveSession(siblings[nextIndex].id);
+  },
+
+  // --- /btw (ephemeral side question) ---
+  askBtw: async (sessionId: string, question: string) => {
+    if (!hasElectronAPI) return;
+    // Set initial state — replaces any previous /btw for this session
+    set((state) => ({
+      btw: {
+        ...state.btw,
+        [sessionId]: { question, response: '', isStreaming: true },
+      },
+    }));
+    await window.electronAPI.claude.askBtw(sessionId, question);
+  },
+
+  dismissBtw: (sessionId: string) => {
+    set((state) => ({
+      btw: { ...state.btw, [sessionId]: null },
+    }));
+  },
+
+  subscribeToBtw: () => {
+    if (!hasElectronAPI) return () => {};
+    const unsub = window.electronAPI.claude.onBtwResponse(({ sessionId, content, done }) => {
+      set((state) => {
+        const current = state.btw[sessionId];
+        if (!current) return state;
+        return {
+          btw: {
+            ...state.btw,
+            [sessionId]: {
+              ...current,
+              response: current.response + content,
+              isStreaming: !done,
+            },
+          },
+        };
+      });
+    });
+    return unsub;
+  },
+
+  // --- /rc (remote control) ---
+  startRemoteControl: async (sessionId: string) => {
+    if (!hasElectronAPI) return;
+    await window.electronAPI.claude.startRc(sessionId);
+  },
+
+  stopRemoteControl: (sessionId: string) => {
+    if (!hasElectronAPI) return;
+    window.electronAPI.claude.stopRc(sessionId);
+    get().clearRemoteControl(sessionId);
+  },
+
+  setRemoteControl: (sessionId: string, url: string) => {
+    set((state) => ({
+      remoteControl: {
+        ...state.remoteControl,
+        [sessionId]: { url, startedAt: new Date() },
+      },
+    }));
+  },
+
+  clearRemoteControl: (sessionId: string) => {
+    set((state) => ({
+      remoteControl: { ...state.remoteControl, [sessionId]: null },
+    }));
+  },
+
+  subscribeToRemoteControl: () => {
+    if (!hasElectronAPI) return () => {};
+    const unsubStarted = window.electronAPI.claude.onRcStarted(({ sessionId, url }) => {
+      get().setRemoteControl(sessionId, url);
+    });
+    const unsubStopped = window.electronAPI.claude.onRcStopped(({ sessionId }) => {
+      get().clearRemoteControl(sessionId);
+    });
+    return () => {
+      unsubStarted();
+      unsubStopped();
+    };
   },
 }));

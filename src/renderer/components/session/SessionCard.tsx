@@ -3,6 +3,16 @@ import { Play, Square, Trash2, GitBranch, GitFork, Server, Upload, Pencil, Star,
 import { useSessionStore } from '../../stores/session.store';
 import type { Session } from '../../../shared/types';
 
+/**
+ * Truncate a file path to show at most the last N segments.
+ * e.g. "/home/ubuntu/dev/parcha/claudette" → "parcha/claudette" (n=2)
+ */
+function truncatePath(fullPath: string, segments = 2): string {
+  const parts = fullPath.replace(/\/+$/, '').split('/').filter(Boolean);
+  if (parts.length <= segments) return fullPath;
+  return parts.slice(-segments).join('/');
+}
+
 // Format date as relative time (e.g., "2h ago", "3d ago", "Jan 15")
 function formatRelativeDate(date: Date): string {
   const now = new Date();
@@ -164,6 +174,18 @@ export default function SessionCard({ session, isActive, onClick, isFork = false
     }
   }, [isRenaming]);
 
+  // Periodic branch refresh for SSH sessions (every 30s)
+  const refreshSessionBranch = useSessionStore((s) => s.refreshSessionBranch);
+  useEffect(() => {
+    if (!isSSH) return;
+    // Initial refresh
+    refreshSessionBranch(session.id);
+    const interval = setInterval(() => {
+      refreshSessionBranch(session.id);
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [isSSH, session.id, refreshSessionBranch]);
+
   // Get the appropriate icon based on session type
   const getSessionIcon = () => {
     if (isSSH && isWorktree) {
@@ -191,7 +213,7 @@ export default function SessionCard({ session, isActive, onClick, isFork = false
   return (
     <div
       onClick={onClick}
-      className={`px-3 py-2 cursor-pointer transition-colors group font-mono ${
+      className={`relative px-3 py-2 cursor-pointer transition-colors group font-mono ${
         isActive
           ? 'bg-claude-accent/20'
           : 'hover:bg-claude-bg'
@@ -211,7 +233,7 @@ export default function SessionCard({ session, isActive, onClick, isFork = false
           title={isSSH ? 'SSH Session' : (isWorktree ? 'Worktree' : 'Project')}
         />
 
-        {/* Content */}
+        {/* Content — takes full width */}
         <div className="flex-1 min-w-0">
           {isRenaming ? (
             <input
@@ -231,12 +253,11 @@ export default function SessionCard({ session, isActive, onClick, isFork = false
                 className={`text-xs font-bold truncate ${isActive ? 'text-claude-text' : 'text-claude-text-secondary'} cursor-text`}
                 onDoubleClick={handleDoubleClick}
               >
-                {/* Use forkName for forks, otherwise session name */}
                 {session.forkName || session.name}
               </h4>
               <button
                 onClick={handleEditClick}
-                className="opacity-0 group-hover/name:opacity-100 p-0.5 hover:bg-claude-accent/20 transition-opacity"
+                className="opacity-0 group-hover/name:opacity-100 p-0.5 hover:bg-claude-accent/20 transition-opacity flex-shrink-0"
                 style={{ borderRadius: 0 }}
                 title="Rename session"
               >
@@ -249,90 +270,110 @@ export default function SessionCard({ session, isActive, onClick, isFork = false
             <span className="text-[10px] truncate">
               {session.branch}
             </span>
-            <span className="text-[10px] text-claude-text-secondary/60">
+            <span className="text-[10px] text-claude-text-secondary/60 flex-shrink-0">
               · {formatRelativeDate(new Date(session.updatedAt))}
             </span>
           </div>
+          {isSSH && session.sshConfig?.remoteWorkdir && (
+            <div className="mt-0.5">
+              <span className="text-[9px] text-claude-text-secondary/50 truncate block" title={session.sshConfig.remoteWorkdir}>
+                {truncatePath(session.sshConfig.remoteWorkdir)}
+              </span>
+            </div>
+          )}
         </div>
 
-        {/* Star button - always visible when starred, hover-only otherwise */}
+        {/* Starred indicator — visible when starred, no layout impact */}
+        {session.isStarred && (
+          <button
+            onClick={handleStarToggle}
+            className="p-0.5 text-amber-400 hover:bg-amber-400/20 flex-shrink-0 group-hover:hidden"
+            style={{ borderRadius: 0 }}
+            title="Unstar session"
+          >
+            <Star size={10} fill="currentColor" />
+          </button>
+        )}
+      </div>
+
+      {/* Hover overlay — star + actions float over text on hover */}
+      <div
+        className="absolute right-1 top-1 hidden group-hover:flex items-center gap-0.5 px-1 py-0.5"
+        style={{
+          background: isActive ? 'var(--claude-accent-bg, rgba(var(--claude-accent-rgb, 139, 92, 246), 0.2))' : 'var(--claude-bg)',
+          borderRadius: 0,
+        }}
+      >
         <button
           onClick={handleStarToggle}
           className={`p-1 transition-all ${
             session.isStarred
               ? 'text-amber-400 hover:bg-amber-400/20'
-              : 'opacity-0 group-hover:opacity-100 text-claude-text-secondary hover:bg-claude-text-secondary/20'
+              : 'text-claude-text-secondary hover:bg-claude-text-secondary/20'
           }`}
           style={{ borderRadius: 0 }}
           title={session.isStarred ? 'Unstar session' : 'Star session'}
         >
           <Star size={12} fill={session.isStarred ? 'currentColor' : 'none'} />
         </button>
-
-        {/* Actions - brutalist */}
-        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-          {session.status === 'stopped' && (
-            <button
-              onClick={handleStart}
-              className="p-1 transition-colors hover:bg-green-500/20 text-green-500"
-              style={{ borderRadius: 0 }}
-              title="Start session"
-            >
-              <Play size={12} />
-            </button>
-          )}
-          {session.status === 'running' && (
-            <button
-              onClick={handleStop}
-              className="p-1 transition-colors hover:bg-yellow-500/20 text-yellow-500"
-              style={{ borderRadius: 0 }}
-              title="Stop session"
-            >
-              <Square size={12} />
-            </button>
-          )}
-          {/* Teleport to SSH - only show for non-SSH sessions */}
-          {!isSSH && onTeleportRequest && (
-            <button
-              onClick={handleTeleport}
-              className="p-1 transition-colors hover:bg-cyan-500/20 text-cyan-400"
-              style={{ borderRadius: 0 }}
-              title="Teleport to SSH remote"
-            >
-              <Upload size={12} />
-            </button>
-          )}
-          {/* Reconnect - only show for SSH sessions */}
-          {isSSH && (
-            <button
-              onClick={handleReconnect}
-              className="p-1 transition-colors hover:bg-blue-500/20 text-blue-400"
-              style={{ borderRadius: 0 }}
-              title="Reconnect SSH session"
-            >
-              <RefreshCw size={12} />
-            </button>
-          )}
-          {/* Download to Local - only show for SSH sessions */}
-          {isSSH && onDownload && (
-            <button
-              onClick={handleDownload}
-              className="p-1 transition-colors hover:bg-cyan-500/20 text-cyan-400"
-              style={{ borderRadius: 0 }}
-              title="Download to local folder"
-            >
-              <Download size={12} />
-            </button>
-          )}
+        {session.status === 'stopped' && (
           <button
-            onClick={handleDelete}
-            className="p-1 transition-colors hover:bg-red-500/20 text-red-400"
+            onClick={handleStart}
+            className="p-1 transition-colors hover:bg-green-500/20 text-green-500"
             style={{ borderRadius: 0 }}
-            title="Delete session"
+            title="Start session"
           >
-            <Trash2 size={12} />
+            <Play size={12} />
           </button>
-        </div>
+        )}
+        {session.status === 'running' && (
+          <button
+            onClick={handleStop}
+            className="p-1 transition-colors hover:bg-yellow-500/20 text-yellow-500"
+            style={{ borderRadius: 0 }}
+            title="Stop session"
+          >
+            <Square size={12} />
+          </button>
+        )}
+        {!isSSH && onTeleportRequest && (
+          <button
+            onClick={handleTeleport}
+            className="p-1 transition-colors hover:bg-cyan-500/20 text-cyan-400"
+            style={{ borderRadius: 0 }}
+            title="Teleport to SSH remote"
+          >
+            <Upload size={12} />
+          </button>
+        )}
+        {isSSH && (
+          <button
+            onClick={handleReconnect}
+            className="p-1 transition-colors hover:bg-blue-500/20 text-blue-400"
+            style={{ borderRadius: 0 }}
+            title="Reconnect SSH session"
+          >
+            <RefreshCw size={12} />
+          </button>
+        )}
+        {isSSH && onDownload && (
+          <button
+            onClick={handleDownload}
+            className="p-1 transition-colors hover:bg-cyan-500/20 text-cyan-400"
+            style={{ borderRadius: 0 }}
+            title="Download to local folder"
+          >
+            <Download size={12} />
+          </button>
+        )}
+        <button
+          onClick={handleDelete}
+          className="p-1 transition-colors hover:bg-red-500/20 text-red-400"
+          style={{ borderRadius: 0 }}
+          title="Delete session"
+        >
+          <Trash2 size={12} />
+        </button>
       </div>
     </div>
   );

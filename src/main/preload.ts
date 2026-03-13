@@ -122,6 +122,9 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.GIT_PULL, sessionId),
     clone: (url: string, path: string): Promise<void> =>
       ipcRenderer.invoke(IPC_CHANNELS.GIT_CLONE, url, path),
+    // Get current branch for SSH sessions (remote git query)
+    getRemoteBranch: (sessionId: string): Promise<string | null> =>
+      ipcRenderer.invoke(IPC_CHANNELS.GIT_REMOTE_BRANCH, sessionId),
     // Branch watching
     watchBranch: (sessionId: string): Promise<{ success: boolean; branch?: string; error?: string }> =>
       ipcRenderer.invoke(IPC_CHANNELS.GIT_WATCH_BRANCH, sessionId),
@@ -251,6 +254,30 @@ const electronAPI = {
       const handler = (_: IpcRendererEvent, data: { sessionId: string; taskId: string; output: string; status: 'running' | 'completed' | 'error'; completedAt?: string }) => callback(data);
       ipcRenderer.on(IPC_CHANNELS.CLAUDE_BACKGROUND_TASK_OUTPUT, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.CLAUDE_BACKGROUND_TASK_OUTPUT, handler);
+    },
+    // Ephemeral side question (/btw)
+    askBtw: (sessionId: string, question: string): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CLAUDE_BTW_ASK, sessionId, question),
+    onBtwResponse: (callback: (data: { sessionId: string; content: string; done: boolean }) => void) => {
+      const handler = (_: IpcRendererEvent, data: { sessionId: string; content: string; done: boolean }) => callback(data);
+      ipcRenderer.on(IPC_CHANNELS.CLAUDE_BTW_RESPONSE, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.CLAUDE_BTW_RESPONSE, handler);
+    },
+    // Remote control — start/stop
+    startRc: (sessionId: string): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CLAUDE_RC_START, sessionId),
+    stopRc: (sessionId: string): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CLAUDE_RC_STOP, sessionId),
+    // Remote control session events
+    onRcStarted: (callback: (data: { sessionId: string; url: string }) => void) => {
+      const handler = (_: IpcRendererEvent, data: { sessionId: string; url: string }) => callback(data);
+      ipcRenderer.on(IPC_CHANNELS.CLAUDE_RC_STARTED, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.CLAUDE_RC_STARTED, handler);
+    },
+    onRcStopped: (callback: (data: { sessionId: string }) => void) => {
+      const handler = (_: IpcRendererEvent, data: { sessionId: string }) => callback(data);
+      ipcRenderer.on(IPC_CHANNELS.CLAUDE_RC_STOPPED, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.CLAUDE_RC_STOPPED, handler);
     },
   },
 

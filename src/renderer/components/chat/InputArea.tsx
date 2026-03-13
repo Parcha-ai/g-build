@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, Image, FileCode, Target, File, Folder, AtSign, Brain, Square, Code } from 'lucide-react';
+import { X, Image, FileCode, Target, File, Folder, AtSign, Brain, Square, Code, Smartphone } from 'lucide-react';
 import { useSessionStore, type PermissionMode, type ThinkingMode, type EffortLevel, type ModelInfo, migrateThinkingMode } from '../../stores/session.store';
 import { useUIStore } from '../../stores/ui.store';
 import { useAudioStore } from '../../stores/audio.store';
@@ -146,6 +146,8 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
 
   // Action selectors — stable references, never cause re-renders
   const sendMessage = useSessionStore((s) => s.sendMessage);
+  const askBtw = useSessionStore((s) => s.askBtw);
+  const remoteControl = useSessionStore(useCallback((s) => s.remoteControl[sessionId] || null, [sessionId]));
   const interruptAndSend = useSessionStore((s) => s.interruptAndSend);
   const cyclePermissionMode = useSessionStore((s) => s.cyclePermissionMode);
   const cycleThinkingMode = useSessionStore((s) => s.cycleThinkingMode);
@@ -653,6 +655,18 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
   const handleSubmit = async () => {
     if (!message.trim() && attachments.length === 0) return;
     if (disabled) return;
+
+    // Intercept /btw — ephemeral side question (not added to history)
+    const trimmed = message.trim();
+    if (/^\/btw\s+/i.test(trimmed)) {
+      const question = trimmed.replace(/^\/btw\s+/i, '').trim();
+      if (question) {
+        setMessage('');
+        await askBtw(sessionId, question);
+        return;
+      }
+    }
+
     // Note: We don't block on isSending - the store handles queueing if already streaming
 
     // Save to history before sending
@@ -1254,6 +1268,23 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
             title={inspectorActive ? 'Cancel inspector (click again)' : 'Inspect element'}
           >
             <Target size={14} />
+          </button>
+          <button
+            onClick={() => {
+              if (remoteControl) {
+                useSessionStore.getState().stopRemoteControl(sessionId);
+              } else {
+                useSessionStore.getState().startRemoteControl(sessionId);
+              }
+            }}
+            disabled={disabled}
+            className={`p-1 transition-colors hover:bg-claude-bg disabled:opacity-40 disabled:cursor-not-allowed ${
+              remoteControl ? 'text-green-400' : 'text-claude-text-secondary hover:text-claude-accent'
+            }`}
+            style={{ borderRadius: 0 }}
+            title={remoteControl ? 'Remote control active — click to stop' : 'Control from phone'}
+          >
+            <Smartphone size={14} />
           </button>
           {isSending && (
             <button

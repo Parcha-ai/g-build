@@ -399,6 +399,9 @@ Only return the title, nothing else.`
 
       this.lastDiscoveryTime = Date.now();
       this.persistDiscoveredSessions();
+
+      // Backfill AI names for any unnamed forks (one-time)
+      this.backfillForkNames();
     } finally {
       this.discoveryInProgress = false;
     }
@@ -984,7 +987,8 @@ Only return the title, nothing else.`
     parentSession: Session,
     userMessage: string
   ): Promise<void> {
-    const settingsStore = this.store;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const settingsStore = new Store({ name: 'claudette-settings' }) as any;
     const apiKey = settingsStore.get('anthropicApiKey') as string | undefined;
 
     if (!apiKey) {
@@ -1006,12 +1010,12 @@ Only return the title, nothing else.`
         max_tokens: 50,
         messages: [{
           role: 'user',
-          content: `Generate a concise 2-3 word name for this conversation fork.
+          content: `Generate a concise 3-word name for this conversation fork.
 
 Parent conversation: "${parentSession.name}"
 New direction: "${userMessage.slice(0, 200)}"
 
-Only return the short name (2-3 words), nothing else.`
+Only return the short name (exactly 3 words), nothing else.`
         }]
       });
 
@@ -1025,6 +1029,8 @@ Only return the short name (2-3 words), nothing else.`
           name: generatedName // Update the main name too
         });
         console.log('[Session] Generated fork name:', generatedName);
+        // Notify renderer so fork tabs update immediately
+        this.emit('sessionsUpdated', this.getMergedSessions());
       }
     } catch (error) {
       console.error('[Session] Failed to generate AI fork name:', error);
@@ -1032,6 +1038,123 @@ Only return the short name (2-3 words), nothing else.`
       const forkCount = (parentSession.childSessionIds?.length || 0);
       const fallbackName = `Fork ${forkCount}`;
       await this.updateSession(forkedSessionId, { aiGeneratedName: fallbackName });
+      this.emit('sessionsUpdated', this.getMergedSessions());
+    }
+  }
+
+  /**
+   * Backfill AI-generated names for forks that don't have one yet.
+   * Reads the first user message from each fork's transcript and uses Haiku to name it.
+   */
+  private backfillForkNames(): void {
+    (async () => {
+      try {
+        const allSessions = this.getMergedSessions();
+        const unnamedForks = allSessions.filter(
+          s => s.parentSessionId && !s.aiGeneratedName
+        );
+
+        if (unnamedForks.length === 0) return;
+        console.log(`[Session] Backfilling names for ${unnamedForks.length} unnamed forks`);
+
+        for (const fork of unnamedForks) {
+          // Read the fork's transcript to find the first user message
+          const firstMessage = await this.getFirstUserMessage(fork.id);
+          if (!firstMessage) {
+            // No message found — use a simple fallback
+            await this.updateSession(fork.id, { aiGeneratedName: `Fork` });
+            continue;
+          }
+
+          const parentSession = allSessions.find(s => s.id === fork.parentSessionId);
+          if (parentSession) {
+            await this.generateForkName(fork.id, parentSession, firstMessage);
+          } else {
+            // No parent found — generate name from message alone
+            await this.generateForkNameStandalone(fork.id, firstMessage);
+          }
+        }
+      } catch (error) {
+        console.error('[Session] Failed to backfill fork names:', error);
+      }
+    })();
+  }
+
+  /**
+   * Read the first user message from a session's transcript file.
+   */
+  private async getFirstUserMessage(sessionId: string): Promise<string | null> {
+    const homeDir = require('os').homedir();
+    const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
+
+    try {
+      const entries = await fs.readdir(claudeProjectsDir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+        const transcriptFile = path.join(claudeProjectsDir, entry.name, `${sessionId}.jsonl`);
+        try {
+          await fs.access(transcriptFile);
+          const content = await fs.readFile(transcriptFile, 'utf-8');
+          const lines = content.split('\n').filter(l => l.trim());
+          for (const line of lines) {
+            try {
+              const parsed = JSON.parse(line);
+              if (parsed.type === 'human' && parsed.message?.content) {
+                const text = typeof parsed.message.content === 'string'
+                  ? parsed.message.content
+                  : parsed.message.content.find?.((c: { type: string; text?: string }) => c.type === 'text')?.text;
+                if (text) return text;
+              }
+            } catch { /* skip malformed line */ }
+          }
+          return null; // Transcript exists but no user message found
+        } catch { /* transcript not in this dir */ }
+      }
+    } catch { /* projects dir doesn't exist */ }
+    return null;
+  }
+
+  /**
+   * Generate a fork name without parent context.
+   */
+  private async generateForkNameStandalone(forkedSessionId: string, userMessage: string): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const settingsStore = new Store({ name: 'claudette-settings' }) as any;
+    const apiKey = settingsStore.get('anthropicApiKey') as string | undefined;
+
+    if (!apiKey) {
+      await this.updateSession(forkedSessionId, { aiGeneratedName: 'Fork' });
+      return;
+    }
+
+    try {
+      const anthropic = new Anthropic({ apiKey });
+      const response = await anthropic.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 50,
+        messages: [{
+          role: 'user',
+          content: `Generate a concise 3-word name for this conversation fork based on the message: "${userMessage.slice(0, 200)}"
+
+Only return the short name (3 words), nothing else.`
+        }]
+      });
+
+      const generatedName = response.content[0]?.type === 'text'
+        ? response.content[0].text.trim()
+        : null;
+
+      if (generatedName) {
+        await this.updateSession(forkedSessionId, {
+          aiGeneratedName: generatedName,
+          name: generatedName
+        });
+        console.log('[Session] Backfilled fork name:', generatedName);
+        this.emit('sessionsUpdated', this.getMergedSessions());
+      }
+    } catch (error) {
+      console.error('[Session] Failed to generate standalone fork name:', error);
+      await this.updateSession(forkedSessionId, { aiGeneratedName: 'Fork' });
     }
   }
 

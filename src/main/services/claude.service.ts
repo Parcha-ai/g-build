@@ -1853,6 +1853,277 @@ ${memoriesPrompt}
     });
   }
 
+  /**
+   * Ephemeral side question (/btw) — makes a direct Anthropic API call with
+   * conversation context but does NOT add anything to the session history.
+   * Streams response chunks back via IPC.
+   */
+  // Remote control child processes — one per session
+  private rcProcesses = new Map<string, import('child_process').ChildProcess>();
+
+  /**
+   * Start a remote control session by spawning `claude remote-control` as a child process.
+   * Parses the URL from stdout and emits CLAUDE_RC_STARTED.
+   */
+  async startRemoteControl(sessionId: string): Promise<void> {
+    // If already running, just re-emit the URL
+    if (this.rcProcesses.has(sessionId)) {
+      console.log('[Claude Service] Remote control already active for session:', sessionId);
+      return;
+    }
+
+    const session = this.sessionStore.get(`sessions.${sessionId}`) as Session | undefined;
+    const sessionName = session?.name || 'Grep Build';
+
+    // For SSH sessions, run remote-control on the remote machine via SSH
+    if (session?.sshConfig) {
+      await this.startRemoteControlSSH(sessionId, session.sshConfig, sessionName);
+      return;
+    }
+
+    const cwd = session?.repoPath || process.cwd();
+    const { spawn } = require('child_process') as typeof import('child_process');
+
+    const child = spawn('claude', ['remote-control', '--name', sessionName], {
+      cwd,
+      shell: true,
+      env: { ...process.env, CLAUDECODE: '' }, // Unset to avoid nested session error
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    this.rcProcesses.set(sessionId, child);
+
+    // Auto-confirm the "Enable Remote Control? (y/n)" prompt
+    child.stdin?.write('y\n');
+
+    this.attachRcOutputHandlers(sessionId, child);
+  }
+
+  private attachRcOutputHandlers(sessionId: string, child: import('child_process').ChildProcess): void {
+    let outputBuffer = '';
+    let urlEmitted = false;
+
+    child.stdout?.on('data', (data: Buffer) => {
+      const text = data.toString();
+      outputBuffer += text;
+      console.log('[Claude Service] RC stdout:', text.replace(/\x1b\[[^m]*m/g, '').trim());
+
+      // Look for the URL in the output
+      if (!urlEmitted) {
+        const urlMatch = outputBuffer.match(/https:\/\/claude\.ai\/code\/[^\s]+/);
+        if (urlMatch) {
+          urlEmitted = true;
+          const url = urlMatch[0];
+          console.log('[Claude Service] Remote control URL detected:', url);
+          this.mainWindow?.webContents.send(IPC_CHANNELS.CLAUDE_RC_STARTED, {
+            sessionId,
+            url,
+          });
+        }
+      }
+    });
+
+    child.stderr?.on('data', (data: Buffer) => {
+      console.log('[Claude Service] RC stderr:', data.toString().trim());
+    });
+
+    child.on('close', (code) => {
+      console.log('[Claude Service] Remote control process exited with code:', code);
+      this.rcProcesses.delete(sessionId);
+      this.mainWindow?.webContents.send(IPC_CHANNELS.CLAUDE_RC_STOPPED, { sessionId });
+    });
+
+    child.on('error', (err) => {
+      console.error('[Claude Service] Remote control process error:', err);
+      this.rcProcesses.delete(sessionId);
+      this.mainWindow?.webContents.send(IPC_CHANNELS.CLAUDE_RC_STOPPED, { sessionId });
+    });
+  }
+
+  /**
+   * Start remote control on an SSH session by running `claude remote-control` on the remote machine.
+   */
+  private async startRemoteControlSSH(sessionId: string, sshConfig: import('../../shared/types').SSHConfig, sessionName: string): Promise<void> {
+    try {
+      const client = await sshService['getConnection'](sessionId, sshConfig);
+      const claudePaths = `/home/${sshConfig.username}/.local/bin:/home/${sshConfig.username}/bin:/usr/local/bin:/usr/bin`;
+      const command = `export PATH="${claudePaths}:$PATH" && cd "${sshConfig.remoteWorkdir}" && echo y | claude remote-control --name "${sessionName}"`;
+
+      console.log('[Claude Service] Starting remote control on SSH:', command);
+
+      client.exec(command, (err, channel) => {
+        if (err) {
+          console.error('[Claude Service] SSH RC exec error:', err);
+          this.mainWindow?.webContents.send(IPC_CHANNELS.CLAUDE_RC_STOPPED, { sessionId });
+          return;
+        }
+
+        // Store the channel so we can kill it later (wrap as a fake ChildProcess)
+        const fakeProcess = {
+          kill: () => { channel.close(); },
+          stdout: channel,
+          stderr: channel.stderr,
+          stdin: channel,
+        } as any;
+        this.rcProcesses.set(sessionId, fakeProcess);
+
+        let outputBuffer = '';
+        let urlEmitted = false;
+
+        channel.on('data', (data: Buffer) => {
+          const text = data.toString();
+          outputBuffer += text;
+          const clean = text.replace(/\x1b\[[^m]*m/g, '').replace(/\[\d+[A-Z]/g, '').trim();
+          if (clean) console.log('[Claude Service] SSH RC stdout:', clean);
+
+          if (!urlEmitted) {
+            const urlMatch = outputBuffer.match(/https:\/\/claude\.ai\/code\/[^\s]+/);
+            if (urlMatch) {
+              urlEmitted = true;
+              console.log('[Claude Service] SSH Remote control URL detected:', urlMatch[0]);
+              this.mainWindow?.webContents.send(IPC_CHANNELS.CLAUDE_RC_STARTED, {
+                sessionId,
+                url: urlMatch[0],
+              });
+            }
+          }
+        });
+
+        channel.stderr.on('data', (data: Buffer) => {
+          console.log('[Claude Service] SSH RC stderr:', data.toString().trim());
+        });
+
+        channel.on('close', () => {
+          console.log('[Claude Service] SSH Remote control channel closed');
+          this.rcProcesses.delete(sessionId);
+          this.mainWindow?.webContents.send(IPC_CHANNELS.CLAUDE_RC_STOPPED, { sessionId });
+        });
+      });
+    } catch (error) {
+      console.error('[Claude Service] Failed to start SSH remote control:', error);
+      this.mainWindow?.webContents.send(IPC_CHANNELS.CLAUDE_RC_STOPPED, { sessionId });
+    }
+  }
+
+  /**
+   * Stop a running remote control session.
+   */
+  stopRemoteControl(sessionId: string): void {
+    const child = this.rcProcesses.get(sessionId);
+    if (child) {
+      child.kill('SIGTERM');
+      this.rcProcesses.delete(sessionId);
+      this.mainWindow?.webContents.send(IPC_CHANNELS.CLAUDE_RC_STOPPED, { sessionId });
+    }
+  }
+
+  async askBtw(sessionId: string, question: string): Promise<void> {
+    const Anthropic = (await import('@anthropic-ai/sdk')).default;
+
+    // Retrieve API configuration — mirror the same paths as streamMessage
+    const settings = this.store.get('settings', {}) as Record<string, unknown>;
+    const foundryEnabled = settings.foundryEnabled as boolean | undefined;
+
+    let client: InstanceType<typeof Anthropic>;
+    if (foundryEnabled && settings.foundryBaseUrl && settings.foundryApiKey) {
+      client = new Anthropic({
+        baseURL: (settings.foundryBaseUrl as string).trim(),
+        apiKey: (settings.foundryApiKey as string).trim(),
+      });
+    } else {
+      const apiKey = this.getApiKey();
+      if (!apiKey) {
+        this.mainWindow?.webContents.send(IPC_CHANNELS.CLAUDE_BTW_RESPONSE, {
+          sessionId,
+          content: 'No API key configured. Please set your Anthropic API key in settings.',
+          done: true,
+        });
+        return;
+      }
+      client = new Anthropic({ apiKey });
+    }
+
+    // Determine model — use session model or sensible default
+    const session = this.sessionStore.get(`sessions.${sessionId}`) as Session | undefined;
+    let model = session?.model;
+    if (!model) {
+      if (foundryEnabled && settings.foundryDefaultSonnetModel) {
+        model = (settings.foundryDefaultSonnetModel as string).trim();
+      } else {
+        model = 'claude-sonnet-4-5-20250929'; // Fast, cheap, good enough for side questions
+      }
+    }
+
+    // Build conversation context from session messages
+    const messages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+    try {
+      const chatMessages = await this.getMessages(sessionId);
+      for (const msg of chatMessages) {
+        if (msg.role === 'user' || msg.role === 'assistant') {
+          const content = typeof msg.content === 'string' ? msg.content : '';
+          if (content.trim()) {
+            messages.push({ role: msg.role, content });
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Claude Service] Could not load messages for /btw context:', e);
+    }
+
+    // Append the side question as the final user message
+    messages.push({ role: 'user', content: question });
+
+    // Ensure messages alternate roles (API requirement) — collapse consecutive same-role messages
+    const sanitised: typeof messages = [];
+    for (const m of messages) {
+      if (sanitised.length > 0 && sanitised[sanitised.length - 1].role === m.role) {
+        sanitised[sanitised.length - 1].content += '\n\n' + m.content;
+      } else {
+        sanitised.push({ ...m });
+      }
+    }
+    // Ensure first message is from user
+    if (sanitised.length > 0 && sanitised[0].role !== 'user') {
+      sanitised.shift();
+    }
+
+    try {
+      const stream = client.messages.stream({
+        model,
+        max_tokens: 2048,
+        system: 'You are answering a quick side question about the current work. Be concise and direct. The user can see the full conversation — you have it as context. Do not repeat what has already been said unless clarifying.',
+        messages: sanitised,
+      });
+
+      for await (const event of stream) {
+        if (event.type === 'content_block_delta') {
+          const delta = event.delta as { type: string; text?: string };
+          if (delta.type === 'text_delta' && delta.text) {
+            this.mainWindow?.webContents.send(IPC_CHANNELS.CLAUDE_BTW_RESPONSE, {
+              sessionId,
+              content: delta.text,
+              done: false,
+            });
+          }
+        }
+      }
+
+      // Signal completion
+      this.mainWindow?.webContents.send(IPC_CHANNELS.CLAUDE_BTW_RESPONSE, {
+        sessionId,
+        content: '',
+        done: true,
+      });
+    } catch (error) {
+      console.error('[Claude Service] /btw error:', error);
+      this.mainWindow?.webContents.send(IPC_CHANNELS.CLAUDE_BTW_RESPONSE, {
+        sessionId,
+        content: `\n\nError: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        done: true,
+      });
+    }
+  }
+
   async *streamMessage(
     sessionId: string,
     userMessage: string,
@@ -3983,6 +4254,9 @@ Begin by creating the task structure now.
     const sdkSessionId = hasStoredSdkSessionId ? storedSdkSessionId : sessionId;
 
     // For SSH sessions, fetch transcript from the remote machine
+    // Local cache key for resilience against SSH disconnects
+    const localCacheKey = `messageCache.${sessionId}`;
+
     if (session?.sshConfig) {
       // Brand-new session — start fresh, don't search for old transcripts
       if (isNewSession) {
@@ -4017,6 +4291,7 @@ Begin by creating the task structure now.
               const messages = this.parseTranscriptContent(content);
               const limited = limit > 0 ? messages.slice(-limit) : messages;
               console.log(`[Claude] Returning ${limited.length}/${messages.length} SSH messages (restored mapping)`);
+              this.sessionStore.set(localCacheKey, limited);
               return limited;
             }
           }
@@ -4024,6 +4299,11 @@ Begin by creating the task structure now.
           return [];
         } catch (error) {
           console.error('[Claude] Error searching for orphaned transcripts:', error);
+          const cached = this.sessionStore.get(localCacheKey) as ChatMessage[] | undefined;
+          if (cached?.length) {
+            console.log(`[Claude] Orphan search failed — returning ${cached.length} locally cached messages`);
+            return cached;
+          }
           return [];
         }
       }
@@ -4042,6 +4322,8 @@ Begin by creating the task structure now.
           const messages = this.parseTranscriptContent(remoteContent);
           const limited = limit > 0 ? messages.slice(-limit) : messages;
           console.log(`[Claude] Returning ${limited.length}/${messages.length} SSH messages`);
+          // Cache locally for resilience against SSH disconnects
+          this.sessionStore.set(localCacheKey, limited);
           return limited;
         }
 
@@ -4069,6 +4351,7 @@ Begin by creating the task structure now.
               const messages = this.parseTranscriptContent(content);
               const limited = limit > 0 ? messages.slice(-limit) : messages;
               console.log(`[Claude] Returning ${limited.length}/${messages.length} SSH messages`);
+              this.sessionStore.set(localCacheKey, limited);
               return limited;
             }
           } else {
@@ -4077,9 +4360,21 @@ Begin by creating the task structure now.
         }
 
         console.log('[Claude] No matching remote transcript found');
+        // Return local cache if available
+        const cached = this.sessionStore.get(localCacheKey) as ChatMessage[] | undefined;
+        if (cached?.length) {
+          console.log(`[Claude] Returning ${cached.length} locally cached messages (no remote match)`);
+          return cached;
+        }
         return [];
       } catch (error) {
         console.error('[Claude] Error fetching remote transcript:', error);
+        // SSH is down — return locally cached messages so the UI doesn't lose history
+        const cached = this.sessionStore.get(localCacheKey) as ChatMessage[] | undefined;
+        if (cached?.length) {
+          console.log(`[Claude] SSH fetch failed — returning ${cached.length} locally cached messages`);
+          return cached;
+        }
         return [];
       }
     }

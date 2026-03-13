@@ -9,6 +9,8 @@ import QuestionDialog from './QuestionDialog';
 import ThinkingBlock from './ThinkingBlock';
 import TasksBlock, { type Task } from './TasksBlock';
 import BackgroundTasksBlock from './BackgroundTasksBlock';
+import BtwOverlay from './BtwOverlay';
+import RemoteControlPanel from './RemoteControlPanel';
 // CompactionBar removed - compaction status now shown in ThinkingBlock
 import { SoundVisualization } from './SoundVisualization';
 import { ArrowDown } from 'lucide-react';
@@ -40,6 +42,8 @@ export default function ChatContainer({ session }: ChatContainerProps) {
   const queuedMessages = useSessionStore(useCallback((s) => s.messageQueue[session.id] || EMPTY_QUEUE, [session.id]));
   const sessionBgTasks = useSessionStore(useCallback((s) => s.backgroundTasks[session.id] || EMPTY_BG_TASKS, [session.id]));
   const isLoadingMessages = useSessionStore(useCallback((s) => s.isLoadingMessages[session.id] || false, [session.id]));
+  const btwState = useSessionStore(useCallback((s) => s.btw[session.id] || null, [session.id]));
+  const rcState = useSessionStore(useCallback((s) => s.remoteControl[session.id] || null, [session.id]));
 
   // Action selectors — stable references, never cause re-renders
   const approvePermission = useSessionStore((s) => s.approvePermission);
@@ -48,6 +52,8 @@ export default function ChatContainer({ session }: ChatContainerProps) {
   const setPermissionMode = useSessionStore((s) => s.setPermissionMode);
   const addBackgroundTask = useSessionStore((s) => s.addBackgroundTask);
   const removeBackgroundTask = useSessionStore((s) => s.removeBackgroundTask);
+  const dismissBtw = useSessionStore((s) => s.dismissBtw);
+  // clearRemoteControl removed — stopRemoteControl handles both IPC kill + state clear
 
   const { audioModeActive, ttsStates } = useAudioStore();
   const { toggleTerminalPanel, isTerminalPanelOpen } = useUIStore();
@@ -319,6 +325,18 @@ export default function ChatContainer({ session }: ChatContainerProps) {
   // Subscribe to background task updates
   useEffect(() => {
     const unsubscribe = useSessionStore.getState().subscribeToBackgroundTasks();
+    return unsubscribe;
+  }, []);
+
+  // Subscribe to /btw responses
+  useEffect(() => {
+    const unsubscribe = useSessionStore.getState().subscribeToBtw();
+    return unsubscribe;
+  }, []);
+
+  // Subscribe to remote control events
+  useEffect(() => {
+    const unsubscribe = useSessionStore.getState().subscribeToRemoteControl();
     return unsubscribe;
   }, []);
 
@@ -655,6 +673,25 @@ export default function ChatContainer({ session }: ChatContainerProps) {
             onAnswer={(answers) => answerQuestion(session.id, answers)}
           />
         </div>
+      )}
+
+      {/* Remote control panel */}
+      {rcState && (
+        <RemoteControlPanel
+          sessionId={session.id}
+          url={rcState.url}
+          startedAt={rcState.startedAt}
+        />
+      )}
+
+      {/* Ephemeral /btw overlay */}
+      {btwState && (
+        <BtwOverlay
+          question={btwState.question}
+          response={btwState.response}
+          isStreaming={btwState.isStreaming}
+          onDismiss={() => dismissBtw(session.id)}
+        />
       )}
 
       {/* Input */}

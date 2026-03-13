@@ -504,6 +504,22 @@ export class SSHService {
   }
 
   /**
+   * Get the current git branch on the remote for an SSH session.
+   * Returns the branch name or null if not a git repo / connection failed.
+   */
+  async getRemoteBranch(sessionId: string, config: SSHConfig): Promise<string | null> {
+    try {
+      const client = await this.getConnection(sessionId, config);
+      const result = await this.execCommand(client, `git -C "${config.remoteWorkdir}" rev-parse --abbrev-ref HEAD`);
+      const branch = result.trim();
+      return branch || null;
+    } catch (error) {
+      console.error(`[SSH Service] Failed to get remote branch for ${sessionId}:`, error);
+      return null;
+    }
+  }
+
+  /**
    * Execute a command on the remote and return stdout.
    * Public to allow IPC layer to query remote state (e.g. git branch, remote URL).
    */

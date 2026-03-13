@@ -44,6 +44,7 @@ export const IPC_CHANNELS = {
   GIT_PUSH: 'git:push',
   GIT_PULL: 'git:pull',
   GIT_CLONE: 'git:clone',
+  GIT_REMOTE_BRANCH: 'git:remote-branch',
   GIT_WATCH_BRANCH: 'git:watch-branch',
   GIT_UNWATCH_BRANCH: 'git:unwatch-branch',
   GIT_BRANCH_CHANGED: 'git:branch-changed',
@@ -74,6 +75,12 @@ export const IPC_CHANNELS = {
   CLAUDE_SET_PERMISSION_MODE: 'claude:set-permission-mode', // Update permission mode mid-stream (used by GREP IT! button)
   CLAUDE_PERMISSION_MODE_CHANGED: 'claude:permission-mode-changed', // Notify renderer of permission mode change from main
   CLAUDE_BACKGROUND_TASK_OUTPUT: 'claude:background-task-output', // Output updates from backgrounded Bash commands
+  CLAUDE_BTW_ASK: 'claude:btw-ask', // Ephemeral side question (bypasses conversation history)
+  CLAUDE_BTW_RESPONSE: 'claude:btw-response', // Streaming response chunks for /btw
+  CLAUDE_RC_START: 'claude:rc-start', // Start remote control session
+  CLAUDE_RC_STOP: 'claude:rc-stop', // Stop remote control session
+  CLAUDE_RC_STARTED: 'claude:rc-started', // Remote control session started (URL detected)
+  CLAUDE_RC_STOPPED: 'claude:rc-stopped', // Remote control session stopped
 
   // Browser preview channels
   BROWSER_NAVIGATE: 'browser:navigate',

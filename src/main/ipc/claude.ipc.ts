@@ -405,6 +405,26 @@ export function registerClaudeHandlers(ipcMain: IpcMain): void {
     console.log(`[Claude IPC] Setting permission mode for ${sessionId}: ${mode}`);
     claudeService.setSessionPermissionMode(sessionId, mode);
   });
+
+  // Ephemeral side question (/btw) — direct API call, no history pollution
+  ipcMain.handle(IPC_CHANNELS.CLAUDE_BTW_ASK, async (_, sessionId: string, question: string) => {
+    const mainWindow = getMainWindow();
+    if (!mainWindow) return;
+    claudeService.setMainWindow(mainWindow);
+    await claudeService.askBtw(sessionId, question);
+  });
+
+  // Remote control — spawn `claude remote-control` as a child process
+  ipcMain.handle(IPC_CHANNELS.CLAUDE_RC_START, async (_, sessionId: string) => {
+    const mainWindow = getMainWindow();
+    if (!mainWindow) return;
+    claudeService.setMainWindow(mainWindow);
+    await claudeService.startRemoteControl(sessionId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.CLAUDE_RC_STOP, async (_, sessionId: string) => {
+    claudeService.stopRemoteControl(sessionId);
+  });
 }
 
 // Export the claude service instance so it can be updated with mainWindow reference
