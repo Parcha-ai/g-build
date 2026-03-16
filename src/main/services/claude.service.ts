@@ -428,6 +428,15 @@ ${cleanOutput}
       }
     }
 
+    // Add GStack mode prompt if active
+    if (session.gstackMode) {
+      const { getGStackModePrompt } = require('./gstack.service');
+      const modePrompt = getGStackModePrompt(session.gstackMode);
+      if (modePrompt) {
+        append += '\n\n' + modePrompt;
+      }
+    }
+
     // Add agent memories if available
     if (memoriesPrompt && memoriesPrompt.trim()) {
       append += `
@@ -1884,12 +1893,31 @@ ${memoriesPrompt}
     const cwd = session?.repoPath || process.cwd();
     const { spawn } = require('child_process') as typeof import('child_process');
 
-    const child = spawn('claude', ['remote-control', '--name', sessionName], {
-      cwd,
-      shell: true,
-      env: { ...process.env, CLAUDECODE: '' }, // Unset to avoid nested session error
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    // Resolve the SDK session ID so remote control resumes the current conversation
+    const rawSdkSessionId = this.sessionStore.get(`sdkSessionMappings.${sessionId}`) as string | undefined
+      || this.sessionStore.get(`sessions.${sessionId}.sdkSessionId`) as string | undefined;
+    const sdkSessionId = rawSdkSessionId === 'new' ? undefined : rawSdkSessionId;
+
+    let child;
+    if (sdkSessionId) {
+      // Resume the existing session with remote control enabled
+      console.log('[Claude Service] Starting remote control with --resume for SDK session:', sdkSessionId);
+      child = spawn('claude', ['--resume', sdkSessionId, '--remote-control'], {
+        cwd,
+        shell: true,
+        env: { ...process.env, CLAUDECODE: '' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } else {
+      // No SDK session yet — fall back to standalone remote-control
+      console.log('[Claude Service] No SDK session ID found, starting standalone remote-control');
+      child = spawn('claude', ['remote-control', '--name', sessionName], {
+        cwd,
+        shell: true,
+        env: { ...process.env, CLAUDECODE: '' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    }
 
     this.rcProcesses.set(sessionId, child);
 
@@ -1908,9 +1936,11 @@ ${memoriesPrompt}
       outputBuffer += text;
       console.log('[Claude Service] RC stdout:', text.replace(/\x1b\[[^m]*m/g, '').trim());
 
-      // Look for the URL in the output
+      // Look for the URL in the output (strip ANSI escape sequences first)
       if (!urlEmitted) {
-        const urlMatch = outputBuffer.match(/https:\/\/claude\.ai\/code\/[^\s]+/);
+        const cleanBuffer = outputBuffer.replace(/\x1b\]8;;[^\x07\x1b]*(\x07|\x1b\\)/g, '').replace(/\x1b\[[^m]*m/g, '');
+        const urlMatch = cleanBuffer.match(/https:\/\/claude\.ai\/code\?bridge=[^\s]+/)
+          || cleanBuffer.match(/https:\/\/claude\.ai\/code\/[^\s]+/);
         if (urlMatch) {
           urlEmitted = true;
           const url = urlMatch[0];
@@ -1947,7 +1977,20 @@ ${memoriesPrompt}
     try {
       const client = await sshService['getConnection'](sessionId, sshConfig);
       const claudePaths = `/home/${sshConfig.username}/.local/bin:/home/${sshConfig.username}/bin:/usr/local/bin:/usr/bin`;
-      const command = `export PATH="${claudePaths}:$PATH" && cd "${sshConfig.remoteWorkdir}" && echo y | claude remote-control --name "${sessionName}"`;
+
+      // Resolve the SDK session ID so remote control resumes the current conversation
+      const rawSdkSessionId = this.sessionStore.get(`sdkSessionMappings.${sessionId}`) as string | undefined
+        || this.sessionStore.get(`sessions.${sessionId}.sdkSessionId`) as string | undefined;
+      const sdkSessionId = rawSdkSessionId === 'new' ? undefined : rawSdkSessionId;
+
+      let command: string;
+      if (sdkSessionId) {
+        console.log('[Claude Service] SSH RC: resuming SDK session:', sdkSessionId);
+        command = `export PATH="${claudePaths}:$PATH" && cd "${sshConfig.remoteWorkdir}" && echo y | claude --resume "${sdkSessionId}" --remote-control`;
+      } else {
+        console.log('[Claude Service] SSH RC: no SDK session, starting standalone remote-control');
+        command = `export PATH="${claudePaths}:$PATH" && cd "${sshConfig.remoteWorkdir}" && echo y | claude remote-control --name "${sessionName}"`;
+      }
 
       console.log('[Claude Service] Starting remote control on SSH:', command);
 
@@ -1977,7 +2020,9 @@ ${memoriesPrompt}
           if (clean) console.log('[Claude Service] SSH RC stdout:', clean);
 
           if (!urlEmitted) {
-            const urlMatch = outputBuffer.match(/https:\/\/claude\.ai\/code\/[^\s]+/);
+            const cleanBuffer = outputBuffer.replace(/\x1b\]8;;[^\x07\x1b]*(\x07|\x1b\\)/g, '').replace(/\x1b\[[^m]*m/g, '');
+            const urlMatch = cleanBuffer.match(/https:\/\/claude\.ai\/code\?bridge=[^\s]+/)
+              || cleanBuffer.match(/https:\/\/claude\.ai\/code\/[^\s]+/);
             if (urlMatch) {
               urlEmitted = true;
               console.log('[Claude Service] SSH Remote control URL detected:', urlMatch[0]);

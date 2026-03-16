@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Session, ChatMessage, ToolCall, PermissionRequest, PermissionResponse, QuestionRequest, QuestionResponse, SetupProgressEvent, CompactionStatus, CompactionComplete, PlanApprovalRequest, PlanApprovalResponse } from '../../shared/types';
+import type { Session, ChatMessage, ToolCall, PermissionRequest, PermissionResponse, QuestionRequest, QuestionResponse, SetupProgressEvent, CompactionStatus, CompactionComplete, PlanApprovalRequest, PlanApprovalResponse, GStackMode } from '../../shared/types';
 import { AGENT_COLORS } from '../../shared/types';
 
 // Check if running in Electron environment
@@ -109,6 +109,8 @@ interface SessionState {
   securedKeys: Record<string, Array<{ id: string; type: string; description: string }>>;
   // Agent teams tracking — maps agentId to assigned colour index per session
   agentColorMap: Record<string, Record<string, number>>; // sessionId -> { agentId -> colorIndex }
+  // GStack workflow mode per session
+  gstackMode: Record<string, GStackMode | null>;
 
   // Ephemeral /btw side question state
   btw: Record<string, { question: string; response: string; isStreaming: boolean } | null>;
@@ -194,6 +196,8 @@ interface SessionState {
   createForkFromCurrent: (userMessage: string) => Promise<void>;
   getForkSiblings: (sessionId: string) => Session[];
   cycleForkTabs: (direction: 'next' | 'prev') => void;
+  // GStack workflow mode
+  setGStackMode: (sessionId: string, mode: GStackMode | null) => void;
   // Ephemeral /btw side question
   askBtw: (sessionId: string, question: string) => Promise<void>;
   dismissBtw: (sessionId: string) => void;
@@ -232,6 +236,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   backgroundTasks: {},
   securedKeys: {},
   agentColorMap: {},
+  gstackMode: {},
 
   // Ephemeral /btw and remote control state
   btw: {},
@@ -434,6 +439,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         backgroundTasks: clean(state.backgroundTasks),
         securedKeys: clean(state.securedKeys),
         agentColorMap: clean(state.agentColorMap),
+        gstackMode: clean(state.gstackMode),
       };
     });
 
@@ -783,6 +789,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (hasElectronAPI) {
       window.electronAPI.claude.setPermissionMode(sessionId, mode).catch((err) => {
         console.error('[SessionStore] Failed to set permission mode on backend:', err);
+      });
+    }
+  },
+
+  setGStackMode: (sessionId, mode) => {
+    set((state) => ({
+      gstackMode: { ...state.gstackMode, [sessionId]: mode },
+    }));
+    // Persist to session
+    if (hasElectronAPI) {
+      window.electronAPI.sessions.update(sessionId, { gstackMode: mode || undefined }).catch((err: Error) => {
+        console.error('[SessionStore] Failed to persist gstackMode:', err);
       });
     }
   },

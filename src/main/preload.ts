@@ -953,6 +953,12 @@ const electronAPI = {
     updateMarketplaces: (name?: string): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_UPDATE_MARKETPLACE, name),
   },
+
+  // GStack workflow modes
+  gstack: {
+    getModes: (): Promise<Array<{ id: string; name: string; shortName: string; description: string; icon: string; color: string }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.GSTACK_GET_MODES),
+  },
 };
 
 // Expose the API to the renderer process

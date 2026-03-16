@@ -65,7 +65,10 @@ export interface Session {
   aiGeneratedName?: string; // AI-generated short name (2-3 words) for fork tabs
   isRoot?: boolean; // True for original conversation (no parent)
   forkCreatedAt?: Date; // When this conversation fork was created
+  gstackMode?: GStackMode; // Active GStack workflow mode
 }
+
+export type GStackMode = 'plan-ceo' | 'plan-eng' | 'review' | 'ship' | 'qa' | 'browse' | 'retro';
 
 export type SessionStatus = 'creating' | 'starting' | 'setup' | 'running' | 'stopping' | 'stopped' | 'error';
 

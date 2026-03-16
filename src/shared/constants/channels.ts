@@ -248,6 +248,9 @@ export const IPC_CHANNELS = {
   PLUGIN_REMOVE_MARKETPLACE: 'plugin:remove-marketplace',
   PLUGIN_UPDATE_MARKETPLACE: 'plugin:update-marketplace',
 
+  // GStack channels (workflow modes)
+  GSTACK_GET_MODES: 'gstack:get-modes',
+
   // QMD channels (semantic codebase search)
   QMD_GET_STATUS: 'qmd:get-status',
   QMD_ENSURE_INDEXED: 'qmd:ensure-indexed',

@@ -58,6 +58,7 @@ import { registerSecureKeysIPC } from './ipc/secure-keys.ipc';
 import { registerQmdHandlers } from './ipc/qmd.ipc';
 import { registerMcpHandlers } from './ipc/mcp.ipc';
 import { registerPluginHandlers } from './ipc/plugin.ipc';
+import { getGStackModes } from './services/gstack.service';
 import { IPC_CHANNELS } from '../shared/constants/channels';
 import { cdpProxyService } from './services/cdp-proxy.service';
 
@@ -424,6 +425,9 @@ function registerIPCHandlers(): void {
   registerQmdHandlers(ipcMain, () => mainWindow);
   registerMcpHandlers(ipcMain);
   registerPluginHandlers(ipcMain);
+
+  // GStack workflow modes
+  ipcMain.handle(IPC_CHANNELS.GSTACK_GET_MODES, () => getGStackModes());
 }
 
 // This method will be called when Electron has finished initialization
