@@ -433,8 +433,60 @@ function registerIPCHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.GSTACK_GET_MODES, () => getGStackModes());
 }
 
+// Migrate data from old "Grep Build" app directory to new "G-Build" on first launch
+function migrateFromGrepBuild(): void {
+  const fs = require('fs');
+  const pathModule = require('path');
+  const newDir = app.getPath('userData'); // Now points to G-Build
+  const oldDir = pathModule.join(pathModule.dirname(newDir), 'Grep Build');
+
+  // Only migrate if old dir exists and we haven't migrated yet
+  const migrationMarker = pathModule.join(newDir, '.migrated-from-grep-build');
+  if (!fs.existsSync(oldDir) || fs.existsSync(migrationMarker)) return;
+
+  console.log('[Migration] Migrating data from Grep Build →', newDir);
+  const filesToMigrate = [
+    'claudette-sessions.json',
+    'claudette-settings.json',
+    'claudette-memory.json',
+    'claudette-qmd.json',
+    'claudette-mcp-servers.json',
+    'claudette-sessions-dev.json',
+  ];
+
+  for (const file of filesToMigrate) {
+    const src = pathModule.join(oldDir, file);
+    const dst = pathModule.join(newDir, file);
+    if (fs.existsSync(src) && !fs.existsSync(dst)) {
+      try {
+        fs.copyFileSync(src, dst);
+        console.log(`[Migration] Copied ${file}`);
+      } catch (err) {
+        console.error(`[Migration] Failed to copy ${file}:`, err);
+      }
+    }
+  }
+
+  // Also copy Local Storage (contains renderer localStorage data)
+  const oldLS = pathModule.join(oldDir, 'Local Storage');
+  const newLS = pathModule.join(newDir, 'Local Storage');
+  if (fs.existsSync(oldLS) && !fs.existsSync(newLS)) {
+    try {
+      fs.cpSync(oldLS, newLS, { recursive: true });
+      console.log('[Migration] Copied Local Storage');
+    } catch (err) {
+      console.error('[Migration] Failed to copy Local Storage:', err);
+    }
+  }
+
+  // Mark migration as complete
+  fs.writeFileSync(migrationMarker, new Date().toISOString());
+  console.log('[Migration] Complete');
+}
+
 // This method will be called when Electron has finished initialization
 app.on('ready', async () => {
+  migrateFromGrepBuild();
   registerIPCHandlers();
   createWindow();
 
