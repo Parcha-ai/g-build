@@ -7,7 +7,6 @@ import PermissionDialog from '../chat/PermissionDialog';
 import QuestionDialog from '../chat/QuestionDialog';
 import CompactInputArea from './CompactInputArea';
 import type { Session } from '../../../shared/types';
-import { GSTACK_MODE_META } from '../../../shared/types';
 
 // Stable empty arrays to avoid reference changes
 const EMPTY_MESSAGES: never[] = [];
@@ -129,21 +128,10 @@ export default function CommandCenterCell({ session, forks, isFocused }: Command
       {/* Compact header — with fork tabs inline */}
       <div
         className="h-6 flex items-center px-2 bg-claude-surface/50 border-b border-claude-border cursor-pointer flex-shrink-0"
-        style={session.gstackMode && GSTACK_MODE_META[session.gstackMode]
-          ? { borderTop: `2px solid ${GSTACK_MODE_META[session.gstackMode].color}` }
-          : undefined}
         onDoubleClick={handleDoubleClickHeader}
       >
         <div className="flex items-center gap-1.5 min-w-0 flex-shrink-0">
           <div className={`w-1.5 h-1.5 flex-shrink-0 ${getStatusColor(displaySession.status)}`} style={{ borderRadius: 0 }} />
-          {session.gstackMode && GSTACK_MODE_META[session.gstackMode] && (
-            <span
-              className="text-[8px] font-bold px-0.5 rounded-sm flex-shrink-0"
-              style={{ backgroundColor: GSTACK_MODE_META[session.gstackMode].color, color: '#000' }}
-            >
-              {GSTACK_MODE_META[session.gstackMode].shortName}
-            </span>
-          )}
           <span className="text-[10px] font-bold text-claude-text truncate uppercase" style={{ letterSpacing: '0.05em' }}>
             {session.forkName || session.name}
           </span>

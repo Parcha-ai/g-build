@@ -16,8 +16,6 @@ import SessionSwitcher from './components/session/SessionSwitcher';
 import QMDPrompt from './components/qmd/QMDPrompt';
 import LunchLockModal from './components/layout/LunchLockModal';
 import { Terminal, Globe, PanelRight, Settings, PanelLeftClose, Monitor, AlertTriangle, Package, FileText, FileCode, ClipboardList, GitBranch } from 'lucide-react';
-import GStackMenu from './components/layout/GStackMenu';
-import type { GStackMode } from '../shared/types';
 
 // Check if we're running in Electron (has electronAPI) or browser preview mode
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
@@ -211,26 +209,6 @@ function ElectronApp() {
   };
   const [isInitialized, setIsInitialized] = useState(false);
 
-  // GStack workflow modes
-  const [gstackMenuOpen, setGstackMenuOpen] = useState(false);
-  const [gstackModes, setGstackModes] = useState<Array<{ id: GStackMode; name: string; shortName: string; description: string; icon: string; color: string }>>([]);
-  const { gstackMode, setGStackMode } = useSessionStore();
-
-  const activeGStackMode = activeSessionId ? (gstackMode[activeSessionId] || null) : null;
-  const activeGStackModeInfo = gstackModes.find((m) => m.id === activeGStackMode);
-
-  // Load GStack modes on mount
-  useEffect(() => {
-    window.electronAPI.gstack.getModes().then((modes) => setGstackModes(modes as typeof gstackModes)).catch((err: Error) => {
-      console.error('[App] Failed to load GStack modes:', err);
-    });
-  }, []);
-
-  const handleSelectGStackMode = (mode: GStackMode | null) => {
-    if (activeSessionId) {
-      setGStackMode(activeSessionId, mode);
-    }
-  };
 
   // Clock and lunch enforcement system
   const [showLunchModal, setShowLunchModal] = useState(false);
@@ -536,34 +514,6 @@ function ElectronApp() {
           >
             <PanelRight size={14} />
           </button>
-          {/* GStack workflow modes */}
-          <div className="relative">
-            <button
-              onClick={() => setGstackMenuOpen(!gstackMenuOpen)}
-              className={`p-1 transition-colors hover:text-claude-text flex items-center gap-0.5 ${
-                activeGStackMode ? 'text-claude-text' : 'text-claude-text-secondary'
-              }`}
-              title="GStack Workflow Modes"
-            >
-              <span className="text-xs font-bold font-mono leading-none" style={{ fontSize: '13px' }}>G</span>
-              {activeGStackModeInfo && (
-                <span
-                  className="text-[9px] font-mono font-bold px-0.5 rounded"
-                  style={{ backgroundColor: activeGStackModeInfo.color, color: '#000' }}
-                >
-                  {activeGStackModeInfo.shortName}
-                </span>
-              )}
-            </button>
-            {gstackMenuOpen && (
-              <GStackMenu
-                activeMode={activeGStackMode}
-                modes={gstackModes}
-                onSelectMode={handleSelectGStackMode}
-                onClose={() => setGstackMenuOpen(false)}
-              />
-            )}
-          </div>
           <button
             onClick={openSettings}
             className="p-1 text-claude-text-secondary hover:text-claude-text transition-colors"

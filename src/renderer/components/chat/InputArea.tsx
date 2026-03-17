@@ -9,6 +9,7 @@ import { MicrophoneButton, type VoiceModeHandle } from './MicrophoneButton';
 import { MessageQueuePanel } from './MessageQueuePanel';
 import { VoiceModeErrorBoundary } from './VoiceModeErrorBoundary';
 import SecureInput from './SecureInput';
+import { GSTACK_MODE_META, type GStackMode } from '../../../shared/types';
 
 // Permission mode config for UI - using terminal-style prompts
 const PERMISSION_MODE_CONFIG: Record<PermissionMode, { prompt: string; label: string; color: string; description: string }> = {
@@ -91,6 +92,86 @@ interface SystemInfo {
   model: string;
 }
 
+// GStack skill launcher — dropdown that sends skill prompts as messages
+function GStackLauncher({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [modes, setModes] = useState<Array<{ id: string; name: string; shortName: string; description: string; color: string }>>([]);
+  const sendMessage = useSessionStore((s) => s.sendMessage);
+  const setGStackMode = useSessionStore((s) => s.setGStackMode);
+
+  useEffect(() => {
+    window.electronAPI.gstack.getModes().then(setModes).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const handleMouseDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) onClose();
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleMouseDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onClose]);
+
+  const GROUPS = [
+    { label: 'Planning', ids: ['plan-ceo', 'plan-eng', 'design'] },
+    { label: 'Development', ids: ['review', 'ship'] },
+    { label: 'Testing', ids: ['qa', 'browse'] },
+    { label: 'Analysis', ids: ['retro'] },
+  ];
+
+  const handleSelect = async (modeId: string) => {
+    onClose();
+    // Set the mode on the session for visual indicator
+    setGStackMode(sessionId, modeId as import('../../../shared/types').GStackMode);
+    const prompt = await window.electronAPI.gstack.getPrompt(modeId);
+    if (prompt) sendMessage(sessionId, prompt);
+  };
+
+  return (
+    <div
+      ref={menuRef}
+      className="absolute bottom-full right-0 mb-1 w-64 bg-claude-surface border border-claude-border shadow-xl z-50 overflow-hidden"
+      style={{ borderRadius: 0 }}
+    >
+      <div className="px-3 py-1.5 border-b border-claude-border">
+        <span className="text-[10px] font-semibold text-claude-text-secondary uppercase tracking-wide">GStack Skills</span>
+      </div>
+      <div className="py-0.5 max-h-[300px] overflow-y-auto">
+        {GROUPS.map((group, gi) => (
+          <div key={group.label}>
+            {gi > 0 && <div className="mx-2 my-0.5 border-t border-claude-border" />}
+            {group.ids.map((id) => {
+              const mode = modes.find((m) => m.id === id);
+              if (!mode) return null;
+              return (
+                <button
+                  key={id}
+                  onClick={() => handleSelect(id)}
+                  className="w-full px-3 py-1 flex items-center gap-2 hover:bg-white/5 transition-colors text-left"
+                >
+                  <span
+                    className="text-[9px] font-bold font-mono px-1 rounded-sm flex-shrink-0"
+                    style={{ backgroundColor: `${mode.color}25`, color: mode.color }}
+                  >
+                    {mode.shortName}
+                  </span>
+                  <span className="text-xs text-claude-text truncate">{mode.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 interface InputAreaProps {
   sessionId: string;
   disabled?: boolean;
@@ -121,6 +202,9 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
   const [escapeTimeout, setEscapeTimeout] = useState<NodeJS.Timeout | null>(null);
   const [showEscapeWarning, setShowEscapeWarning] = useState(false);
 
+  // GStack skill launcher
+  const [showGStack, setShowGStack] = useState(false);
+
   // Message history state
   const [messageHistory, setMessageHistory] = useState<string[]>([]);
   const [showHistory, setShowHistory] = useState(false);
@@ -140,6 +224,7 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
   const isStreamingState = useSessionStore(useCallback((s) => s.isStreaming[sessionId] || false, [sessionId]));
   const currentMode = useSessionStore(useCallback((s) => s.permissionMode[sessionId] || 'acceptEdits', [sessionId]));
   const currentThinkingMode = useSessionStore(useCallback((s) => s.thinkingMode[sessionId] || 'thinking', [sessionId]));
+  const activeGStackMode = useSessionStore(useCallback((s) => s.gstackMode[sessionId] || null, [sessionId]));
   const queuedMessages = useSessionStore(useCallback((s) => s.messageQueue[sessionId] || EMPTY_QUEUE, [sessionId]));
   const currentModel = useSessionStore(useCallback((s) => s.selectedModel[sessionId] || 'claude-opus-4-5-20251101', [sessionId]));
   const availableModels = useSessionStore((s) => s.availableModels || EMPTY_MODELS);
@@ -1249,6 +1334,34 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
 
         {/* Compact attachment buttons */}
         <div className="flex items-center gap-0.5">
+          {/* GStack skill launcher */}
+          <div className="relative">
+            <button
+              onClick={() => setShowGStack(!showGStack)}
+              disabled={disabled}
+              className={`p-1 transition-colors hover:bg-claude-bg disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-0.5 ${
+                activeGStackMode ? 'text-claude-text' : showGStack ? 'text-claude-text' : 'text-claude-text-secondary hover:text-claude-accent'
+              }`}
+              style={{ borderRadius: 0 }}
+              title="GStack Skills"
+            >
+              <span className="text-xs font-bold font-mono leading-none" style={{ fontSize: '13px' }}>G</span>
+              {activeGStackMode && GSTACK_MODE_META[activeGStackMode] && (
+                <span
+                  className="text-[8px] font-bold font-mono px-0.5 rounded-sm"
+                  style={{ backgroundColor: GSTACK_MODE_META[activeGStackMode].color, color: '#000' }}
+                >
+                  {GSTACK_MODE_META[activeGStackMode].shortName}
+                </span>
+              )}
+            </button>
+            {showGStack && (
+              <GStackLauncher
+                sessionId={sessionId}
+                onClose={() => setShowGStack(false)}
+              />
+            )}
+          </div>
           <button
             onClick={handleAtButtonClick}
             disabled={disabled || isSending}

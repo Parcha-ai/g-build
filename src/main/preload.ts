@@ -965,10 +965,12 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_UPDATE_MARKETPLACE, name),
   },
 
-  // GStack workflow modes
+  // GStack workflow skills
   gstack: {
     getModes: (): Promise<Array<{ id: string; name: string; shortName: string; description: string; icon: string; color: string }>> =>
       ipcRenderer.invoke(IPC_CHANNELS.GSTACK_GET_MODES),
+    getPrompt: (mode: string): Promise<string | null> =>
+      ipcRenderer.invoke(IPC_CHANNELS.GSTACK_GET_PROMPT, mode),
   },
 };
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { Crown, Cpu, Shield, Rocket, TestTube, Eye, BarChart3, X, Check, type LucideIcon } from 'lucide-react';
+import { Crown, Cpu, Shield, Rocket, TestTube, Eye, BarChart3, type LucideIcon } from 'lucide-react';
 import type { GStackMode } from '../../../shared/types';
 
 // Icon mapping for each mode
@@ -29,7 +29,7 @@ interface GStackMenuProps {
   onClose: () => void;
 }
 
-// Group modes by phase
+// Group skills by phase
 const PHASE_GROUPS = [
   { label: 'Planning', modes: ['plan-ceo', 'plan-eng'] },
   { label: 'Development', modes: ['review', 'ship'] },
@@ -37,7 +37,7 @@ const PHASE_GROUPS = [
   { label: 'Analysis', modes: ['retro'] },
 ];
 
-export default function GStackMenu({ activeMode, modes, onSelectMode, onClose }: GStackMenuProps) {
+export default function GStackMenu({ modes, onSelectMode, onClose }: GStackMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Close on click outside
@@ -70,13 +70,13 @@ export default function GStackMenu({ activeMode, modes, onSelectMode, onClose }:
       className="absolute top-full right-0 mt-1 w-72 bg-claude-surface border border-claude-border rounded-lg shadow-xl z-50 overflow-hidden"
     >
       {/* Header */}
-      <div className="px-3 py-2 border-b border-claude-border flex items-center justify-between">
+      <div className="px-3 py-2 border-b border-claude-border">
         <span className="text-xs font-semibold text-claude-text-secondary uppercase tracking-wide">
-          GStack Workflow Modes
+          GStack Skills
         </span>
       </div>
 
-      {/* Mode groups */}
+      {/* Skill groups */}
       <div className="py-1 max-h-[400px] overflow-y-auto">
         {PHASE_GROUPS.map((group, groupIdx) => (
           <div key={group.label}>
@@ -89,20 +89,16 @@ export default function GStackMenu({ activeMode, modes, onSelectMode, onClose }:
             {group.modes.map((modeId) => {
               const mode = getModeById(modeId);
               if (!mode) return null;
-              const isActive = activeMode === mode.id;
               const IconComponent = ICON_MAP[mode.icon];
 
               return (
                 <button
                   key={mode.id}
                   onClick={() => {
-                    onSelectMode(isActive ? null : mode.id);
+                    onSelectMode(mode.id);
                     onClose();
                   }}
-                  className={`w-full px-3 py-1.5 flex items-center gap-2.5 hover:bg-white/5 transition-colors text-left ${
-                    isActive ? 'bg-white/5' : ''
-                  }`}
-                  style={isActive ? { borderLeft: `2px solid ${mode.color}`, paddingLeft: '10px' } : {}}
+                  className="w-full px-3 py-1.5 flex items-center gap-2.5 hover:bg-white/5 transition-colors text-left"
                 >
                   {/* Icon */}
                   <div
@@ -118,34 +114,18 @@ export default function GStackMenu({ activeMode, modes, onSelectMode, onClose }:
                     <div className="text-[10px] text-claude-text-secondary truncate">{mode.description}</div>
                   </div>
 
-                  {/* Active checkmark */}
-                  {isActive && (
-                    <Check size={14} className="flex-shrink-0 text-claude-accent" />
-                  )}
+                  {/* Shortname badge */}
+                  <span
+                    className="text-[9px] font-bold font-mono px-1 py-0.5 rounded-sm flex-shrink-0"
+                    style={{ backgroundColor: `${mode.color}20`, color: mode.color }}
+                  >
+                    {mode.shortName}
+                  </span>
                 </button>
               );
             })}
           </div>
         ))}
-
-        {/* Clear mode option */}
-        {activeMode && (
-          <>
-            <div className="mx-3 my-1 border-t border-claude-border" />
-            <button
-              onClick={() => {
-                onSelectMode(null);
-                onClose();
-              }}
-              className="w-full px-3 py-1.5 flex items-center gap-2.5 hover:bg-white/5 transition-colors text-left"
-            >
-              <div className="flex-shrink-0 w-5 h-5 flex items-center justify-center rounded text-claude-text-secondary">
-                <X size={14} />
-              </div>
-              <div className="text-sm text-claude-text-secondary">Clear Mode</div>
-            </button>
-          </>
-        )}
       </div>
     </div>
   );

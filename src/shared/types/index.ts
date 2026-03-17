@@ -68,17 +68,17 @@ export interface Session {
   gstackMode?: GStackMode; // Active GStack workflow mode
 }
 
-export type GStackMode = 'plan-ceo' | 'plan-eng' | 'review' | 'ship' | 'qa' | 'browse' | 'retro';
+export type GStackMode = 'plan-ceo' | 'plan-eng' | 'design' | 'review' | 'ship' | 'qa' | 'browse' | 'retro';
 
-// GStack mode colors + short names for UI rendering (shared between renderer components)
-export const GSTACK_MODE_META: Record<GStackMode, { color: string; shortName: string; icon: string }> = {
-  'plan-ceo': { color: '#f59e0b', shortName: 'CEO', icon: 'Crown' },
-  'plan-eng': { color: '#3b82f6', shortName: 'ENG', icon: 'Cpu' },
-  'review':   { color: '#ef4444', shortName: 'REV', icon: 'Shield' },
-  'ship':     { color: '#22c55e', shortName: 'SHIP', icon: 'Rocket' },
-  'qa':       { color: '#a855f7', shortName: 'QA', icon: 'TestTube' },
-  'browse':   { color: '#06b6d4', shortName: 'BRW', icon: 'Eye' },
-  'retro':    { color: '#f97316', shortName: 'RET', icon: 'BarChart3' },
+export const GSTACK_MODE_META: Record<GStackMode, { color: string; shortName: string }> = {
+  'plan-ceo': { color: '#f59e0b', shortName: 'CEO' },
+  'plan-eng': { color: '#3b82f6', shortName: 'ENG' },
+  'design':   { color: '#ec4899', shortName: 'DSN' },
+  'review':   { color: '#ef4444', shortName: 'REV' },
+  'ship':     { color: '#22c55e', shortName: 'SHIP' },
+  'qa':       { color: '#a855f7', shortName: 'QA' },
+  'browse':   { color: '#06b6d4', shortName: 'BRW' },
+  'retro':    { color: '#f97316', shortName: 'RET' },
 };
 
 export type SessionStatus = 'creating' | 'starting' | 'setup' | 'running' | 'stopping' | 'stopped' | 'error';
