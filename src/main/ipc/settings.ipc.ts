@@ -1,6 +1,9 @@
-import { IpcMain, app, shell, dialog } from 'electron';
+import { IpcMain, app, shell, dialog, BrowserWindow } from 'electron';
 import { IPC_CHANNELS } from '../../shared/constants/channels';
 import { SettingsService } from '../services/settings.service';
+
+// Track the detached browser window
+let browserWindow: BrowserWindow | null = null;
 
 const settingsService = new SettingsService();
 
@@ -52,6 +55,58 @@ export function registerSettingsHandlers(ipcMain: IpcMain): void {
 
   ipcMain.handle(IPC_CHANNELS.APP_SHOW_DIALOG, async (_, options) => {
     return dialog.showOpenDialog(options);
+  });
+
+  // Browser pop-out window for Command Center mode
+  ipcMain.handle(IPC_CHANNELS.APP_OPEN_BROWSER_WINDOW, async (event) => {
+    if (browserWindow && !browserWindow.isDestroyed()) {
+      browserWindow.focus();
+      return;
+    }
+
+    const parentWindow = BrowserWindow.fromWebContents(event.sender);
+
+    // Get preload path from parent window's webPreferences
+    const parentPreload = (parentWindow?.webContents as any)?.session
+      ? undefined : undefined;
+    // Use the same preload as main window by reading from its webPreferences
+    const mainPreloadPath = (parentWindow as any)?.__preloadPath;
+
+    browserWindow = new BrowserWindow({
+      width: 800,
+      height: 600,
+      minWidth: 400,
+      minHeight: 300,
+      title: 'Browser Preview',
+      titleBarStyle: 'hiddenInset',
+      trafficLightPosition: { x: 15, y: 10 },
+      backgroundColor: '#1a1a1a',
+      webPreferences: {
+        preload: mainPreloadPath,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: false,
+        webviewTag: true,
+      },
+    });
+
+    // Load the same renderer URL with a query param for browser-only mode
+    const mainUrl = event.sender.getURL().split('#')[0].split('?')[0];
+    browserWindow.loadURL(`${mainUrl}?mode=browser`);
+
+    browserWindow.on('closed', () => {
+      browserWindow = null;
+      if (parentWindow && !parentWindow.isDestroyed()) {
+        parentWindow.webContents.send('browser-window-closed');
+      }
+    });
+  });
+
+  ipcMain.handle(IPC_CHANNELS.APP_CLOSE_BROWSER_WINDOW, async () => {
+    if (browserWindow && !browserWindow.isDestroyed()) {
+      browserWindow.close();
+      browserWindow = null;
+    }
   });
 
   // Docker status

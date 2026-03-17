@@ -579,7 +579,7 @@ export default function NewSessionDialog({ isOpen, onClose, initialPath, initial
                 {/* Teleport Session UI */}
                 <div className="space-y-4">
                   <p className="text-xs text-claude-text-secondary" style={{ letterSpacing: '0.05em' }}>
-                    Enter a session ID from claude.ai/code to import that conversation into Grep.
+                    Enter a session ID from claude.ai/code to import that conversation into G-Build.
                   </p>
 
                   <div>

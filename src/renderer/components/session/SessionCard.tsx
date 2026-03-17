@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Square, Trash2, GitBranch, GitFork, Server, Upload, Pencil, Star, Download, RefreshCw } from 'lucide-react';
+import { Play, Square, Trash2, GitBranch, GitFork, Server, Upload, Pencil, Star, Download, RefreshCw, LayoutGrid } from 'lucide-react';
 import { useSessionStore } from '../../stores/session.store';
 import type { Session } from '../../../shared/types';
+import { GSTACK_MODE_META } from '../../../shared/types';
 
 /**
  * Truncate a file path to show at most the last N segments.
@@ -40,7 +41,17 @@ interface SessionCardProps {
 }
 
 export default function SessionCard({ session, isActive, onClick, isFork = false, onTeleportRequest, onDownload }: SessionCardProps) {
-  const { startSession, stopSession, deleteSession, updateSession } = useSessionStore();
+  const { sessions, startSession, stopSession, deleteSession, updateSession, addToCommandCenter, removeFromCommandCenter, commandCenterSessionIds } = useSessionStore();
+  // Check if this session (or its root) is in the command center
+  const isInCommandCenter = (() => {
+    let rootId = session.id;
+    let s = sessions.find(x => x.id === rootId);
+    while (s?.parentSessionId) {
+      rootId = s.parentSessionId;
+      s = sessions.find(x => x.id === rootId);
+    }
+    return commandCenterSessionIds.includes(rootId);
+  })();
   const [isRenaming, setIsRenaming] = useState(false);
   const [editedName, setEditedName] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -115,6 +126,15 @@ export default function SessionCard({ session, isActive, onClick, isFork = false
       await startSession(session.id);
     } catch (error) {
       console.error('Failed to reconnect:', error);
+    }
+  };
+
+  const handleCommandCenterToggle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isInCommandCenter) {
+      removeFromCommandCenter(session.id);
+    } else {
+      addToCommandCenter(session.id);
     }
   };
 
@@ -213,13 +233,20 @@ export default function SessionCard({ session, isActive, onClick, isFork = false
   return (
     <div
       onClick={onClick}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData('text/session-id', session.id);
+        e.dataTransfer.effectAllowed = 'copy';
+      }}
       className={`relative px-3 py-2 cursor-pointer transition-colors group font-mono ${
         isActive
           ? 'bg-claude-accent/20'
           : 'hover:bg-claude-bg'
       }`}
       style={{
-        borderLeft: isActive ? '2px solid var(--claude-accent)' : '2px solid transparent',
+        borderLeft: session.gstackMode && GSTACK_MODE_META[session.gstackMode]
+          ? `2px solid ${GSTACK_MODE_META[session.gstackMode].color}`
+          : isActive ? '2px solid var(--claude-accent)' : '2px solid transparent',
       }}
     >
       <div className="flex items-start gap-2">
@@ -267,6 +294,14 @@ export default function SessionCard({ session, isActive, onClick, isFork = false
           )}
           <div className="flex items-center gap-1 mt-0.5 text-claude-text-secondary">
             {getSessionIcon()}
+            {session.gstackMode && GSTACK_MODE_META[session.gstackMode] && (
+              <span
+                className="text-[8px] font-bold px-0.5 rounded-sm flex-shrink-0"
+                style={{ backgroundColor: GSTACK_MODE_META[session.gstackMode].color, color: '#000' }}
+              >
+                {GSTACK_MODE_META[session.gstackMode].shortName}
+              </span>
+            )}
             <span className="text-[10px] truncate">
               {session.branch}
             </span>
@@ -366,6 +401,18 @@ export default function SessionCard({ session, isActive, onClick, isFork = false
             <Download size={12} />
           </button>
         )}
+        <button
+          onClick={handleCommandCenterToggle}
+          className={`p-1 transition-colors ${
+            isInCommandCenter
+              ? 'text-claude-accent hover:bg-claude-accent/20'
+              : 'text-claude-text-secondary hover:bg-claude-text-secondary/20'
+          }`}
+          style={{ borderRadius: 0 }}
+          title={isInCommandCenter ? 'Remove from Command Center' : 'Add to Command Center'}
+        >
+          <LayoutGrid size={12} />
+        </button>
         <button
           onClick={handleDelete}
           className="p-1 transition-colors hover:bg-red-500/20 text-red-400"

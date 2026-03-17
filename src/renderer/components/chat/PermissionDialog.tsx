@@ -112,7 +112,7 @@ export default function PermissionDialog({ request, onApprove, onDeny, onGrepIt 
           title="Switch to autonomous mode - approve all permissions automatically"
         >
           <Zap size={14} />
-          GREP IT!
+          JUST BUILD IT
         </button>
       </div>
       {pattern && (

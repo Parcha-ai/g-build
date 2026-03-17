@@ -361,9 +361,9 @@ export class ClaudeService {
    */
   private buildSystemPromptAppend(session: Session, memoriesPrompt?: string): string {
     let append = `
-## Grep Build Agent
+## G-Build Agent
 
-You are the Grep Build agent, an AI development assistant running inside the Grep desktop application. You have access to a browser preview panel via MCP tools (claudette-browser) that allows you to test changes you make to web applications in real-time.
+You are the G-Build agent, an AI development assistant running inside the G-Build desktop application. You have access to a browser preview panel via MCP tools (claudette-browser) that allows you to test changes you make to web applications in real-time.
 
 ### Browser Testing Capabilities
 
@@ -425,6 +425,15 @@ ${cleanOutput}
 \`\`\`
 `;
         }
+      }
+    }
+
+    // Add GStack mode prompt if active
+    if (session.gstackMode) {
+      const { getGStackModePrompt } = require('./gstack.service');
+      const modePrompt = getGStackModePrompt(session.gstackMode);
+      if (modePrompt) {
+        append += '\n\n' + modePrompt;
       }
     }
 
@@ -1873,7 +1882,7 @@ ${memoriesPrompt}
     }
 
     const session = this.sessionStore.get(`sessions.${sessionId}`) as Session | undefined;
-    const sessionName = session?.name || 'Grep Build';
+    const sessionName = session?.name || 'G-Build';
 
     // For SSH sessions, run remote-control on the remote machine via SSH
     if (session?.sshConfig) {
@@ -1884,12 +1893,31 @@ ${memoriesPrompt}
     const cwd = session?.repoPath || process.cwd();
     const { spawn } = require('child_process') as typeof import('child_process');
 
-    const child = spawn('claude', ['remote-control', '--name', sessionName], {
-      cwd,
-      shell: true,
-      env: { ...process.env, CLAUDECODE: '' }, // Unset to avoid nested session error
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    // Resolve the SDK session ID so remote control resumes the current conversation
+    const rawSdkSessionId = this.sessionStore.get(`sdkSessionMappings.${sessionId}`) as string | undefined
+      || this.sessionStore.get(`sessions.${sessionId}.sdkSessionId`) as string | undefined;
+    const sdkSessionId = rawSdkSessionId === 'new' ? undefined : rawSdkSessionId;
+
+    let child;
+    if (sdkSessionId) {
+      // Resume the existing session with remote control enabled
+      console.log('[Claude Service] Starting remote control with --resume for SDK session:', sdkSessionId);
+      child = spawn('claude', ['--resume', sdkSessionId, '--remote-control'], {
+        cwd,
+        shell: true,
+        env: { ...process.env, CLAUDECODE: '' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } else {
+      // No SDK session yet — fall back to standalone remote-control
+      console.log('[Claude Service] No SDK session ID found, starting standalone remote-control');
+      child = spawn('claude', ['remote-control', '--name', sessionName], {
+        cwd,
+        shell: true,
+        env: { ...process.env, CLAUDECODE: '' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    }
 
     this.rcProcesses.set(sessionId, child);
 
@@ -1908,9 +1936,11 @@ ${memoriesPrompt}
       outputBuffer += text;
       console.log('[Claude Service] RC stdout:', text.replace(/\x1b\[[^m]*m/g, '').trim());
 
-      // Look for the URL in the output
+      // Look for the URL in the output (strip ANSI escape sequences first)
       if (!urlEmitted) {
-        const urlMatch = outputBuffer.match(/https:\/\/claude\.ai\/code\/[^\s]+/);
+        const cleanBuffer = outputBuffer.replace(/\x1b\]8;;[^\x07\x1b]*(\x07|\x1b\\)/g, '').replace(/\x1b\[[^m]*m/g, '');
+        const urlMatch = cleanBuffer.match(/https:\/\/claude\.ai\/code\?bridge=[^\s]+/)
+          || cleanBuffer.match(/https:\/\/claude\.ai\/code\/[^\s]+/);
         if (urlMatch) {
           urlEmitted = true;
           const url = urlMatch[0];
@@ -1947,7 +1977,20 @@ ${memoriesPrompt}
     try {
       const client = await sshService['getConnection'](sessionId, sshConfig);
       const claudePaths = `/home/${sshConfig.username}/.local/bin:/home/${sshConfig.username}/bin:/usr/local/bin:/usr/bin`;
-      const command = `export PATH="${claudePaths}:$PATH" && cd "${sshConfig.remoteWorkdir}" && echo y | claude remote-control --name "${sessionName}"`;
+
+      // Resolve the SDK session ID so remote control resumes the current conversation
+      const rawSdkSessionId = this.sessionStore.get(`sdkSessionMappings.${sessionId}`) as string | undefined
+        || this.sessionStore.get(`sessions.${sessionId}.sdkSessionId`) as string | undefined;
+      const sdkSessionId = rawSdkSessionId === 'new' ? undefined : rawSdkSessionId;
+
+      let command: string;
+      if (sdkSessionId) {
+        console.log('[Claude Service] SSH RC: resuming SDK session:', sdkSessionId);
+        command = `export PATH="${claudePaths}:$PATH" && cd "${sshConfig.remoteWorkdir}" && echo y | claude --resume "${sdkSessionId}" --remote-control`;
+      } else {
+        console.log('[Claude Service] SSH RC: no SDK session, starting standalone remote-control');
+        command = `export PATH="${claudePaths}:$PATH" && cd "${sshConfig.remoteWorkdir}" && echo y | claude remote-control --name "${sessionName}"`;
+      }
 
       console.log('[Claude Service] Starting remote control on SSH:', command);
 
@@ -1977,7 +2020,9 @@ ${memoriesPrompt}
           if (clean) console.log('[Claude Service] SSH RC stdout:', clean);
 
           if (!urlEmitted) {
-            const urlMatch = outputBuffer.match(/https:\/\/claude\.ai\/code\/[^\s]+/);
+            const cleanBuffer = outputBuffer.replace(/\x1b\]8;;[^\x07\x1b]*(\x07|\x1b\\)/g, '').replace(/\x1b\[[^m]*m/g, '');
+            const urlMatch = cleanBuffer.match(/https:\/\/claude\.ai\/code\?bridge=[^\s]+/)
+              || cleanBuffer.match(/https:\/\/claude\.ai\/code\/[^\s]+/);
             if (urlMatch) {
               urlEmitted = true;
               console.log('[Claude Service] SSH Remote control URL detected:', urlMatch[0]);
@@ -2642,15 +2687,11 @@ Begin by creating the task structure now.
           includePartialMessages: true,
           // Use computed model (respects UI selection → session saved model → Foundry → default)
           model: selectedModel,
-          // CRITICAL: Always send context-1m beta header for 1M context window
-          // This is essential to avoid hitting the 200K limit too quickly
-          // Note: When Computer Use is enabled, the SDK also adds computer-use beta automatically,
-          // which may cause a warning from Foundry but the context-1m header still works
-          betas: ['context-1m-2025-08-07'],
+          // Note: context-1m beta no longer needed — 1M context is now standard
           ...(maxThinkingTokens ? { maxThinkingTokens } : {}),
           // Ultra Plan Mode: Add hooks if enabled
           ...(hooks ? { hooks } : {}),
-          // Use Claude Code's system prompt preset with Grep Build agent context
+          // Use Claude Code's system prompt preset with G-Build agent context
           systemPrompt: {
             type: 'preset',
             preset: 'claude_code',
@@ -3425,7 +3466,7 @@ Begin by creating the task structure now.
               yield { type: 'thinking_delta', content: finalFlushed.thinking };
             }
 
-            // Track token usage for logging (proactive compaction handled by always sending context-1m beta)
+            // Track token usage for logging
             // Extract usage from successful result message
             const successResult = resultMsg as SDKMessage & { usage?: { input_tokens?: number }; model?: string };
             if (successResult.usage?.input_tokens) {
@@ -3514,6 +3555,7 @@ Begin by creating the task structure now.
       yield { type: 'message_complete', message };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('[Claude SDK] streamMessage error caught:', errorMessage);
 
       // Check if this is the thinking blocks corruption error
       if (errorMessage.includes('thinking or redacted_thinking blocks') ||
@@ -3538,7 +3580,8 @@ Begin by creating the task structure now.
             error: '⚠️ Session had corrupted thinking data. Starting fresh session - please try your message again.'
           };
         }
-      } else if (errorMessage.match(/auth|unauthorized|api.?key|invalid.*key|not authenticated|login required/i)) {
+      } else if (errorMessage.match(/unauthorized|api.?key.*invalid|invalid.*api.?key|not authenticated|login required|authentication_error/i)) {
+        console.error('[Claude SDK] Auth error caught:', errorMessage);
         yield {
           type: 'error',
           error: 'Authentication failed. Either set your Anthropic API key in Settings → API Keys, or run `claude login` in your terminal to authenticate via OAuth.'

@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { ChevronRight, ChevronDown, Folder, Plus, Zap, Loader2, Search, GitFork, Server, Star } from 'lucide-react';
 import { useSessionStore } from '../../stores/session.store';
 import SessionCard from './SessionCard';
 import NewSessionDialog from './NewSessionDialog';
 import TeleportDialog from './TeleportDialog';
 import DownloadSessionDialog from './DownloadSessionDialog';
+import { useUIStore } from '../../stores/ui.store';
 import type { Session } from '../../../shared/types';
 
 interface ProjectGroup {
@@ -18,7 +19,16 @@ interface ProjectGroup {
 }
 
 export default function SessionList() {
-  const { sessions, activeSessionId, setActiveSession, isLoadingSessions, loadSessions, startSession } = useSessionStore();
+  const { sessions, activeSessionId, setActiveSession: rawSetActiveSession, isLoadingSessions, loadSessions, startSession } = useSessionStore();
+
+  // When clicking a session in the sidebar, deactivate Command Center
+  const setActiveSession = useCallback((sessionId: string) => {
+    if (useUIStore.getState().isCommandCenterActive) {
+      useUIStore.getState().toggleCommandCenter();
+    }
+    rawSetActiveSession(sessionId);
+  }, [rawSetActiveSession]);
+
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set());
   const [newSessionDialogOpen, setNewSessionDialogOpen] = useState(false);
   const [newSessionInitialPath, setNewSessionInitialPath] = useState<string>('');

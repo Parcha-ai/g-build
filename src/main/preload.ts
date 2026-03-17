@@ -383,6 +383,17 @@ const electronAPI = {
         ipcRenderer.removeListener(IPC_CHANNELS.APP_CMD_R_PRESSED, handler);
       };
     },
+    openBrowserWindow: (): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.APP_OPEN_BROWSER_WINDOW),
+    closeBrowserWindow: (): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.APP_CLOSE_BROWSER_WINDOW),
+    onBrowserWindowClosed: (callback: () => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('browser-window-closed', handler);
+      return () => {
+        ipcRenderer.removeListener('browser-window-closed', handler);
+      };
+    },
   },
 
   // Docker
@@ -952,6 +963,12 @@ const electronAPI = {
 
     updateMarketplaces: (name?: string): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_UPDATE_MARKETPLACE, name),
+  },
+
+  // GStack workflow modes
+  gstack: {
+    getModes: (): Promise<Array<{ id: string; name: string; shortName: string; description: string; icon: string; color: string }>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.GSTACK_GET_MODES),
   },
 };
 

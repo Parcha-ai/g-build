@@ -211,6 +211,9 @@ export default function BrowserPreview({ session, isVisible = true }: BrowserPre
         console.log('[BrowserPreview] Registering webview for CDP:', session.id, '->', webContentsId);
         window.electronAPI.browser.registerWebview(session.id, webContentsId);
       }
+
+      // Ensure webview can receive keyboard input
+      webview.focus();
     };
 
     webview.addEventListener('dom-ready', handleDomReady);
@@ -1530,14 +1533,20 @@ ${data.textContent ? `**Text Content:** "${data.textContent.slice(0, 100)}${data
       >
         {/* Live webview — always visible. Stagehand controls this same webview via CDP,
             so the user sees automation happening in real time. */}
-        <webview
-          key={session.id}
-          ref={webviewRef}
-          src={initialUrl.current}
+        {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
+        <div
           className="absolute inset-0 w-full h-full"
-          partition={`persist:browser-${session.id}`}
-          webpreferences="contextIsolation=no"
-        />
+          onClick={() => webviewRef.current?.focus()}
+        >
+          <webview
+            key={session.id}
+            ref={webviewRef}
+            src={initialUrl.current}
+            className="w-full h-full"
+            partition={`persist:browser-${session.id}`}
+            webpreferences="contextIsolation=no"
+          />
+        </div>
 
         {/* Automation indicator overlay */}
         {isAutomationActive && (

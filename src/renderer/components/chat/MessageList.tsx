@@ -341,7 +341,7 @@ export default function MessageList({
               style={{ animation: 'pulse-square 1.2s ease-in-out infinite 0.8s' }}
             />
           </div>
-          <span className="text-sm">Grep is thinking...</span>
+          <span className="text-sm">G-Build is thinking...</span>
         </div>
       )}
     </div>

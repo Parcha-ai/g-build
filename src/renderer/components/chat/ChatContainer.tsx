@@ -317,28 +317,9 @@ export default function ChatContainer({ session }: ChatContainerProps) {
     return tasks;
   }, [session.id, streamingToolCalls, sessionMessages]);
 
-  useEffect(() => {
-    const unsubscribe = useSessionStore.getState().subscribeToClaude();
-    return unsubscribe;
-  }, []);
-
-  // Subscribe to background task updates
-  useEffect(() => {
-    const unsubscribe = useSessionStore.getState().subscribeToBackgroundTasks();
-    return unsubscribe;
-  }, []);
-
-  // Subscribe to /btw responses
-  useEffect(() => {
-    const unsubscribe = useSessionStore.getState().subscribeToBtw();
-    return unsubscribe;
-  }, []);
-
-  // Subscribe to remote control events
-  useEffect(() => {
-    const unsubscribe = useSessionStore.getState().subscribeToRemoteControl();
-    return unsubscribe;
-  }, []);
+  // IPC subscriptions (subscribeToClaude, subscribeToBackgroundTasks, subscribeToBtw,
+  // subscribeToRemoteControl) are now hoisted to App.tsx to avoid N-times duplication
+  // when multiple ChatContainers are mounted in Command Center mode.
 
   // Keyboard shortcut: Cmd+B to background running Bash command
   // Use refs to avoid re-registering listener on every streaming token update

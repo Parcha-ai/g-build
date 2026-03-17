@@ -124,12 +124,12 @@ export const MicrophoneButton = forwardRef<VoiceModeHandle, MicrophoneButtonProp
       // Rich initial context for when voice mode first connects
       // Include FULL conversation history so voice agent understands what's been discussed
       return `INITIAL SESSION CONTEXT:
-You are now connected as the voice assistant for Grep (an AI coding tool).
+You are now connected as the voice assistant for G-Build (an AI coding tool).
 
 PROJECT: ${projectName}
 WORKING DIRECTORY: ${session?.repoPath || 'unknown'}
 BRANCH: ${session?.branch || 'main'}
-STATUS: ${isStreaming ? 'Grep is currently working on a task' : 'Grep is idle, ready for instructions'}
+STATUS: ${isStreaming ? 'G-Build is currently working on a task' : 'G-Build is idle, ready for instructions'}
 
 FULL CONVERSATION HISTORY (${contextMessages.length} messages):
 ${messageSummary || 'No conversation yet - this is a fresh session'}
@@ -144,7 +144,7 @@ You should greet the user briefly and ask how you can help with their coding wor
     }
 
     // Standard update context
-    return `Current Grep Session Context:
+    return `Current G-Build Session Context:
 - Working directory: ${session?.repoPath || 'unknown'}
 - Branch: ${session?.branch || 'unknown'}
 - Session state: ${isStreaming ? 'Currently working on a task' : 'Idle, waiting for input'}
@@ -203,7 +203,7 @@ ${messageSummary || 'No messages yet'}`;
           onTranscriptionComplete?.(instruction);
 
           // Return a clear "in progress" response
-          return `TASK SUBMITTED. Grep is now working on: "${instruction.slice(0, 50)}...". Call get_task_status every 5-10 seconds to check progress and announce what Grep is doing.`;
+          return `TASK SUBMITTED. G-Build is now working on: "${instruction.slice(0, 50)}...". Call get_task_status every 5-10 seconds to check progress and announce what G-Build is doing.`;
         }
         return 'No instruction provided';
       }
@@ -474,7 +474,7 @@ ${messageSummary || 'No messages yet'}`;
           }
         } else {
           // Still streaming - just a progress update (no speak needed)
-          updateContext(`Grep progress: ${summary}\nStatus: Still working...`);
+          updateContext(`G-Build progress: ${summary}\nStatus: Still working...`);
         }
       } else {
         // User message - just update context
@@ -572,7 +572,7 @@ ${messageSummary || 'No messages yet'}`;
     if (hadPendingPermissionRef.current && !pendingPermission) {
       console.log('[MicrophoneButton] Permission resolved, notifying agent');
       updateContext(JSON.stringify({ type: 'permission_resolved', status: 'approved' }));
-      speak('Permission granted. Grep is continuing.');
+      speak('Permission granted. G-Build is continuing.');
       hadPendingPermissionRef.current = false;
       prevPermissionRef.current = null;
       return;
@@ -604,7 +604,7 @@ ${messageSummary || 'No messages yet'}`;
       }
 
       console.log('[MicrophoneButton] Permission request, announcing:', announcement);
-      speak(`${announcement}. Tell me that Grep needs permission to proceed.`);
+      speak(`${announcement}. Tell me that G-Build needs permission to proceed.`);
     }
   }, [hookConnected, pendingPermission, speak, updateContext]);
 

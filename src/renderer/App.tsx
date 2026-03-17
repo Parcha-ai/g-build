@@ -16,6 +16,8 @@ import SessionSwitcher from './components/session/SessionSwitcher';
 import QMDPrompt from './components/qmd/QMDPrompt';
 import LunchLockModal from './components/layout/LunchLockModal';
 import { Terminal, Globe, PanelRight, Settings, PanelLeftClose, Monitor, AlertTriangle, Package, FileText, FileCode, ClipboardList, GitBranch } from 'lucide-react';
+import GStackMenu from './components/layout/GStackMenu';
+import type { GStackMode } from '../shared/types';
 
 // Check if we're running in Electron (has electronAPI) or browser preview mode
 const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
@@ -209,6 +211,27 @@ function ElectronApp() {
   };
   const [isInitialized, setIsInitialized] = useState(false);
 
+  // GStack workflow modes
+  const [gstackMenuOpen, setGstackMenuOpen] = useState(false);
+  const [gstackModes, setGstackModes] = useState<Array<{ id: GStackMode; name: string; shortName: string; description: string; icon: string; color: string }>>([]);
+  const { gstackMode, setGStackMode } = useSessionStore();
+
+  const activeGStackMode = activeSessionId ? (gstackMode[activeSessionId] || null) : null;
+  const activeGStackModeInfo = gstackModes.find((m) => m.id === activeGStackMode);
+
+  // Load GStack modes on mount
+  useEffect(() => {
+    window.electronAPI.gstack.getModes().then((modes) => setGstackModes(modes as typeof gstackModes)).catch((err: Error) => {
+      console.error('[App] Failed to load GStack modes:', err);
+    });
+  }, []);
+
+  const handleSelectGStackMode = (mode: GStackMode | null) => {
+    if (activeSessionId) {
+      setGStackMode(activeSessionId, mode);
+    }
+  };
+
   // Clock and lunch enforcement system
   const [showLunchModal, setShowLunchModal] = useState(false);
   const [lunchReminderEnabled, setLunchReminderEnabled] = useState(false);
@@ -305,6 +328,13 @@ function ElectronApp() {
   // Global keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Cmd+Shift+G: Toggle Command Center
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'g') {
+        e.preventDefault();
+        useUIStore.getState().toggleCommandCenter();
+        return;
+      }
+
       // Cmd+Shift+F: File Content Search
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'f') {
         e.preventDefault();
@@ -377,11 +407,19 @@ function ElectronApp() {
       const unsubscribeSetup = store.subscribeToSetupProgress();
       const unsubscribeCompaction = store.subscribeToCompaction();
       const unsubscribeAutoResume = store.setupAutoResumeOnClose();
+      const unsubscribeClaude = store.subscribeToClaude();
+      const unsubscribeBgTasks = store.subscribeToBackgroundTasks();
+      const unsubscribeBtw = store.subscribeToBtw();
+      const unsubscribeRC = store.subscribeToRemoteControl();
       return () => {
         unsubscribeSession();
         unsubscribeSetup();
         unsubscribeCompaction();
         unsubscribeAutoResume();
+        unsubscribeClaude();
+        unsubscribeBgTasks();
+        unsubscribeBtw();
+        unsubscribeRC();
       };
     }
   }, [user, isDevMode]);
@@ -391,7 +429,7 @@ function ElectronApp() {
       <div className="h-screen w-screen flex items-center justify-center bg-claude-bg">
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-claude-accent border-t-transparent rounded-full animate-spin" />
-          <p className="text-claude-text-secondary">Loading Grep...</p>
+          <p className="text-claude-text-secondary">Loading G-Build...</p>
         </div>
       </div>
     );
@@ -498,6 +536,34 @@ function ElectronApp() {
           >
             <PanelRight size={14} />
           </button>
+          {/* GStack workflow modes */}
+          <div className="relative">
+            <button
+              onClick={() => setGstackMenuOpen(!gstackMenuOpen)}
+              className={`p-1 transition-colors hover:text-claude-text flex items-center gap-0.5 ${
+                activeGStackMode ? 'text-claude-text' : 'text-claude-text-secondary'
+              }`}
+              title="GStack Workflow Modes"
+            >
+              <span className="text-xs font-bold font-mono leading-none" style={{ fontSize: '13px' }}>G</span>
+              {activeGStackModeInfo && (
+                <span
+                  className="text-[9px] font-mono font-bold px-0.5 rounded"
+                  style={{ backgroundColor: activeGStackModeInfo.color, color: '#000' }}
+                >
+                  {activeGStackModeInfo.shortName}
+                </span>
+              )}
+            </button>
+            {gstackMenuOpen && (
+              <GStackMenu
+                activeMode={activeGStackMode}
+                modes={gstackModes}
+                onSelectMode={handleSelectGStackMode}
+                onClose={() => setGstackMenuOpen(false)}
+              />
+            )}
+          </div>
           <button
             onClick={openSettings}
             className="p-1 text-claude-text-secondary hover:text-claude-text transition-colors"
@@ -546,10 +612,68 @@ function ElectronApp() {
   );
 }
 
+// Browser-only mode — rendered in the pop-out browser window
+function BrowserOnlyApp() {
+  const { sessions, activeSessionId } = useSessionStore();
+  const { sessionBrowsersEnabled } = useUIStore();
+  const { commandCenterFocusedSessionId } = useUIStore();
+
+  // Determine which session's browser to show
+  const effectiveId = commandCenterFocusedSessionId || activeSessionId;
+  const session = effectiveId ? sessions.find(s => s.id === effectiveId) : sessions[0];
+
+  // Initialize auth + sessions
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const init = async () => {
+      await useAuthStore.getState().checkAuth();
+      await useSessionStore.getState().loadSessions();
+      setReady(true);
+    };
+    init();
+  }, []);
+
+  if (!ready || !session) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-claude-bg">
+        <p className="text-claude-text-secondary font-mono text-sm">Loading browser...</p>
+      </div>
+    );
+  }
+
+  // Lazy import to avoid circular deps
+  const BrowserPreview = React.lazy(() => import('./components/preview/BrowserPreview'));
+
+  return (
+    <div className="h-screen w-screen flex flex-col bg-claude-bg">
+      <div
+        className="h-8 bg-claude-surface border-b border-claude-border flex items-center px-4"
+        style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+      >
+        <span className="text-[10px] font-mono font-bold text-claude-text-secondary uppercase" style={{ letterSpacing: '0.1em' }}>
+          Browser — {session.forkName || session.name}
+        </span>
+      </div>
+      <div className="flex-1 overflow-hidden">
+        <React.Suspense fallback={<div className="flex-1 flex items-center justify-center"><p className="text-claude-text-secondary">Loading...</p></div>}>
+          <BrowserPreview session={session} isVisible={true} />
+        </React.Suspense>
+      </div>
+    </div>
+  );
+}
+
 // Root component - decides which mode to render
 export default function App() {
   if (!isElectron) {
     return <PreviewMode />;
   }
+
+  // Check for browser-only mode (pop-out window)
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('mode') === 'browser') {
+    return <BrowserOnlyApp />;
+  }
+
   return <ElectronApp />;
 }
