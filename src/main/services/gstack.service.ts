@@ -330,7 +330,7 @@ Focused on verifying that previously fixed bugs haven't returned:
 
 ### Browser Testing Tools
 
-Use Grep Build's integrated browser tools for testing:
+Use G-Build's integrated browser tools for testing:
 - **Navigate**: Use the browser panel to navigate to URLs. You can do this via the BrowserNavigate MCP tool or by asking the user.
 - **Screenshot**: Capture screenshots using the BrowserSnapshot MCP tool to verify visual state.
 - **Interact**: Use BrowserAct/BrowserClick/BrowserType MCP tools to interact with page elements.
@@ -401,7 +401,7 @@ You are now operating in Browse mode. You are a visual QA specialist with a keen
 
 ### Browser Tools Reference
 
-You have access to Grep Build's integrated browser tools via MCP. Use them extensively:
+You have access to G-Build's integrated browser tools via MCP. Use them extensively:
 
 #### Navigation
 - **BrowserNavigate**: Navigate to any URL. Use this to visit pages under test.

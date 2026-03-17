@@ -110,6 +110,8 @@ export const IPC_CHANNELS = {
   APP_GET_PATH: 'app:get-path',
   APP_SHOW_DIALOG: 'app:show-dialog',
   APP_CMD_R_PRESSED: 'app:cmd-r-pressed',
+  APP_OPEN_BROWSER_WINDOW: 'app:open-browser-window',
+  APP_CLOSE_BROWSER_WINDOW: 'app:close-browser-window',
 
   // Dev mode channels
   DEV_OPEN_LOCAL_REPO: 'dev:open-local-repo',

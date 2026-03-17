@@ -281,7 +281,7 @@ export default function StatusBar() {
         )}
 
         <div className="flex items-center gap-1.5">
-          <span style={{ letterSpacing: '0.05em' }}>GREP BUILD v{appVersion}</span>
+          <span style={{ letterSpacing: '0.05em' }}>G-BUILD v{appVersion}</span>
           {isDevMode && (
             <span className="text-amber-400 font-bold ml-1" style={{ letterSpacing: '0.05em' }}>
               [{DEV_INSTANCE_NAME}]

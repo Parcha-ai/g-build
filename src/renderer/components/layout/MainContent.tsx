@@ -11,6 +11,7 @@ import EditorPanel from '../editor/EditorPanel';
 import ExtensionsExplorer from '../extensions/ExtensionsExplorer';
 import PlanPanel from '../plan/PlanPanel';
 import SetupProgress from '../session/SetupProgress';
+import CommandCenterGrid from '../command-center/CommandCenterGrid';
 import EmptyState from './EmptyState';
 import { X, GripVertical, GripHorizontal, Smartphone, Monitor } from 'lucide-react';
 
@@ -37,6 +38,9 @@ export default function MainContent() {
     sessionBrowsersEnabled,
     enableSessionBrowser,
     disableSessionBrowser,
+    // Command Center
+    isCommandCenterActive,
+    commandCenterFocusedSessionId,
   } = useUIStore();
   const { isEditorOpen, closeEditor } = useEditorStore();
   const [isTerminalResizing, setIsTerminalResizing] = useState(false);
@@ -90,6 +94,43 @@ export default function MainContent() {
     }
     return rootId;
   }, [sessions]);
+
+  // When Command Center is deactivated, restore activeSessionId from the last focused cell
+  const { setActiveSession } = useSessionStore();
+  const prevCommandCenterActive = React.useRef(isCommandCenterActive);
+  useEffect(() => {
+    if (prevCommandCenterActive.current && !isCommandCenterActive && commandCenterFocusedSessionId) {
+      setActiveSession(commandCenterFocusedSessionId);
+    }
+    prevCommandCenterActive.current = isCommandCenterActive;
+  }, [isCommandCenterActive, commandCenterFocusedSessionId, setActiveSession]);
+
+  // In Command Center mode, browser opens as a separate Electron window
+  useEffect(() => {
+    if (isCommandCenterActive && isBrowserPanelOpen) {
+      window.electronAPI?.app.openBrowserWindow();
+    }
+  }, [isCommandCenterActive, isBrowserPanelOpen]);
+
+  // Listen for browser window being closed externally
+  useEffect(() => {
+    if (!window.electronAPI?.app.onBrowserWindowClosed) return;
+    const unsubscribe = window.electronAPI.app.onBrowserWindowClosed(() => {
+      // Don't close the browser panel state — just let the window close
+      // User can reopen with the browser button
+    });
+    return unsubscribe;
+  }, []);
+
+  // When Command Center is active and a cell is focused, auto-enable browser for it
+  useEffect(() => {
+    if (isCommandCenterActive && commandCenterFocusedSessionId && isBrowserPanelOpen) {
+      const rootId = getRootSessionId(commandCenterFocusedSessionId);
+      if (!sessionBrowsersEnabled[rootId]) {
+        enableSessionBrowser(rootId);
+      }
+    }
+  }, [isCommandCenterActive, commandCenterFocusedSessionId, isBrowserPanelOpen, getRootSessionId, sessionBrowsersEnabled, enableSessionBrowser]);
 
   // Auto-enable browser for active session's ROOT when browser panel is opened
   useEffect(() => {
@@ -258,10 +299,13 @@ export default function MainContent() {
     return <EmptyState />;
   }
 
-  const hasSidePanel = isBrowserPanelOpen || isGitPanelOpen || isEditorOpen || isExtensionsPanelOpen || isPlanPanelOpen;
+  // In Command Center mode, browser is a floating overlay — it doesn't consume side panel space
+  const hasSidePanel = isCommandCenterActive
+    ? (isGitPanelOpen || isEditorOpen || isExtensionsPanelOpen || isPlanPanelOpen)
+    : (isBrowserPanelOpen || isGitPanelOpen || isEditorOpen || isExtensionsPanelOpen || isPlanPanelOpen);
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="flex-1 flex flex-col overflow-hidden relative">
       {/* Main panel area */}
       <div className="flex-1 flex overflow-hidden">
         {/* Primary content - chat or setup progress */}
@@ -274,7 +318,9 @@ export default function MainContent() {
             flexGrow: 1,
           }}
         >
-          {isSessionSetup ? (
+          {isCommandCenterActive ? (
+            <CommandCenterGrid />
+          ) : isSessionSetup ? (
             <SetupProgress session={activeSession} progress={activeSetupProgress} />
           ) : (
             <>
@@ -362,7 +408,11 @@ export default function MainContent() {
                         {/* Render a BrowserPreview for each session with browser enabled */}
                         {/* Only the active session's browser is visible, others stay mounted but hidden */}
                         {sessionsWithBrowsers.map(session => {
-                          const activeRootId = activeSessionId ? getRootSessionId(activeSessionId) : null;
+                          // In Command Center mode, browser follows the focused cell
+                          const effectiveSessionId = isCommandCenterActive
+                            ? commandCenterFocusedSessionId
+                            : activeSessionId;
+                          const activeRootId = effectiveSessionId ? getRootSessionId(effectiveSessionId) : null;
                           const isActive = session.id === activeRootId;
                           return (
                             <div
@@ -498,6 +548,8 @@ export default function MainContent() {
           </>
         )}
       </div>
+
+      {/* In Command Center mode, browser opens as a separate window — no inline overlay */}
 
       {/* Terminal panel (visible at bottom when toggled on) */}
       {isTerminalPanelOpen && (

@@ -98,7 +98,7 @@ export default function QuickSearch() {
     const permissionModeLabels: Record<PermissionMode, string> = {
       'acceptEdits': 'Accept Edits',
       'default': 'Default',
-      'bypassPermissions': 'Grep It!',
+      'bypassPermissions': 'Just Build It',
       'plan': 'Plan Mode',
       'dontAsk': "Don't Ask",
     };

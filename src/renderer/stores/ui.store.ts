@@ -43,6 +43,10 @@ interface UIState {
   viewportMode: ViewportMode;
   mobileBrowserHeight: number; // Height of mobile browser frame, persisted
 
+  // Command Center — multi-session grid view
+  isCommandCenterActive: boolean;
+  commandCenterFocusedSessionId: string | null;
+
   // Multi-session browser support: track which sessions have browsers enabled
   sessionBrowsersEnabled: Record<string, boolean>;
   // Per-session inspector state
@@ -78,6 +82,10 @@ interface UIState {
   setPlanContent: (sessionId: string, content: string) => void;
   clearPlanContent: (sessionId: string) => void;
 
+  // Command Center methods
+  toggleCommandCenter: () => void;
+  setCommandCenterFocusedSession: (id: string | null) => void;
+
   // Multi-session browser methods
   enableSessionBrowser: (sessionId: string) => void;
   disableSessionBrowser: (sessionId: string) => void;
@@ -105,6 +113,18 @@ export const useUIStore = create<UIState>((set, get) => ({
   splitRatio: 'equal',
   viewportMode: 'desktop',
   mobileBrowserHeight: getPersistedMobileBrowserHeight(),
+
+  // Command Center state — persisted via localStorage
+  isCommandCenterActive: (() => {
+    try {
+      return localStorage.getItem('grep-command-center-active') === 'true';
+    } catch (e) { return false; }
+  })(),
+  commandCenterFocusedSessionId: (() => {
+    try {
+      return localStorage.getItem('grep-command-center-focused') || null;
+    } catch (e) { return null; }
+  })(),
 
   // Multi-session browser state
   sessionBrowsersEnabled: {},
@@ -244,6 +264,26 @@ export const useUIStore = create<UIState>((set, get) => ({
     }
     return { sessionPlanContent: newContent };
   }),
+
+  // Command Center methods
+  toggleCommandCenter: () => set((state) => {
+    const newActive = !state.isCommandCenterActive;
+    const newFocused = newActive ? state.commandCenterFocusedSessionId : null;
+    try {
+      localStorage.setItem('grep-command-center-active', String(newActive));
+      if (newFocused) localStorage.setItem('grep-command-center-focused', newFocused);
+      else localStorage.removeItem('grep-command-center-focused');
+    } catch (e) { /* ignore */ }
+    return { isCommandCenterActive: newActive, commandCenterFocusedSessionId: newFocused };
+  }),
+
+  setCommandCenterFocusedSession: (id: string | null) => {
+    try {
+      if (id) localStorage.setItem('grep-command-center-focused', id);
+      else localStorage.removeItem('grep-command-center-focused');
+    } catch (e) { /* ignore */ }
+    set({ commandCenterFocusedSessionId: id });
+  },
 
   // Multi-session browser methods
   enableSessionBrowser: (sessionId: string) => set((state) => ({

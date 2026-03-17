@@ -26,9 +26,9 @@ const PERMISSION_MODE_CONFIG: Record<PermissionMode, { prompt: string; label: st
   },
   bypassPermissions: {
     prompt: '>>>',
-    label: 'GREP IT!',
+    label: 'JUST BUILD IT',
     color: 'text-purple-400',
-    description: 'Autonomous mode with Ralph Loop',
+    description: 'Full autonomous mode',
   },
   plan: {
     prompt: '?',

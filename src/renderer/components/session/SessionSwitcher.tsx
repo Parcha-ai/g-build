@@ -1,7 +1,8 @@
 import React from 'react';
 import { useSessionStore } from '../../stores/session.store';
+import { useUIStore } from '../../stores/ui.store';
 import { useSessionSwitcher } from '../../hooks/useSessionSwitcher';
-import { GitBranch, Circle } from 'lucide-react';
+import { GitBranch, Circle, LayoutGrid } from 'lucide-react';
 
 // Generate a consistent color from session ID
 function getSessionColor(sessionId: string): string {
@@ -118,6 +119,25 @@ export default function SessionSwitcher() {
               </div>
             );
           })}
+        </div>
+
+        {/* Command Center shortcut */}
+        <div className="mt-3 flex justify-center">
+          <button
+            onClick={() => {
+              useUIStore.getState().toggleCommandCenter();
+              closeSwitcher(false);
+            }}
+            className={`flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase border transition-colors ${
+              useUIStore.getState().isCommandCenterActive
+                ? 'border-claude-accent text-claude-accent bg-claude-accent/10'
+                : 'border-claude-border text-claude-text-secondary hover:text-claude-text hover:border-claude-text-secondary'
+            }`}
+            style={{ letterSpacing: '0.1em', borderRadius: 0 }}
+          >
+            <LayoutGrid size={12} />
+            Command Center
+          </button>
         </div>
 
         {/* Keyboard hints */}

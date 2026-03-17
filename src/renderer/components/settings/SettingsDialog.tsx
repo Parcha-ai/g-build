@@ -455,7 +455,7 @@ export default function SettingsDialog() {
       {/* Ralph Loop Toggle */}
       <div className="space-y-4 pt-4 border-t border-claude-border">
         <h3 className="text-xs font-mono text-claude-text uppercase tracking-wider">
-          Grep It Mode
+          Just Build It Mode
         </h3>
 
         <div className="flex items-center justify-between">

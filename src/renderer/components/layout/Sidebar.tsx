@@ -3,11 +3,11 @@ import { useAuthStore } from '../../stores/auth.store';
 import { useUIStore } from '../../stores/ui.store';
 import SessionList from '../session/SessionList';
 import NewSessionDialog from '../session/NewSessionDialog';
-import { Plus, LogOut, GripVertical } from 'lucide-react';
+import { Plus, LogOut, GripVertical, LayoutGrid } from 'lucide-react';
 
 export default function Sidebar() {
   const { logout } = useAuthStore();
-  const { sidebarWidth, setSidebarWidth } = useUIStore();
+  const { sidebarWidth, setSidebarWidth, isCommandCenterActive, toggleCommandCenter } = useUIStore();
   const [isNewSessionOpen, setIsNewSessionOpen] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
 
@@ -48,14 +48,28 @@ export default function Sidebar() {
         >
           SESSIONS
         </h3>
-        <button
-          onClick={() => setIsNewSessionOpen(true)}
-          className="p-1 transition-colors hover:bg-claude-bg text-claude-text-secondary"
-          style={{ borderRadius: 0 }}
-          title="New Session"
-        >
-          <Plus size={14} />
-        </button>
+        <div className="flex items-center gap-0.5">
+          <button
+            onClick={toggleCommandCenter}
+            className={`p-1 transition-colors ${
+              isCommandCenterActive
+                ? 'bg-claude-accent/20 text-claude-accent'
+                : 'hover:bg-claude-bg text-claude-text-secondary'
+            }`}
+            style={{ borderRadius: 0 }}
+            title="Command Center (Cmd+Shift+G)"
+          >
+            <LayoutGrid size={14} />
+          </button>
+          <button
+            onClick={() => setIsNewSessionOpen(true)}
+            className="p-1 transition-colors hover:bg-claude-bg text-claude-text-secondary"
+            style={{ borderRadius: 0 }}
+            title="New Session"
+          >
+            <Plus size={14} />
+          </button>
+        </div>
       </div>
 
       {/* Sessions List */}

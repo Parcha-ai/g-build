@@ -117,6 +117,9 @@ interface SessionState {
   // Remote control session state
   remoteControl: Record<string, { url: string; startedAt: Date } | null>;
 
+  // Command Center — ordered list of sessions shown in the grid
+  commandCenterSessionIds: string[];
+
   // Conversation fork tracking
   activeForkGroup: string | null; // Root session ID when viewing a fork group
   visibleForkIds: Record<string, string[]>; // rootId → array of visible fork IDs
@@ -196,6 +199,11 @@ interface SessionState {
   createForkFromCurrent: (userMessage: string) => Promise<void>;
   getForkSiblings: (sessionId: string) => Session[];
   cycleForkTabs: (direction: 'next' | 'prev') => void;
+  // Command Center management
+  addToCommandCenter: (sessionId: string) => void;
+  removeFromCommandCenter: (sessionId: string) => void;
+  initCommandCenterFromStarred: () => void;
+
   // GStack workflow mode
   setGStackMode: (sessionId: string, mode: GStackMode | null) => void;
   // Ephemeral /btw side question
@@ -242,6 +250,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   btw: {},
   remoteControl: {},
 
+  // Command Center session list — persisted via localStorage
+  commandCenterSessionIds: (() => {
+    try {
+      const stored = localStorage.getItem('grep-command-center-sessions');
+      if (stored) return JSON.parse(stored);
+    } catch (e) { /* ignore */ }
+    return [];
+  })(),
+
   // Fork tracking initialization
   activeForkGroup: null,
   visibleForkIds: {},
@@ -262,9 +279,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           )
         : state.sessions;
 
-      // Restore the session's model selection from persisted session data
+      // Restore the session's model + permission mode from persisted session data
       const session = sessionId ? state.sessions.find(s => s.id === sessionId) : null;
       const restoredModel = (session?.model && sessionId) ? { [sessionId]: session.model } : {};
+      const restoredPermission = (session as any)?.permissionMode && sessionId
+        ? { [sessionId]: (session as any).permissionMode }
+        : {};
 
       return {
         activeSessionId: sessionId,
@@ -272,6 +292,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         selectedModel: {
           ...state.selectedModel,
           ...restoredModel,
+        },
+        permissionMode: {
+          ...state.permissionMode,
+          ...restoredPermission,
         },
       };
     });
@@ -785,11 +809,67 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         [sessionId]: mode,
       },
     }));
-    // Also notify backend for active queries (GREP IT! button mid-stream)
+    // Notify backend for active queries (JUST BUILD IT button mid-stream)
     if (hasElectronAPI) {
       window.electronAPI.claude.setPermissionMode(sessionId, mode).catch((err) => {
         console.error('[SessionStore] Failed to set permission mode on backend:', err);
       });
+      // Persist to session so it survives app restarts
+      window.electronAPI.sessions.update(sessionId, { permissionMode: mode } as any).catch((err: Error) => {
+        console.error('[SessionStore] Failed to persist permissionMode:', err);
+      });
+    }
+  },
+
+  // Command Center management
+  addToCommandCenter: (sessionId) => {
+    // Always resolve to root session ID so forks are grouped, not separate cells
+    const { sessions } = get();
+    let rootId = sessionId;
+    let session = sessions.find(s => s.id === rootId);
+    while (session?.parentSessionId) {
+      rootId = session.parentSessionId;
+      session = sessions.find(s => s.id === rootId);
+    }
+    set((state) => {
+      if (state.commandCenterSessionIds.includes(rootId)) return state;
+      const updated = [...state.commandCenterSessionIds, rootId];
+      try { localStorage.setItem('grep-command-center-sessions', JSON.stringify(updated)); } catch (e) { /* ignore */ }
+      return { commandCenterSessionIds: updated };
+    });
+  },
+
+  removeFromCommandCenter: (sessionId) => {
+    // Also resolve to root for consistency
+    const { sessions } = get();
+    let rootId = sessionId;
+    let session = sessions.find(s => s.id === rootId);
+    while (session?.parentSessionId) {
+      rootId = session.parentSessionId;
+      session = sessions.find(s => s.id === rootId);
+    }
+    set((state) => {
+      const updated = state.commandCenterSessionIds.filter(id => id !== rootId);
+      try { localStorage.setItem('grep-command-center-sessions', JSON.stringify(updated)); } catch (e) { /* ignore */ }
+      return { commandCenterSessionIds: updated };
+    });
+  },
+
+  initCommandCenterFromStarred: () => {
+    const state = get();
+    // Only initialise if the list is empty
+    if (state.commandCenterSessionIds.length > 0) return;
+    const starred = state.sessions
+      .filter(s => s.isStarred)
+      .sort((a, b) => {
+        const aTime = a.starredAt ? new Date(a.starredAt).getTime() : 0;
+        const bTime = b.starredAt ? new Date(b.starredAt).getTime() : 0;
+        return aTime - bTime;
+      })
+      .map(s => s.id);
+    if (starred.length > 0) {
+      set({ commandCenterSessionIds: starred });
+      try { localStorage.setItem('grep-command-center-sessions', JSON.stringify(starred)); } catch (e) { /* ignore */ }
     }
   },
 
@@ -808,7 +888,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   cyclePermissionMode: (sessionId) => {
     const modes: PermissionMode[] = ['acceptEdits', 'default', 'bypassPermissions', 'plan', 'dontAsk'];
     set((state) => {
-      const currentMode = state.permissionMode[sessionId] || 'acceptEdits';
+      const currentMode = state.permissionMode[sessionId] || 'bypassPermissions';
       const currentIndex = modes.indexOf(currentMode);
       const nextIndex = (currentIndex + 1) % modes.length;
       return {
@@ -929,7 +1009,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
 
     const { addMessage, setStreaming, permissionMode, thinkingMode, selectedModel } = state;
-    const mode = permissionMode[sessionId] || 'acceptEdits';
+    const mode = permissionMode[sessionId] || 'bypassPermissions';
     // Apply migration to handle old thinking mode values, default to 'high' (full capability)
     const thinking = migrateThinkingMode(thinkingMode[sessionId] || 'high');
     const model = selectedModel[sessionId]; // undefined = use default
@@ -1317,13 +1397,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }));
     });
 
-    // Listen for SSH connection lost events — notify user
+    // Listen for SSH connection lost events — only notify if mid-stream
     const unsubConnectionLost = window.electronAPI.ssh.onConnectionLost(async ({ sessionId, reason }) => {
       console.warn(`[SessionStore] SSH connection lost for ${sessionId}: ${reason}`);
       const currentState = get();
+      const wasStreaming = currentState.isStreaming[sessionId];
 
       // Clear streaming state immediately so UI unblocks
-      if (currentState.isStreaming[sessionId]) {
+      if (wasStreaming) {
         clearStreamingWatchdog(sessionId);
         set((state) => ({
           isStreaming: { ...state.isStreaming, [sessionId]: false },
@@ -1331,15 +1412,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           currentThinkingContent: { ...state.currentThinkingContent, [sessionId]: '' },
           streamEvents: { ...state.streamEvents, [sessionId]: [] },
         }));
-      }
 
-      // Notify the user — the next message they send will create a fresh connection
-      addMessage(sessionId, {
-        id: `conn-lost-${Date.now()}`,
-        role: 'assistant',
-        content: 'SSH connection lost. Send a new message to reconnect automatically.',
-        timestamp: new Date(),
-      });
+        // Only show a message if the connection dropped mid-conversation
+        addMessage(sessionId, {
+          id: `conn-lost-${Date.now()}`,
+          role: 'assistant',
+          content: 'SSH connection lost during response. Send your message again to reconnect.',
+          timestamp: new Date(),
+        });
+      }
+      // For idle disconnects, stay silent — reconnection is automatic on next message
     });
 
     return () => {

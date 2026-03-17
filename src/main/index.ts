@@ -145,6 +145,9 @@ const createWindow = (): void => {
     },
   });
 
+  // Store preload path on window for browser pop-out window creation
+  (mainWindow as any).__preloadPath = MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY;
+
   // Set the main window reference IMMEDIATELY after creation
   // This ensures Claude service can send permission requests at any time
   claudeService.setMainWindow(mainWindow);

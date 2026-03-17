@@ -70,6 +70,17 @@ export interface Session {
 
 export type GStackMode = 'plan-ceo' | 'plan-eng' | 'review' | 'ship' | 'qa' | 'browse' | 'retro';
 
+// GStack mode colors + short names for UI rendering (shared between renderer components)
+export const GSTACK_MODE_META: Record<GStackMode, { color: string; shortName: string; icon: string }> = {
+  'plan-ceo': { color: '#f59e0b', shortName: 'CEO', icon: 'Crown' },
+  'plan-eng': { color: '#3b82f6', shortName: 'ENG', icon: 'Cpu' },
+  'review':   { color: '#ef4444', shortName: 'REV', icon: 'Shield' },
+  'ship':     { color: '#22c55e', shortName: 'SHIP', icon: 'Rocket' },
+  'qa':       { color: '#a855f7', shortName: 'QA', icon: 'TestTube' },
+  'browse':   { color: '#06b6d4', shortName: 'BRW', icon: 'Eye' },
+  'retro':    { color: '#f97316', shortName: 'RET', icon: 'BarChart3' },
+};
+
 export type SessionStatus = 'creating' | 'starting' | 'setup' | 'running' | 'stopping' | 'stopped' | 'error';
 
 // Setup progress event for worktree initialization

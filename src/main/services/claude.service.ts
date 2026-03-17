@@ -361,9 +361,9 @@ export class ClaudeService {
    */
   private buildSystemPromptAppend(session: Session, memoriesPrompt?: string): string {
     let append = `
-## Grep Build Agent
+## G-Build Agent
 
-You are the Grep Build agent, an AI development assistant running inside the Grep desktop application. You have access to a browser preview panel via MCP tools (claudette-browser) that allows you to test changes you make to web applications in real-time.
+You are the G-Build agent, an AI development assistant running inside the G-Build desktop application. You have access to a browser preview panel via MCP tools (claudette-browser) that allows you to test changes you make to web applications in real-time.
 
 ### Browser Testing Capabilities
 
@@ -1882,7 +1882,7 @@ ${memoriesPrompt}
     }
 
     const session = this.sessionStore.get(`sessions.${sessionId}`) as Session | undefined;
-    const sessionName = session?.name || 'Grep Build';
+    const sessionName = session?.name || 'G-Build';
 
     // For SSH sessions, run remote-control on the remote machine via SSH
     if (session?.sshConfig) {
@@ -2687,15 +2687,11 @@ Begin by creating the task structure now.
           includePartialMessages: true,
           // Use computed model (respects UI selection → session saved model → Foundry → default)
           model: selectedModel,
-          // CRITICAL: Always send context-1m beta header for 1M context window
-          // This is essential to avoid hitting the 200K limit too quickly
-          // Note: When Computer Use is enabled, the SDK also adds computer-use beta automatically,
-          // which may cause a warning from Foundry but the context-1m header still works
-          betas: ['context-1m-2025-08-07'],
+          // Note: context-1m beta no longer needed — 1M context is now standard
           ...(maxThinkingTokens ? { maxThinkingTokens } : {}),
           // Ultra Plan Mode: Add hooks if enabled
           ...(hooks ? { hooks } : {}),
-          // Use Claude Code's system prompt preset with Grep Build agent context
+          // Use Claude Code's system prompt preset with G-Build agent context
           systemPrompt: {
             type: 'preset',
             preset: 'claude_code',
@@ -3470,7 +3466,7 @@ Begin by creating the task structure now.
               yield { type: 'thinking_delta', content: finalFlushed.thinking };
             }
 
-            // Track token usage for logging (proactive compaction handled by always sending context-1m beta)
+            // Track token usage for logging
             // Extract usage from successful result message
             const successResult = resultMsg as SDKMessage & { usage?: { input_tokens?: number }; model?: string };
             if (successResult.usage?.input_tokens) {
@@ -3559,6 +3555,7 @@ Begin by creating the task structure now.
       yield { type: 'message_complete', message };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error('[Claude SDK] streamMessage error caught:', errorMessage);
 
       // Check if this is the thinking blocks corruption error
       if (errorMessage.includes('thinking or redacted_thinking blocks') ||
@@ -3583,7 +3580,8 @@ Begin by creating the task structure now.
             error: '⚠️ Session had corrupted thinking data. Starting fresh session - please try your message again.'
           };
         }
-      } else if (errorMessage.match(/auth|unauthorized|api.?key|invalid.*key|not authenticated|login required/i)) {
+      } else if (errorMessage.match(/unauthorized|api.?key.*invalid|invalid.*api.?key|not authenticated|login required|authentication_error/i)) {
+        console.error('[Claude SDK] Auth error caught:', errorMessage);
         yield {
           type: 'error',
           error: 'Authentication failed. Either set your Anthropic API key in Settings → API Keys, or run `claude login` in your terminal to authenticate via OAuth.'
