@@ -98,6 +98,7 @@ interface SessionState {
   pendingPlanApproval: Record<string, PlanApprovalRequest | null>;
   setupProgress: Record<string, SetupProgressEvent | null>;
   compactionStatus: Record<string, CompactionStatus | null>;
+  contextUsage: Record<string, { inputTokens: number; contextWindowSize: number; percentage: number } | null>;
   messageQueue: Record<string, Array<{
     id: string;
     message: string;
@@ -240,6 +241,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   pendingPlanApproval: {},
   setupProgress: {},
   compactionStatus: {},
+  contextUsage: {},
   messageQueue: {},
   backgroundTasks: {},
   securedKeys: {},
@@ -1238,6 +1240,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       setSystemInfo(sessionId, systemInfo);
     });
 
+    const unsubContextUsage = window.electronAPI.claude.onContextUsage(({ sessionId, inputTokens, contextWindowSize, percentage }) => {
+      set((state) => ({
+        contextUsage: { ...state.contextUsage, [sessionId]: { inputTokens, contextWindowSize, percentage } },
+      }));
+    });
+
     const unsubEnd = window.electronAPI.claude.onStreamEnd(({ sessionId, message }) => {
       const currentState = get();
       const queueLength = (currentState.messageQueue[sessionId] || []).length;
@@ -1430,6 +1438,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       unsubToolCall();
       unsubToolResult();
       unsubSystemInfo();
+      unsubContextUsage();
       unsubEnd();
       unsubError();
       unsubPermission();

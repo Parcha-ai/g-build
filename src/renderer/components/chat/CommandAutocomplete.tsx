@@ -72,8 +72,10 @@ export default function CommandAutocomplete({
           e.preventDefault();
           setSelectedIndex(prev => (prev - 1 + filteredItems.length) % filteredItems.length);
           break;
+        case 'Tab':
         case 'Enter':
           e.preventDefault();
+          e.stopImmediatePropagation();
           if (filteredItems[selectedIndex]) {
             onSelect(filteredItems[selectedIndex]);
           }

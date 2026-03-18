@@ -66,6 +66,7 @@ export const IPC_CHANNELS = {
   CLAUDE_QUESTION_REQUEST: 'claude:question-request',
   CLAUDE_QUESTION_RESPONSE: 'claude:question-response',
   CLAUDE_COMPACTION_STATUS: 'claude:compaction-status',
+  CLAUDE_CONTEXT_USAGE: 'claude:context-usage',
   CLAUDE_COMPACTION_COMPLETE: 'claude:compaction-complete',
   CLAUDE_PLAN_CONTENT: 'claude:plan-content',
   CLAUDE_PLAN_APPROVAL_REQUEST: 'claude:plan-approval-request',

@@ -212,6 +212,12 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.CLAUDE_COMPACTION_COMPLETE, handler);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.CLAUDE_COMPACTION_COMPLETE, handler);
     },
+    // Context usage listener (token count / context window percentage)
+    onContextUsage: (callback: (data: { sessionId: string; inputTokens: number; contextWindowSize: number; percentage: number }) => void) => {
+      const handler = (_: IpcRendererEvent, data: any) => callback(data);
+      ipcRenderer.on(IPC_CHANNELS.CLAUDE_CONTEXT_USAGE, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.CLAUDE_CONTEXT_USAGE, handler);
+    },
     // Plan content listener (when plan file is written)
     onPlanContent: (callback: (data: { sessionId: string; planContent: string; planFilePath: string }) => void) => {
       const handler = (_: IpcRendererEvent, data: { sessionId: string; planContent: string; planFilePath: string }) => callback(data);

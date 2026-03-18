@@ -159,6 +159,16 @@ export function registerClaudeHandlers(ipcMain: IpcMain): void {
                 });
                 break;
 
+              case 'context_usage':
+                // Forward context usage info to renderer for progress display
+                mainWindow.webContents.send(IPC_CHANNELS.CLAUDE_CONTEXT_USAGE, {
+                  sessionId,
+                  inputTokens: (event as any).inputTokens,
+                  contextWindowSize: (event as any).contextWindowSize,
+                  percentage: (event as any).percentage,
+                });
+                break;
+
               case 'compaction_status':
                 // Forward compaction status to renderer
                 mainWindow.webContents.send(IPC_CHANNELS.CLAUDE_COMPACTION_STATUS, event.compactionStatus);

@@ -222,7 +222,8 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
 
   // Per-session data selectors — only re-render when THIS session's data changes
   const isStreamingState = useSessionStore(useCallback((s) => s.isStreaming[sessionId] || false, [sessionId]));
-  const currentMode = useSessionStore(useCallback((s) => s.permissionMode[sessionId] || 'acceptEdits', [sessionId]));
+  const currentMode = useSessionStore(useCallback((s) => s.permissionMode[sessionId] || 'bypassPermissions', [sessionId]));
+  const contextUsage = useSessionStore(useCallback((s) => s.contextUsage[sessionId] || null, [sessionId]));
   const currentThinkingMode = useSessionStore(useCallback((s) => s.thinkingMode[sessionId] || 'thinking', [sessionId]));
   const activeGStackMode = useSessionStore(useCallback((s) => s.gstackMode[sessionId] || null, [sessionId]));
   const queuedMessages = useSessionStore(useCallback((s) => s.messageQueue[sessionId] || EMPTY_QUEUE, [sessionId]));
@@ -1592,6 +1593,28 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
         )}
         {isStreamingProp && (
           <span className="text-amber-400">⌘↵ INTERRUPT</span>
+        )}
+        {/* Context usage indicator — pushed to far right */}
+        {contextUsage && (
+          <div className="ml-auto flex items-center gap-1.5" title={`${contextUsage.inputTokens.toLocaleString()} / ${contextUsage.contextWindowSize.toLocaleString()} tokens (${contextUsage.percentage}%)`}>
+            <div className="w-16 h-1.5 bg-claude-border overflow-hidden" style={{ borderRadius: 0 }}>
+              <div
+                className={`h-full transition-all ${
+                  contextUsage.percentage >= 75 ? 'bg-red-500' :
+                  contextUsage.percentage >= 50 ? 'bg-amber-500' :
+                  'bg-claude-accent'
+                }`}
+                style={{ width: `${Math.min(100, contextUsage.percentage)}%` }}
+              />
+            </div>
+            <span className={`text-[9px] tabular-nums ${
+              contextUsage.percentage >= 75 ? 'text-red-400' :
+              contextUsage.percentage >= 50 ? 'text-amber-400' :
+              'text-claude-text-secondary'
+            }`}>
+              {contextUsage.percentage}%
+            </span>
+          </div>
         )}
       </div>
       </div>

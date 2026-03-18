@@ -20,7 +20,7 @@ import { qmdService } from './qmd.service';
 import { mcpService } from './mcp.service';
 
 interface StreamEvent {
-  type: 'text_delta' | 'thinking_delta' | 'tool_use' | 'tool_result' | 'message_complete' | 'error' | 'system' | 'permission_request' | 'compaction_status' | 'compaction_complete' | 'plan_content';
+  type: 'text_delta' | 'thinking_delta' | 'tool_use' | 'tool_result' | 'message_complete' | 'error' | 'system' | 'permission_request' | 'compaction_status' | 'compaction_complete' | 'plan_content' | 'context_usage';
   content?: string;
   toolCall?: ToolCall;
   result?: unknown;
@@ -2678,7 +2678,10 @@ Begin by creating the task structure now.
           includePartialMessages: true,
           // Use computed model (respects UI selection → session saved model → Foundry → default)
           model: selectedModel,
-          // Note: context-1m beta no longer needed — 1M context is now standard
+          // 1M context is standard for Opus 4.6 / Sonnet 4.6, but older models still need the beta header
+          ...(!selectedModel.includes('opus-4-6') && !selectedModel.includes('sonnet-4-6')
+            ? { betas: ['context-1m-2025-08-07' as const] }
+            : {}),
           ...(maxThinkingTokens ? { maxThinkingTokens } : {}),
           // Ultra Plan Mode: Add hooks if enabled
           ...(hooks ? { hooks } : {}),
@@ -3457,21 +3460,23 @@ Begin by creating the task structure now.
               yield { type: 'thinking_delta', content: finalFlushed.thinking };
             }
 
-            // Track token usage for logging
-            // Extract usage from successful result message
+            // Track token usage and send to renderer
             const successResult = resultMsg as SDKMessage & { usage?: { input_tokens?: number }; model?: string };
             if (successResult.usage?.input_tokens) {
               const inputTokens = successResult.usage.input_tokens;
               const currentModel = successResult.model || selectedModel || 'claude-opus-4-6';
               const hasLargeContext = currentModel.includes('opus-4-6') || currentModel.includes('sonnet-4-6') || currentModel.includes('sonnet-4-5');
               const contextWindowSize = hasLargeContext ? 1000000 : 200000;
+              const percentage = Math.round((inputTokens / contextWindowSize) * 100);
 
-              console.log(`[Claude SDK] Conversation tokens: ${inputTokens}/${contextWindowSize} (${Math.round((inputTokens / contextWindowSize) * 100)}%)`);
+              console.log(`[Claude SDK] Conversation tokens: ${inputTokens}/${contextWindowSize} (${percentage}%)`);
 
-              // Log warning when approaching 75% of limit (but don't show to user - just for monitoring)
               if (inputTokens >= contextWindowSize * 0.75) {
-                console.warn(`[Claude SDK] ⚠️ Conversation approaching context limit: ${Math.round((inputTokens / contextWindowSize) * 100)}%`);
+                console.warn(`[Claude SDK] ⚠️ Conversation approaching context limit: ${percentage}%`);
               }
+
+              // Send context usage to renderer for display
+              yield { type: 'context_usage', inputTokens, contextWindowSize, percentage } as StreamEvent & { inputTokens: number; contextWindowSize: number; percentage: number };
             }
 
             // Mark query as complete so we exit the loop
