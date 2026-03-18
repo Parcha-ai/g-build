@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Claudette/Grep Build keyframe animations */
+@keyframes pulse-square {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+/* Custom prose overrides for dark theme */
+.prose-invert {
+  --tw-prose-body: #e4e4e4;
+  --tw-prose-headings: #e4e4e4;
+  --tw-prose-links: #8B8DFF;
+  --tw-prose-code: #8B8DFF;
+}

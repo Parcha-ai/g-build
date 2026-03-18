@@ -428,6 +428,15 @@ ${cleanOutput}
       }
     }
 
+    // Add GStack mode prompt if active (appended to system message)
+    if (session.gstackMode) {
+      const { getGStackModePrompt } = require('./gstack.service');
+      const modePrompt = getGStackModePrompt(session.gstackMode);
+      if (modePrompt) {
+        append += '\n\n' + modePrompt;
+      }
+    }
+
     // Add agent memories if available
     if (memoriesPrompt && memoriesPrompt.trim()) {
       append += `

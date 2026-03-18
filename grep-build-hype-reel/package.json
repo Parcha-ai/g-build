@@ -1,0 +1,34 @@
+{
+  "name": "grep-build-hype-reel",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "remotion studio",
+    "build": "remotion render src/index.ts HypeReel out/grep-build-hype.mp4",
+    "build:prores": "remotion render src/index.ts HypeReel out/grep-build-hype.mov --codec prores --prores-profile 4444",
+    "build:webm": "remotion render src/index.ts HypeReel out/grep-build-hype.webm --codec vp8"
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.404",
+    "@remotion/cli": "4.0.404",
+    "@remotion/google-fonts": "4.0.404",
+    "@remotion/tailwind": "4.0.404",
+    "@remotion/transitions": "4.0.404",
+    "@tailwindcss/typography": "^0.5.19",
+    "date-fns": "^4.1.0",
+    "lucide-react": "^0.577.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "remotion": "4.0.404",
+    "zustand": "^5.0.12"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "autoprefixer": "^10.4.0",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.4.0",
+    "typescript": "^5.4.0"
+  }
+}
