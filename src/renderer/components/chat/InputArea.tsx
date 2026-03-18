@@ -92,11 +92,10 @@ interface SystemInfo {
   model: string;
 }
 
-// GStack skill launcher — dropdown that sends skill prompts as messages
+// GStack mode selector — sets the active workflow mode (appended to system prompt)
 function GStackLauncher({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
   const menuRef = useRef<HTMLDivElement>(null);
   const [modes, setModes] = useState<Array<{ id: string; name: string; shortName: string; description: string; color: string }>>([]);
-  const sendMessage = useSessionStore((s) => s.sendMessage);
   const setGStackMode = useSessionStore((s) => s.setGStackMode);
 
   useEffect(() => {
@@ -125,12 +124,10 @@ function GStackLauncher({ sessionId, onClose }: { sessionId: string; onClose: ()
     { label: 'Analysis', ids: ['retro'] },
   ];
 
-  const handleSelect = async (modeId: string) => {
+  const handleSelect = (modeId: string) => {
     onClose();
-    // Set the mode on the session for visual indicator
+    // Set the mode — prompt is appended to system message by claude.service.ts
     setGStackMode(sessionId, modeId as import('../../../shared/types').GStackMode);
-    const prompt = await window.electronAPI.gstack.getPrompt(modeId);
-    if (prompt) sendMessage(sessionId, prompt);
   };
 
   return (
@@ -140,7 +137,7 @@ function GStackLauncher({ sessionId, onClose }: { sessionId: string; onClose: ()
       style={{ borderRadius: 0 }}
     >
       <div className="px-3 py-1.5 border-b border-claude-border">
-        <span className="text-[10px] font-semibold text-claude-text-secondary uppercase tracking-wide">GStack Skills</span>
+        <span className="text-[10px] font-semibold text-claude-text-secondary uppercase tracking-wide">GStack Mode</span>
       </div>
       <div className="py-0.5 max-h-[300px] overflow-y-auto">
         {GROUPS.map((group, gi) => (
