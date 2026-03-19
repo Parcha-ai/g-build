@@ -1,6 +1,6 @@
 import { Stagehand, type Page } from '@browserbasehq/stagehand';
 import { z } from 'zod';
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, session } from 'electron';
 import { cdpProxyService } from './cdp-proxy.service';
 import { browserService } from './browser.service';
 import { IPC_CHANNELS } from '../../shared/constants/channels';
@@ -69,6 +69,67 @@ export class StagehandService {
    */
   setGoogleApiKey(apiKey: string): void {
     this.googleApiKey = apiKey;
+  }
+
+  /**
+   * Sync cookies from the Electron webview partition into the Stagehand Playwright context.
+   * This ensures the agent's browser has the same auth state as the user's webview.
+   * @param sessionId - Session ID to read cookies from (determines partition name)
+   * @param url - Optional URL filter for cookies (e.g. 'https://github.com')
+   */
+  async syncCookiesFromWebview(sessionId?: string, url?: string): Promise<void> {
+    if (!this.stagehand || !this.connectedToWebview) {
+      return; // No point syncing if not connected to webview or not initialized
+    }
+
+    const page = this.getPage();
+    if (!page) return;
+
+    try {
+      // Determine which session's partition to read from
+      const targetSessionId = sessionId || browserService.getFirstSessionId();
+      if (!targetSessionId) {
+        console.log('[Stagehand] No session ID for cookie sync');
+        return;
+      }
+
+      const partitionName = `persist:browser-${targetSessionId}`;
+      const ses = session.fromPartition(partitionName);
+
+      // Get cookies, optionally filtered by URL
+      const filter: Electron.CookiesGetFilter = url ? { url } : {};
+      const electronCookies = await ses.cookies.get(filter);
+
+      if (electronCookies.length === 0) {
+        console.log('[Stagehand] No cookies to sync from partition:', partitionName);
+        return;
+      }
+
+      // Convert Electron cookies to Playwright format
+      const playwrightCookies = electronCookies
+        .filter(c => c.domain) // Must have a domain
+        .map(c => ({
+          name: c.name,
+          value: c.value,
+          domain: c.domain!,
+          path: c.path || '/',
+          expires: c.expirationDate || -1,
+          httpOnly: c.httpOnly || false,
+          secure: c.secure || false,
+          sameSite: (c.sameSite === 'no_restriction' ? 'None' :
+                     c.sameSite === 'lax' ? 'Lax' :
+                     c.sameSite === 'strict' ? 'Strict' : 'Lax') as 'Strict' | 'Lax' | 'None',
+        }));
+
+      // Inject into Playwright context
+      // Stagehand's Page type doesn't expose context(), but the underlying Playwright page has it
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (page as any).context().addCookies(playwrightCookies);
+      console.log(`[Stagehand] Synced ${playwrightCookies.length} cookies from partition ${partitionName}`);
+    } catch (error) {
+      console.error('[Stagehand] Cookie sync error:', error);
+      // Non-fatal — continue without cookies
+    }
   }
 
   /**
@@ -210,6 +271,9 @@ export class StagehandService {
           if (attempt < 1) continue;
           return { success: false, error: 'No active page available' };
         }
+
+        // Sync cookies before navigating so the agent has the same auth state
+        await this.syncCookiesFromWebview(sessionId, url);
 
         console.log('[Stagehand] Navigating to:', url, this.connectedToWebview ? '(webview)' : '(own browser - webview will NOT update visually)');
 

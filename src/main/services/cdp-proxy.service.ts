@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { WebSocketServer, WebSocket } from 'ws';
 import * as http from 'http';
-import { webContents } from 'electron';
+import { webContents, session } from 'electron';
 import { browserService } from './browser.service';
 
 /**
@@ -134,6 +134,32 @@ export class CdpProxyService {
       // Return minimal protocol description
       res.writeHead(200);
       res.end(JSON.stringify({ domains: [] }));
+      return;
+    }
+
+    if (url === '/json/cookies' || url.startsWith('/json/cookies?')) {
+      // Return cookies from the webview partition
+      // Optional URL filter: /json/cookies?url=https://example.com
+      const urlObj = new URL(url, `http://localhost:${this.port}`);
+      const filterUrl = urlObj.searchParams.get('url') || undefined;
+
+      const targetSessionId = browserService.getFirstSessionId();
+      if (!targetSessionId) {
+        res.writeHead(404);
+        res.end(JSON.stringify({ error: 'No webview session available' }));
+        return;
+      }
+
+      const partitionName = `persist:browser-${targetSessionId}`;
+      const ses = session.fromPartition(partitionName);
+      const filter: Electron.CookiesGetFilter = filterUrl ? { url: filterUrl } : {};
+      ses.cookies.get(filter).then(cookies => {
+        res.writeHead(200);
+        res.end(JSON.stringify(cookies));
+      }).catch(error => {
+        res.writeHead(500);
+        res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+      });
       return;
     }
 
