@@ -118,7 +118,7 @@ function GStackLauncher({ sessionId, onClose }: { sessionId: string; onClose: ()
   }, [onClose]);
 
   const GROUPS = [
-    { label: 'Planning', ids: ['plan-ceo', 'plan-eng', 'design'] },
+    { label: 'Strategy', ids: ['office-hours', 'plan-ceo', 'plan-eng', 'design'] },
     { label: 'Development', ids: ['review', 'ship'] },
     { label: 'Testing', ids: ['qa', 'browse'] },
     { label: 'Analysis', ids: ['retro'] },
@@ -797,8 +797,9 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
   }, [isSending, sessionId]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Don't submit if any autocomplete is open
-    if ((showMentions || showCommands) && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter')) {
+    // Don't submit if any autocomplete is open — let the autocomplete component handle these keys
+    if ((showMentions || showCommands) && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === 'Tab')) {
+      e.preventDefault(); // Prevent Tab from moving focus away from the textarea
       return; // Let autocomplete components handle these
     }
 
