@@ -68,17 +68,18 @@ export interface Session {
   gstackMode?: GStackMode; // Active GStack workflow mode
 }
 
-export type GStackMode = 'plan-ceo' | 'plan-eng' | 'design' | 'review' | 'ship' | 'qa' | 'browse' | 'retro';
+export type GStackMode = 'plan-ceo' | 'plan-eng' | 'design' | 'review' | 'ship' | 'qa' | 'browse' | 'retro' | 'office-hours';
 
 export const GSTACK_MODE_META: Record<GStackMode, { color: string; shortName: string }> = {
   'plan-ceo': { color: '#f59e0b', shortName: 'CEO' },
   'plan-eng': { color: '#3b82f6', shortName: 'ENG' },
-  'design':   { color: '#ec4899', shortName: 'DSN' },
+  'design':   { color: '#ec4899', shortName: 'DES' },
   'review':   { color: '#ef4444', shortName: 'REV' },
   'ship':     { color: '#22c55e', shortName: 'SHIP' },
   'qa':       { color: '#a855f7', shortName: 'QA' },
   'browse':   { color: '#06b6d4', shortName: 'BRW' },
   'retro':    { color: '#f97316', shortName: 'RET' },
+  'office-hours': { color: '#10b981', shortName: 'OH' },
 };
 
 export type SessionStatus = 'creating' | 'starting' | 'setup' | 'running' | 'stopping' | 'stopped' | 'error';

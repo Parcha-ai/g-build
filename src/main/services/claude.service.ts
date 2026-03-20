@@ -11,6 +11,7 @@ import type { ChatMessage, ToolCall, Session, QuestionRequest, QuestionResponse,
 import { BrowserWindow, nativeImage } from 'electron';
 import { IPC_CHANNELS } from '../../shared/constants/channels';
 import { browserService } from './browser.service';
+import { cdpProxyService } from './cdp-proxy.service';
 import { stagehandService } from './stagehand.service';
 import { computerUseService } from './computer-use.service';
 import { documentService } from './document.service';
@@ -359,7 +360,7 @@ export class ClaudeService {
    * Build the system prompt append section based on session type
    * Includes SSH context for remote sessions and agent memories
    */
-  private buildSystemPromptAppend(session: Session, memoriesPrompt?: string): string {
+  private buildSystemPromptAppend(session: Session, memoriesPrompt?: string, gstackMode?: string): string {
     let append = `
 ## G-Build Agent
 
@@ -404,6 +405,9 @@ ${session.branch ? `- **Git Branch**: ${session.branch}` : ''}
 - All paths are relative to the remote working directory
 - The browser preview tools run LOCALLY but your code changes are on the remote machine
 - If you need to test a web application, remember it's running on the remote server (you may need to use the remote server's hostname or IP)
+
+### Browser Cookies
+Cookies from the user's local browser session are synced to \`/tmp/grep-build-cookies.json\` on this machine. If you need to browse an authenticated site using chrome-devtools, read that file and use \`mcp__chrome-devtools__set_cookies\` to inject them, or pass cookies to the browser via JavaScript.
 `;
 
       // Add worktree setup output if available
@@ -428,11 +432,13 @@ ${cleanOutput}
       }
     }
 
-    // Add GStack mode prompt if active (appended to system message)
-    if (session.gstackMode) {
+    // Add GStack mode prompt if active (passed directly from renderer, not from session store)
+    const activeGStackMode = gstackMode || session.gstackMode;
+    if (activeGStackMode) {
       const { getGStackModePrompt } = require('./gstack.service');
-      const modePrompt = getGStackModePrompt(session.gstackMode);
+      const modePrompt = getGStackModePrompt(activeGStackMode);
       if (modePrompt) {
+        console.log('[Claude Service] GStack mode active:', activeGStackMode);
         append += '\n\n' + modePrompt;
       }
     }
@@ -1609,6 +1615,13 @@ ${memoriesPrompt}
     // Ensure browser panel is open
     await this.ensureBrowserPanelOpen(sessionId);
 
+    // Sync cookies from webview into Stagehand before any browser tool execution
+    try {
+      await stagehandService.syncCookiesFromWebview(sessionId);
+    } catch (error) {
+      console.warn('[Claude Service] Cookie sync failed (non-fatal):', error);
+    }
+
     switch (toolName) {
       case 'BrowserNavigate': {
         const result = await stagehandService.navigate(input.url as string, sessionId);
@@ -1635,6 +1648,161 @@ ${memoriesPrompt}
       default:
         throw new Error(`Unknown browser tool: ${toolName}`);
     }
+  }
+
+  /**
+   * Execute chrome-devtools MCP tool calls locally against the CDP proxy.
+   * Used for SSH sessions where the remote machine has no Chrome browser.
+   */
+  private async executeLocalChromeDevtool(sessionId: string, toolName: string, input: Record<string, unknown>): Promise<any> {
+    console.log('[Claude Service] Executing chrome-devtools tool locally:', toolName, input);
+
+    // Ensure browser panel is open
+    await this.ensureBrowserPanelOpen(sessionId);
+
+    switch (toolName) {
+      case 'list_pages':
+      case 'listPages': {
+        const targets = cdpProxyService.getTargets();
+        return {
+          pages: targets.map(t => ({
+            id: t.id,
+            url: t.url,
+            title: t.title || '',
+            type: t.type,
+          })),
+        };
+      }
+
+      case 'execute_javascript':
+      case 'executeJavascript': {
+        const expression = input.expression as string || input.javascript as string;
+        if (!expression) throw new Error('expression or javascript parameter required');
+
+        const targetSessionId = browserService.getFirstSessionId();
+        if (!targetSessionId) throw new Error('No webview available');
+
+        const wcId = browserService.getWebContentsId(targetSessionId);
+        if (!wcId) throw new Error('No webview webContents available');
+
+        const { webContents } = await import('electron');
+        const wc = webContents.fromId(wcId);
+        if (!wc) throw new Error('WebContents not found');
+
+        if (!wc.debugger.isAttached()) {
+          wc.debugger.attach('1.3');
+        }
+        const result = await wc.debugger.sendCommand('Runtime.evaluate', {
+          expression,
+          returnByValue: true,
+          awaitPromise: true,
+        });
+        return { result: result.result?.value, type: result.result?.type };
+      }
+
+      case 'navigate': {
+        const url = input.url as string;
+        if (!url) throw new Error('url parameter required');
+        const result = await stagehandService.navigate(url, sessionId);
+        if (result.success) {
+          browserService.navigate(sessionId, url);
+        }
+        return result;
+      }
+
+      case 'screenshot': {
+        const screenshot = await stagehandService.captureScreenshot();
+        return { screenshot: screenshot ? `data:image/png;base64,${screenshot}` : null };
+      }
+
+      case 'get_console_logs':
+      case 'getConsoleLogs': {
+        const logs = browserService.getConsoleLogs(sessionId);
+        return { logs: logs || [] };
+      }
+
+      case 'get_cookies':
+      case 'getCookies': {
+        const { session: electronSession } = await import('electron');
+        const targetSid = browserService.getFirstSessionId() || sessionId;
+        const partitionName = `persist:browser-${targetSid}`;
+        const ses = electronSession.fromPartition(partitionName);
+        const filter: Electron.CookiesGetFilter = input.url ? { url: input.url as string } : {};
+        const cookies = await ses.cookies.get(filter);
+        return { cookies };
+      }
+
+      case 'set_cookies':
+      case 'setCookies': {
+        const { session: electronSession } = await import('electron');
+        const targetSid = browserService.getFirstSessionId() || sessionId;
+        const partitionName = `persist:browser-${targetSid}`;
+        const ses = electronSession.fromPartition(partitionName);
+        const cookiesToSet = (input.cookies as Array<{ url: string; name: string; value: string; domain?: string; path?: string }>) || [];
+        for (const cookie of cookiesToSet) {
+          await ses.cookies.set(cookie);
+        }
+        return { success: true, count: cookiesToSet.length };
+      }
+
+      default:
+        throw new Error(`Unknown chrome-devtools tool: ${toolName}`);
+    }
+  }
+
+  /**
+   * Create a local in-process MCP server for chrome-devtools.
+   * Used for SSH sessions so the agent can see the same tools without npx on the remote.
+   */
+  private getChromeDevtoolsMcpServer(sessionId: string) {
+    return createSdkMcpServer({
+      name: 'chrome-devtools',
+      version: '1.0.0',
+      tools: [
+        tool('list_pages', 'List all available browser pages/tabs', {}, async () => {
+          const result = await this.executeLocalChromeDevtool(sessionId, 'list_pages', {});
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }),
+        tool('execute_javascript', 'Execute JavaScript in the browser page', {
+          expression: z.string().describe('JavaScript expression to evaluate'),
+        }, async (input) => {
+          const result = await this.executeLocalChromeDevtool(sessionId, 'execute_javascript', input);
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }),
+        tool('navigate', 'Navigate the browser to a URL', {
+          url: z.string().describe('URL to navigate to'),
+        }, async (input) => {
+          const result = await this.executeLocalChromeDevtool(sessionId, 'navigate', input);
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }),
+        tool('screenshot', 'Take a screenshot of the current page', {}, async () => {
+          const result = await this.executeLocalChromeDevtool(sessionId, 'screenshot', {});
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }),
+        tool('get_console_logs', 'Get console logs from the browser page', {}, async () => {
+          const result = await this.executeLocalChromeDevtool(sessionId, 'get_console_logs', {});
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }),
+        tool('get_cookies', 'Get cookies from the browser', {
+          url: z.string().optional().describe('Optional URL to filter cookies'),
+        }, async (input) => {
+          const result = await this.executeLocalChromeDevtool(sessionId, 'get_cookies', input);
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }),
+        tool('set_cookies', 'Set cookies in the browser', {
+          cookies: z.array(z.object({
+            url: z.string(),
+            name: z.string(),
+            value: z.string(),
+            domain: z.string().optional(),
+            path: z.string().optional(),
+          })).describe('Array of cookies to set'),
+        }, async (input) => {
+          const result = await this.executeLocalChromeDevtool(sessionId, 'set_cookies', input);
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }),
+      ],
+    });
   }
 
   setApiKey(apiKey: string): void {
@@ -2175,7 +2343,8 @@ ${memoriesPrompt}
     attachments?: Attachment[],
     permissionMode?: string,
     thinkingMode?: string,
-    model?: string
+    model?: string,
+    gstackMode?: string
   ): AsyncGenerator<StreamEvent> {
     const apiKey = this.getApiKey();
 
@@ -2419,6 +2588,32 @@ ${memoriesPrompt}
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const mcpServersConfig: Record<string, any> = {};
 
+      // For SSH sessions, transfer local webview cookies to the remote machine
+      // so the remote chrome-devtools-mcp Chrome can use them
+      if (session.sshConfig) {
+        try {
+          const { session: electronSession } = await import('electron');
+          const targetSid = browserService.getFirstSessionId() || sessionId;
+          const partitionName = `persist:browser-${targetSid}`;
+          const ses = electronSession.fromPartition(partitionName);
+          const cookies = await ses.cookies.get({});
+
+          if (cookies.length > 0) {
+            const cookieJson = JSON.stringify(cookies, null, 2);
+            // Use /tmp as a reliable writable path (tilde doesn't expand in single-quoted paths)
+            await sshService.writeRemoteFile(
+              sessionId,
+              session.sshConfig,
+              '/tmp/grep-build-cookies.json',
+              cookieJson
+            );
+            console.log(`[Claude Service] Transferred ${cookies.length} cookies to remote machine`);
+          }
+        } catch (error) {
+          console.warn('[Claude Service] Cookie transfer to remote failed (non-fatal):', error);
+        }
+      }
+
       // Browser tools - available for all sessions
       // For SSH, the MCP server runs in local Grep process but tools are sent to remote
       // (investigating why they worked before but now show "No such tool available")
@@ -2429,6 +2624,16 @@ ${memoriesPrompt}
       // This runs on EVERY message, so new MCP servers are picked up automatically
       try {
         const userMcpServers = mcpService.getUserMcpServersConfig();
+
+        // For SSH sessions, remove chrome-devtools stdio config (can't run npx on remote)
+        // The PreToolUse hook will intercept all chrome-devtools calls and run them locally
+        if (session.sshConfig && userMcpServers['chrome-devtools']) {
+          console.log('[Claude Service] SSH session: replacing remote chrome-devtools with local MCP server');
+          delete userMcpServers['chrome-devtools'];
+          // Register a local in-process chrome-devtools MCP server so tools are still visible to the agent
+          mcpServersConfig['chrome-devtools'] = this.getChromeDevtoolsMcpServer(sessionId);
+        }
+
         Object.assign(mcpServersConfig, userMcpServers);
         console.log('[Claude Service] Loaded user MCP servers:', Object.keys(userMcpServers));
       } catch (error) {
@@ -2486,28 +2691,56 @@ ${memoriesPrompt}
 
       // PreToolUse hook for SSH sessions: intercept browser tools and execute locally
       if (session.sshConfig) {
-        hooks.PreToolUse = [{
-          matcher: 'mcp__claudette-browser__Browser*', // Match all MCP browser tools
-          hooks: [async (input: any, toolUseID: string | undefined, options: any) => {
-            console.log('[SSH Browser Intercept] PreToolUse hook called with:', JSON.stringify({ input, toolUseID, optionsKeys: Object.keys(options || {}) }));
-            // Extract actual tool name from MCP format (note: tool_name is snake_case in hook input)
-            const fullToolName = input?.tool_name || input?.toolName || '';
-            const toolName = fullToolName.replace('mcp__claudette-browser__', '');
-            console.log('[SSH Browser Intercept] Extracted tool name:', fullToolName, '->', toolName);
+        hooks.PreToolUse = [
+          {
+            matcher: 'mcp__claudette-browser__Browser*', // Match all MCP browser tools
+            hooks: [async (input: any, toolUseID: string | undefined, options: any) => {
+              console.log('[SSH Browser Intercept] PreToolUse hook called with:', JSON.stringify({ input, toolUseID, optionsKeys: Object.keys(options || {}) }));
+              const fullToolName = input?.tool_name || input?.toolName || '';
+              const toolName = fullToolName.replace('mcp__claudette-browser__', '');
+              console.log('[SSH Browser Intercept] Extracted tool name:', fullToolName, '->', toolName);
 
-            if (toolName.startsWith('Browser')) {
-              console.log('[SSH Browser Intercept] Executing browser tool locally:', toolName);
+              if (toolName.startsWith('Browser')) {
+                console.log('[SSH Browser Intercept] Executing browser tool locally:', toolName);
+                try {
+                  const toolInput = input?.tool_input || {};
+                  const result = await this.executeLocalBrowserTool(sessionId, toolName, toolInput);
+                  console.log('[SSH Browser Intercept] Local execution completed:', { success: result.success });
+                  return {
+                    continue: false,
+                    toolResult: result,
+                  };
+                } catch (error) {
+                  console.error('[SSH Browser Intercept] Local execution failed:', error);
+                  return {
+                    continue: false,
+                    toolResult: {
+                      success: false,
+                      error: error instanceof Error ? error.message : String(error),
+                    },
+                  };
+                }
+              }
+              return { continue: true };
+            }]
+          },
+          {
+            matcher: 'mcp__chrome-devtools__*', // Match all chrome-devtools MCP tools
+            hooks: [async (input: any) => {
+              const fullToolName = input?.tool_name || input?.toolName || '';
+              const toolName = fullToolName.replace('mcp__chrome-devtools__', '');
+              console.log('[SSH Chrome DevTools Intercept] Routing locally:', fullToolName, '->', toolName);
+
               try {
-                // Extract the actual tool input from hook input structure
                 const toolInput = input?.tool_input || {};
-                const result = await this.executeLocalBrowserTool(sessionId, toolName, toolInput);
-                console.log('[SSH Browser Intercept] Local execution completed:', { success: result.success });
+                const result = await this.executeLocalChromeDevtool(sessionId, toolName, toolInput);
+                console.log('[SSH Chrome DevTools Intercept] Local execution completed');
                 return {
-                  continue: false, // Stop - don't send to remote
-                  toolResult: result, // Return local result
+                  continue: false,
+                  toolResult: result,
                 };
               } catch (error) {
-                console.error('[SSH Browser Intercept] Local execution failed:', error);
+                console.error('[SSH Chrome DevTools Intercept] Local execution failed:', error);
                 return {
                   continue: false,
                   toolResult: {
@@ -2516,10 +2749,9 @@ ${memoriesPrompt}
                   },
                 };
               }
-            }
-            return { continue: true }; // Not a browser tool, continue normally
-          }]
-        }];
+            }]
+          },
+        ];
       }
 
       // Ralph Loop: Add Stop hook for Grep It mode (bypassPermissions)
@@ -2687,8 +2919,9 @@ Begin by creating the task structure now.
           includePartialMessages: true,
           // Use computed model (respects UI selection → session saved model → Foundry → default)
           model: selectedModel,
-          // 1M context is standard for Opus 4.6 / Sonnet 4.6, but older models still need the beta header
-          ...(!selectedModel.includes('opus-4-6') && !selectedModel.includes('sonnet-4-6')
+          // 1M context is standard for Opus 4.5+/Sonnet 4.5+ — only add beta for older models
+          // Skip betas entirely for Foundry (custom betas not supported)
+          ...(!selectedModel.includes('opus-4') && !selectedModel.includes('sonnet-4-6') && !selectedModel.includes('sonnet-4-5') && !settings.foundryEnabled
             ? { betas: ['context-1m-2025-08-07' as const] }
             : {}),
           ...(maxThinkingTokens ? { maxThinkingTokens } : {}),
@@ -2698,7 +2931,7 @@ Begin by creating the task structure now.
           systemPrompt: {
             type: 'preset',
             preset: 'claude_code',
-            append: this.buildSystemPromptAppend(session, memoriesPrompt),
+            append: this.buildSystemPromptAppend(session, memoriesPrompt, gstackMode),
           },
           // Enable CLAUDE.md and Skills from both user (~/.claude/) and project (.claude/)
           // Skills are discovered automatically by the SDK from these filesystem locations

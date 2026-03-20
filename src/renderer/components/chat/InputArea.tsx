@@ -118,7 +118,7 @@ function GStackLauncher({ sessionId, onClose }: { sessionId: string; onClose: ()
   }, [onClose]);
 
   const GROUPS = [
-    { label: 'Planning', ids: ['plan-ceo', 'plan-eng', 'design'] },
+    { label: 'Strategy', ids: ['office-hours', 'plan-ceo', 'plan-eng', 'design'] },
     { label: 'Development', ids: ['review', 'ship'] },
     { label: 'Testing', ids: ['qa', 'browse'] },
     { label: 'Analysis', ids: ['retro'] },
@@ -233,6 +233,7 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
   const remoteControl = useSessionStore(useCallback((s) => s.remoteControl[sessionId] || null, [sessionId]));
   const interruptAndSend = useSessionStore((s) => s.interruptAndSend);
   const cyclePermissionMode = useSessionStore((s) => s.cyclePermissionMode);
+  const setGStackMode = useSessionStore((s) => s.setGStackMode);
   const cycleThinkingMode = useSessionStore((s) => s.cycleThinkingMode);
   const setThinkingMode = useSessionStore((s) => s.setThinkingMode);
   const setSelectedModel = useSessionStore((s) => s.setSelectedModel);
@@ -533,11 +534,28 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
       window.electronAPI.extensions.scanCommands({ sessionId, projectPath }),
       window.electronAPI.extensions.scanSkills({ sessionId, projectPath }),
       window.electronAPI.extensions.scanAgents({ sessionId, projectPath }),
-    ]).then(([cmds, skls, agts]) => {
-      setCommands(cmds);
+      window.electronAPI.gstack.getModes(),
+    ]).then(([cmds, skls, agts, gstackModes]) => {
+      // Inject GStack modes as slash commands (e.g. /ceo, /eng, /qa)
+      const gstackCommands: Array<{ name: string; description: string; scope: string; itemType: string; gstackId: string | null }> = (gstackModes || []).map((mode: { id: string; shortName: string; description: string }) => ({
+        name: mode.shortName.toLowerCase(),
+        description: `[GStack] ${mode.description}`,
+        scope: 'gstack',
+        itemType: 'gstack',
+        gstackId: mode.id,
+      }));
+      // Add /gstack-off to deactivate any active mode
+      gstackCommands.push({
+        name: 'gstack-off',
+        description: '[GStack] Deactivate current workflow mode',
+        scope: 'gstack',
+        itemType: 'gstack',
+        gstackId: null,
+      });
+      setCommands([...cmds, ...gstackCommands]);
       setSkills(skls);
       setAgents(agts);
-      console.log('[InputArea] Loaded extensions for session:', sessionId, '- Commands:', cmds.length, 'Skills:', skls.length, 'Agents:', agts.length);
+      console.log('[InputArea] Loaded extensions for session:', sessionId, '- Commands:', cmds.length, 'Skills:', skls.length, 'Agents:', agts.length, 'GStack:', gstackCommands.length);
     }).catch(err => {
       console.error('[InputArea] Error loading extensions:', err);
     });
@@ -668,7 +686,13 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
       const projectPath = currentSession?.worktreePath;
       const itemType = item.itemType || commandType;
 
-      if (itemType === 'command') {
+      if (itemType === 'gstack') {
+        // GStack mode activation/deactivation — set the mode and clear the slash command from input
+        const gstackId = item.gstackId || null;
+        setGStackMode(sessionId, gstackId as import('../../../shared/types').GStackMode | null);
+        const beforeCommand = message.slice(0, commandStartIndex);
+        setMessage(beforeCommand.trim());
+      } else if (itemType === 'command') {
         // Load command content and replace the /command with it
         try {
           const content = await window.electronAPI.extensions.getCommand(item.name, projectPath);
@@ -702,7 +726,7 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
       setCommandStartIndex(-1);
       textareaRef.current?.focus();
     },
-    [message, commandStartIndex, commandType, sessionId]
+    [message, commandStartIndex, commandType, sessionId, setGStackMode]
   );
 
   // Save message to history
@@ -797,8 +821,9 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
   }, [isSending, sessionId]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Don't submit if any autocomplete is open
-    if ((showMentions || showCommands) && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter')) {
+    // Don't submit if any autocomplete is open — let the autocomplete component handle these keys
+    if ((showMentions || showCommands) && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === 'Tab')) {
+      e.preventDefault(); // Prevent Tab from moving focus away from the textarea
       return; // Let autocomplete components handle these
     }
 
