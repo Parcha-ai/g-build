@@ -2049,8 +2049,11 @@ ${memoriesPrompt}
       return;
     }
 
-    const session = this.sessionStore.get(`sessions.${sessionId}`) as Session | undefined;
+    // Check both manual sessions and discovered sessions (discovered sessions may not be in sessions.*)
+    const session = (this.sessionStore.get(`sessions.${sessionId}`) as Session | undefined)
+      || (this.sessionStore.get(`discoveredSessions.${sessionId}`) as Session | undefined);
     const sessionName = session?.name || 'G-Build';
+    console.log('[Claude Service] startRemoteControl for:', sessionId, 'found:', !!session, 'ssh:', !!session?.sshConfig);
 
     // For SSH sessions, run remote-control on the remote machine via SSH
     if (session?.sshConfig) {
@@ -2348,8 +2351,9 @@ ${memoriesPrompt}
   ): AsyncGenerator<StreamEvent> {
     const apiKey = this.getApiKey();
 
-    // Get session for working directory
-    const session = this.sessionStore.get(`sessions.${sessionId}`) as Session | undefined;
+    // Get session for working directory (check both manual and discovered sessions)
+    const session = (this.sessionStore.get(`sessions.${sessionId}`) as Session | undefined)
+      || (this.sessionStore.get(`discoveredSessions.${sessionId}`) as Session | undefined);
 
     // Validate message is not empty to prevent API error "text content blocks must be non-empty"
     if (!userMessage || userMessage.trim() === '') {
