@@ -405,6 +405,9 @@ ${session.branch ? `- **Git Branch**: ${session.branch}` : ''}
 - All paths are relative to the remote working directory
 - The browser preview tools run LOCALLY but your code changes are on the remote machine
 - If you need to test a web application, remember it's running on the remote server (you may need to use the remote server's hostname or IP)
+
+### Browser Cookies
+Cookies from the user's local browser session are synced to \`/tmp/grep-build-cookies.json\` on this machine. If you need to browse an authenticated site using chrome-devtools, read that file and use \`mcp__chrome-devtools__set_cookies\` to inject them, or pass cookies to the browser via JavaScript.
 `;
 
       // Add worktree setup output if available
@@ -2584,6 +2587,32 @@ ${memoriesPrompt}
       // Build MCP servers configuration
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const mcpServersConfig: Record<string, any> = {};
+
+      // For SSH sessions, transfer local webview cookies to the remote machine
+      // so the remote chrome-devtools-mcp Chrome can use them
+      if (session.sshConfig) {
+        try {
+          const { session: electronSession } = await import('electron');
+          const targetSid = browserService.getFirstSessionId() || sessionId;
+          const partitionName = `persist:browser-${targetSid}`;
+          const ses = electronSession.fromPartition(partitionName);
+          const cookies = await ses.cookies.get({});
+
+          if (cookies.length > 0) {
+            const cookieJson = JSON.stringify(cookies, null, 2);
+            // Use /tmp as a reliable writable path (tilde doesn't expand in single-quoted paths)
+            await sshService.writeRemoteFile(
+              sessionId,
+              session.sshConfig,
+              '/tmp/grep-build-cookies.json',
+              cookieJson
+            );
+            console.log(`[Claude Service] Transferred ${cookies.length} cookies to remote machine`);
+          }
+        } catch (error) {
+          console.warn('[Claude Service] Cookie transfer to remote failed (non-fatal):', error);
+        }
+      }
 
       // Browser tools - available for all sessions
       // For SSH, the MCP server runs in local Grep process but tools are sent to remote
