@@ -537,7 +537,7 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
       window.electronAPI.gstack.getModes(),
     ]).then(([cmds, skls, agts, gstackModes]) => {
       // Inject GStack modes as slash commands (e.g. /ceo, /eng, /qa)
-      const gstackCommands = (gstackModes || []).map((mode: { id: string; shortName: string; description: string }) => ({
+      const gstackCommands: Array<{ name: string; description: string; scope: string; itemType: string; gstackId: string | null }> = (gstackModes || []).map((mode: { id: string; shortName: string; description: string }) => ({
         name: mode.shortName.toLowerCase(),
         description: `[GStack] ${mode.description}`,
         scope: 'gstack',

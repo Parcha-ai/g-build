@@ -627,8 +627,8 @@ export default function ChatContainer({ session }: ChatContainerProps) {
             isStreaming={isSessionStreaming && !!thinkingContent}
             isCompacting={currentCompactionStatus?.isCompacting}
             compactionStatus={currentCompactionStatus}
-            gstackColor={(() => { const mode = useSessionStore.getState().gstackMode[session.id]; return mode && GSTACK_MODE_META[mode]?.color; })()}
-            gstackLabel={(() => { const mode = useSessionStore.getState().gstackMode[session.id]; return mode && GSTACK_MODE_META[mode]?.shortName; })()}
+            gstackColor={(() => { const mode = useSessionStore.getState().gstackMode[session.id]; return mode ? GSTACK_MODE_META[mode]?.color : undefined; })()}
+            gstackLabel={(() => { const mode = useSessionStore.getState().gstackMode[session.id]; return mode ? GSTACK_MODE_META[mode]?.shortName : undefined; })()}
           />
         </div>
       )}
