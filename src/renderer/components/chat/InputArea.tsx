@@ -822,10 +822,15 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
   }, [isSending, sessionId]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Don't submit if any autocomplete is open — let the autocomplete component handle these keys
-    // MUST preventDefault for Tab to stop focus moving away (which would unmount autocomplete before its window listener fires)
-    if ((showMentions || showCommands) && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === 'Tab')) {
+    // Don't submit if any autocomplete is open
+    if ((showMentions || showCommands) && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter')) {
+      return; // CommandAutocomplete's window listener handles these
+    }
+
+    // Tab with autocomplete open: select highlighted item directly via ref (don't rely on window listener)
+    if (showCommands && e.key === 'Tab' && !e.shiftKey) {
       e.preventDefault();
+      commandAutocompleteRef.current?.selectCurrent();
       return;
     }
 
