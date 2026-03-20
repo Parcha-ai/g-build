@@ -4,7 +4,7 @@ import { useSessionStore, type PermissionMode, type ThinkingMode, type EffortLev
 import { useUIStore } from '../../stores/ui.store';
 import { useAudioStore } from '../../stores/audio.store';
 import MentionAutocomplete, { type Mention } from './MentionAutocomplete';
-import CommandAutocomplete from './CommandAutocomplete';
+import CommandAutocomplete, { type CommandAutocompleteHandle } from './CommandAutocomplete';
 import { MicrophoneButton, type VoiceModeHandle } from './MicrophoneButton';
 import { MessageQueuePanel } from './MessageQueuePanel';
 import { VoiceModeErrorBoundary } from './VoiceModeErrorBoundary';
@@ -210,6 +210,7 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const commandAutocompleteRef = useRef<CommandAutocompleteHandle>(null);
   const voiceModeRef = useRef<VoiceModeHandle>(null);
 
   // Helper to safely get selection position
@@ -827,12 +828,11 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
       return; // Let autocomplete components handle these via window listener
     }
 
-    // Tab in autocomplete: select the highlighted item directly (can't rely on window listener — too late to prevent tab insertion)
+    // Tab in autocomplete: select the highlighted item directly via ref
     if (showCommands && e.key === 'Tab') {
       e.preventDefault();
       e.stopPropagation();
-      // Trigger selection via a custom event that CommandAutocomplete listens for
-      window.dispatchEvent(new CustomEvent('autocomplete-select'));
+      commandAutocompleteRef.current?.selectCurrent();
       return;
     }
 
@@ -1161,6 +1161,7 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
       {/* Command/Skill/Agent Autocomplete */}
       {showCommands && (
         <CommandAutocomplete
+          ref={commandAutocompleteRef}
           query={commandQuery}
           type={commandType}
           commands={commands}

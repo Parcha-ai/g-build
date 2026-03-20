@@ -1,6 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useImperativeHandle, forwardRef } from 'react';
 import type { Command, Skill, AgentDefinition } from '../../../shared/types';
 import { Terminal, Sparkles, Bot } from 'lucide-react';
+
+export interface CommandAutocompleteHandle {
+  selectCurrent: () => void;
+}
 
 interface CommandAutocompleteProps {
   query: string; // The text after `/` or `@agent-`
@@ -13,7 +17,7 @@ interface CommandAutocompleteProps {
   position: { top: number; left: number };
 }
 
-export default function CommandAutocomplete({
+const CommandAutocomplete = forwardRef<CommandAutocompleteHandle, CommandAutocompleteProps>(({
   query,
   type,
   commands,
@@ -22,7 +26,7 @@ export default function CommandAutocomplete({
   onSelect,
   onClose,
   position,
-}: CommandAutocompleteProps) {
+}, ref) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   // Filter items based on query
@@ -58,6 +62,15 @@ export default function CommandAutocomplete({
     setSelectedIndex(0);
   }, [filteredItems]);
 
+  // Expose selectCurrent() for Tab completion from InputArea
+  useImperativeHandle(ref, () => ({
+    selectCurrent: () => {
+      if (filteredItems.length > 0 && filteredItems[selectedIndex]) {
+        onSelect(filteredItems[selectedIndex]);
+      }
+    },
+  }), [filteredItems, selectedIndex, onSelect]);
+
   // Handle keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -86,20 +99,8 @@ export default function CommandAutocomplete({
       }
     };
 
-    // Handle Tab selection via custom event from InputArea (Tab keydown is intercepted there
-    // before it can insert a tab character — window listeners fire too late)
-    const handleTabSelect = () => {
-      if (filteredItems.length > 0 && filteredItems[selectedIndex]) {
-        onSelect(filteredItems[selectedIndex]);
-      }
-    };
-
     window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('autocomplete-select', handleTabSelect);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('autocomplete-select', handleTabSelect);
-    };
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, [filteredItems, selectedIndex, onSelect, onClose]);
 
   if (filteredItems.length === 0) {
@@ -151,4 +152,6 @@ export default function CommandAutocomplete({
       })}
     </div>
   );
-}
+});
+
+export default CommandAutocomplete;
