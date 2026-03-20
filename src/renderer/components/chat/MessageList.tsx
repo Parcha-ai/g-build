@@ -346,11 +346,11 @@ export default function MessageList({
         return (
           <div className="flex items-center gap-2 text-claude-text-secondary">
             <div className="flex gap-0.5">
-              <div className="w-2 h-2" style={{ backgroundColor: 'var(--claude-accent)', animation: 'pulse-square 1.2s ease-in-out infinite 0s' }} />
-              <div className="w-2 h-2" style={{ backgroundColor: 'var(--claude-accent)', animation: 'pulse-square 1.2s ease-in-out infinite 0.4s' }} />
-              <div className="w-2 h-2" style={{ backgroundColor: 'var(--claude-accent)', animation: 'pulse-square 1.2s ease-in-out infinite 0.8s' }} />
+              <div className="w-2 h-2 bg-claude-accent" style={{ animation: 'pulse-square 1.2s ease-in-out infinite 0s' }} />
+              <div className="w-2 h-2 bg-claude-accent" style={{ animation: 'pulse-square 1.2s ease-in-out infinite 0.4s' }} />
+              <div className="w-2 h-2 bg-claude-accent" style={{ animation: 'pulse-square 1.2s ease-in-out infinite 0.8s' }} />
             </div>
-            <span className="text-sm">Thinking...</span>
+            <span className="text-sm">G-Build is thinking...</span>
           </div>
         );
       })()}
