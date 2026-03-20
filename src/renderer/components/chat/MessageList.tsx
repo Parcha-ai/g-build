@@ -7,7 +7,7 @@ import ReleaseNotes from '../common/ReleaseNotes';
 import { getLatestRelease } from '../../../shared/config/release-notes';
 import { useSessionStore } from '../../stores/session.store';
 import type { ChatMessage, ToolCall } from '../../../shared/types';
-import { AGENT_COLORS } from '../../../shared/types';
+import { AGENT_COLORS, GSTACK_MODE_META } from '../../../shared/types';
 import type { StreamEvent } from '../../stores/session.store';
 
 interface QueuedMessage {
@@ -325,25 +325,35 @@ export default function MessageList({
       )}
 
       {/* Loading indicator - only show when streaming but no content yet */}
-      {isStreaming && !hasStreamingContent && (
-        <div className="flex items-center gap-2 text-claude-text-secondary">
-          <div className="flex gap-0.5">
-            <div
-              className="w-2 h-2 bg-claude-accent"
-              style={{ animation: 'pulse-square 1.2s ease-in-out infinite 0s' }}
-            />
-            <div
-              className="w-2 h-2 bg-claude-accent"
-              style={{ animation: 'pulse-square 1.2s ease-in-out infinite 0.4s' }}
-            />
-            <div
-              className="w-2 h-2 bg-claude-accent"
-              style={{ animation: 'pulse-square 1.2s ease-in-out infinite 0.8s' }}
-            />
+      {isStreaming && !hasStreamingContent && (() => {
+        const gstackMode = activeSessionId ? useSessionStore.getState().gstackMode[activeSessionId] : null;
+        const modeMeta = gstackMode ? GSTACK_MODE_META[gstackMode] : null;
+
+        // Only customize when a GStack mode is active — otherwise use default animation
+        if (modeMeta) {
+          return (
+            <div className="flex items-center gap-2 text-claude-text-secondary">
+              <div className="flex gap-0.5">
+                <div className="w-2 h-2" style={{ backgroundColor: modeMeta.color, animation: 'pulse-square 1.2s ease-in-out infinite 0s' }} />
+                <div className="w-2 h-2" style={{ backgroundColor: modeMeta.color, animation: 'pulse-square 1.2s ease-in-out infinite 0.4s' }} />
+                <div className="w-2 h-2" style={{ backgroundColor: modeMeta.color, animation: 'pulse-square 1.2s ease-in-out infinite 0.8s' }} />
+              </div>
+              <span className="text-sm" style={{ color: modeMeta.color }}>{modeMeta.shortName} is thinking...</span>
+            </div>
+          );
+        }
+
+        return (
+          <div className="flex items-center gap-2 text-claude-text-secondary">
+            <div className="flex gap-0.5">
+              <div className="w-2 h-2" style={{ backgroundColor: 'var(--claude-accent)', animation: 'pulse-square 1.2s ease-in-out infinite 0s' }} />
+              <div className="w-2 h-2" style={{ backgroundColor: 'var(--claude-accent)', animation: 'pulse-square 1.2s ease-in-out infinite 0.4s' }} />
+              <div className="w-2 h-2" style={{ backgroundColor: 'var(--claude-accent)', animation: 'pulse-square 1.2s ease-in-out infinite 0.8s' }} />
+            </div>
+            <span className="text-sm">Thinking...</span>
           </div>
-          <span className="text-sm">G-Build is thinking...</span>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
