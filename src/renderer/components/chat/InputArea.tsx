@@ -823,8 +823,10 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     // Don't submit if any autocomplete is open — let the autocomplete component handle these keys
+    // MUST preventDefault for Tab to stop focus moving away (which would unmount autocomplete before its window listener fires)
     if ((showMentions || showCommands) && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === 'Tab')) {
-      return; // Let autocomplete components handle these via window listener
+      e.preventDefault();
+      return;
     }
 
     // Handle history navigation
