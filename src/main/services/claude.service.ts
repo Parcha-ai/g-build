@@ -360,7 +360,7 @@ export class ClaudeService {
    * Build the system prompt append section based on session type
    * Includes SSH context for remote sessions and agent memories
    */
-  private buildSystemPromptAppend(session: Session, memoriesPrompt?: string): string {
+  private buildSystemPromptAppend(session: Session, memoriesPrompt?: string, gstackMode?: string): string {
     let append = `
 ## G-Build Agent
 
@@ -429,11 +429,13 @@ ${cleanOutput}
       }
     }
 
-    // Add GStack mode prompt if active (appended to system message)
-    if (session.gstackMode) {
+    // Add GStack mode prompt if active (passed directly from renderer, not from session store)
+    const activeGStackMode = gstackMode || session.gstackMode;
+    if (activeGStackMode) {
       const { getGStackModePrompt } = require('./gstack.service');
-      const modePrompt = getGStackModePrompt(session.gstackMode);
+      const modePrompt = getGStackModePrompt(activeGStackMode);
       if (modePrompt) {
+        console.log('[Claude Service] GStack mode active:', activeGStackMode);
         append += '\n\n' + modePrompt;
       }
     }
@@ -2338,7 +2340,8 @@ ${memoriesPrompt}
     attachments?: Attachment[],
     permissionMode?: string,
     thinkingMode?: string,
-    model?: string
+    model?: string,
+    gstackMode?: string
   ): AsyncGenerator<StreamEvent> {
     const apiKey = this.getApiKey();
 
@@ -2898,7 +2901,7 @@ Begin by creating the task structure now.
           systemPrompt: {
             type: 'preset',
             preset: 'claude_code',
-            append: this.buildSystemPromptAppend(session, memoriesPrompt),
+            append: this.buildSystemPromptAppend(session, memoriesPrompt, gstackMode),
           },
           // Enable CLAUDE.md and Skills from both user (~/.claude/) and project (.claude/)
           // Skills are discovered automatically by the SDK from these filesystem locations

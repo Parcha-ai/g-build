@@ -1010,12 +1010,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return;
     }
 
-    const { addMessage, setStreaming, permissionMode, thinkingMode, selectedModel } = state;
+    const { addMessage, setStreaming, permissionMode, thinkingMode, selectedModel, gstackMode } = state;
     const mode = permissionMode[sessionId] || 'bypassPermissions';
     // Apply migration to handle old thinking mode values, default to 'high' (full capability)
     const thinking = migrateThinkingMode(thinkingMode[sessionId] || 'high');
     const model = selectedModel[sessionId]; // undefined = use default
-    console.log('[SessionStore] sendMessage - sessionId:', sessionId, 'permissionMode:', mode, 'raw:', permissionMode[sessionId]);
+    const activeGStackMode = gstackMode[sessionId] || undefined; // Pass GStack mode directly
+    console.log('[SessionStore] sendMessage - sessionId:', sessionId, 'permissionMode:', mode, 'gstackMode:', activeGStackMode, 'raw:', permissionMode[sessionId]);
 
     // Update session's updatedAt timestamp for recent activity
     set((state) => ({
@@ -1057,7 +1058,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       console.log('[SessionStore] Calling electronAPI.claude.sendMessage with', attachments?.length || 0, 'attachments, model:', model);
       console.log('[SessionStore] sendMessage params:', { sessionId: sessionId.substring(0, 8), messageLen: message.length, mode, thinking, model });
 
-      const result = await window.electronAPI.claude.sendMessage(sessionId, message, attachments, mode, thinking, model);
+      const result = await window.electronAPI.claude.sendMessage(sessionId, message, attachments, mode, thinking, model, activeGStackMode);
       console.log('[SessionStore] sendMessage returned:', result);
 
       // Update timestamp in backend as well

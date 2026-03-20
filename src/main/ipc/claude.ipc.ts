@@ -90,14 +90,14 @@ export function registerClaudeHandlers(ipcMain: IpcMain): void {
 
   ipcMain.handle(
     IPC_CHANNELS.CLAUDE_SEND_MESSAGE,
-    async (_, sessionId: string, message: string, attachments?: Attachment[], permissionMode?: string, thinkingMode?: string, model?: string) => {
+    async (_, sessionId: string, message: string, attachments?: Attachment[], permissionMode?: string, thinkingMode?: string, model?: string, gstackMode?: string) => {
       const mainWindow = getMainWindow();
       if (!mainWindow) return;
 
       // Ensure claudeService has the mainWindow reference for browser updates
       claudeService.setMainWindow(mainWindow);
 
-      console.log('[Claude IPC] sendMessage received with attachments:', attachments?.length || 0, 'model:', model, 'permissionMode:', permissionMode);
+      console.log('[Claude IPC] sendMessage received with attachments:', attachments?.length || 0, 'model:', model, 'permissionMode:', permissionMode, 'gstackMode:', gstackMode);
       if (attachments) {
         attachments.forEach((a, i) => {
           console.log(`[Claude IPC] Attachment ${i}: type=${a?.type}, name=${a?.name}, content length=${a?.content?.length || 0}`);
@@ -118,7 +118,7 @@ export function registerClaudeHandlers(ipcMain: IpcMain): void {
 
         try {
           // Stream the response (Stop hook handles Ralph Loop iteration)
-          for await (const event of claudeService.streamMessage(sessionId, message, attachments, permissionMode, thinkingMode, model)) {
+          for await (const event of claudeService.streamMessage(sessionId, message, attachments, permissionMode, thinkingMode, model, gstackMode)) {
             switch (event.type) {
               case 'text_delta':
                 batcher.addText(event.content || '', event.agentId);
