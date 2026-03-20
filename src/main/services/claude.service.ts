@@ -2890,8 +2890,9 @@ Begin by creating the task structure now.
           includePartialMessages: true,
           // Use computed model (respects UI selection → session saved model → Foundry → default)
           model: selectedModel,
-          // 1M context is standard for Opus 4.6 / Sonnet 4.6, but older models still need the beta header
-          ...(!selectedModel.includes('opus-4-6') && !selectedModel.includes('sonnet-4-6')
+          // 1M context is standard for Opus 4.5+/Sonnet 4.5+ — only add beta for older models
+          // Skip betas entirely for Foundry (custom betas not supported)
+          ...(!selectedModel.includes('opus-4') && !selectedModel.includes('sonnet-4-6') && !selectedModel.includes('sonnet-4-5') && !settings.foundryEnabled
             ? { betas: ['context-1m-2025-08-07' as const] }
             : {}),
           ...(maxThinkingTokens ? { maxThinkingTokens } : {}),
