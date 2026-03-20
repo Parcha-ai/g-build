@@ -15,6 +15,7 @@ import RemoteControlPanel from './RemoteControlPanel';
 import { SoundVisualization } from './SoundVisualization';
 import { ArrowDown } from 'lucide-react';
 import type { Session, ToolCall } from '../../../shared/types';
+import { GSTACK_MODE_META } from '../../../shared/types';
 
 interface ChatContainerProps {
   session: Session;
@@ -626,6 +627,8 @@ export default function ChatContainer({ session }: ChatContainerProps) {
             isStreaming={isSessionStreaming && !!thinkingContent}
             isCompacting={currentCompactionStatus?.isCompacting}
             compactionStatus={currentCompactionStatus}
+            gstackColor={(() => { const mode = useSessionStore.getState().gstackMode[session.id]; return mode && GSTACK_MODE_META[mode]?.color; })()}
+            gstackLabel={(() => { const mode = useSessionStore.getState().gstackMode[session.id]; return mode && GSTACK_MODE_META[mode]?.shortName; })()}
           />
         </div>
       )}

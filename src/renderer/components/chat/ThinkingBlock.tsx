@@ -7,9 +7,11 @@ interface ThinkingBlockProps {
   isStreaming?: boolean;
   isCompacting?: boolean;
   compactionStatus?: (CompactionStatus & { startTime?: number; postTokens?: number }) | null;
+  gstackColor?: string; // GStack mode accent color (e.g. '#f59e0b' for CEO)
+  gstackLabel?: string; // GStack mode short name (e.g. 'CEO')
 }
 
-export default function ThinkingBlock({ content, isStreaming, isCompacting, compactionStatus }: ThinkingBlockProps) {
+export default function ThinkingBlock({ content, isStreaming, isCompacting, compactionStatus, gstackColor, gstackLabel }: ThinkingBlockProps) {
   // Start collapsed by default - user can expand if they want to see full thinking
   const [isExpanded, setIsExpanded] = useState(false);
   const expandedRef = useRef<HTMLDivElement>(null);
@@ -81,11 +83,15 @@ export default function ThinkingBlock({ content, isStreaming, isCompacting, comp
     return lastLines.join('\n');
   })();
 
-  // Colors change based on compacting state
-  const accentColor = isCompacting ? 'text-blue-400' : 'text-purple-400';
-  const dotColor = isCompacting ? 'bg-blue-500' : 'bg-purple-500';
-  const borderColor = isCompacting ? 'border-blue-500/30' : 'border-purple-500/30';
-  const label = isCompacting ? 'Compacting' : 'Thinking';
+  // Colors change based on compacting state and GStack mode
+  const hasGStack = !isCompacting && gstackColor;
+  const accentColor = isCompacting ? 'text-blue-400' : hasGStack ? '' : 'text-purple-400';
+  const accentStyle = hasGStack ? { color: gstackColor } : undefined;
+  const dotColor = isCompacting ? 'bg-blue-500' : hasGStack ? '' : 'bg-purple-500';
+  const dotStyle = hasGStack ? { backgroundColor: gstackColor } : undefined;
+  const borderColor = isCompacting ? 'border-blue-500/30' : hasGStack ? '' : 'border-purple-500/30';
+  const borderStyle = hasGStack ? { borderLeftColor: `${gstackColor}4D` } : undefined; // 4D = 30% opacity
+  const label = isCompacting ? 'Compacting' : hasGStack ? `[${gstackLabel}] Thinking` : 'Thinking';
   const Icon = isCompacting ? Zap : Brain;
 
   return (
@@ -97,29 +103,30 @@ export default function ThinkingBlock({ content, isStreaming, isCompacting, comp
       >
         {/* Expand/collapse chevron */}
         {isExpanded ? (
-          <ChevronDown size={12} className={`${accentColor} flex-shrink-0`} />
+          <ChevronDown size={12} className={`${accentColor} flex-shrink-0`} style={accentStyle} />
         ) : (
-          <ChevronRight size={12} className={`${accentColor} flex-shrink-0`} />
+          <ChevronRight size={12} className={`${accentColor} flex-shrink-0`} style={accentStyle} />
         )}
 
         {/* Status dot */}
         <span
           className={`w-2 h-2 rounded-full flex-shrink-0 ${dotColor} ${isStreaming || isCompacting ? 'animate-pulse' : ''}`}
+          style={dotStyle}
         />
 
         {/* Icon and label */}
-        <Icon size={14} className={`${accentColor} flex-shrink-0`} />
-        <span className={`font-semibold ${accentColor}`}>{label}</span>
+        <Icon size={14} className={`${accentColor} flex-shrink-0`} style={accentStyle} />
+        <span className={`font-semibold ${accentColor}`} style={accentStyle}>{label}</span>
 
         {/* Loading spinner for active thinking/compacting */}
         {(isStreaming || isCompacting) && (
-          <Loader2 size={12} className={`${accentColor} animate-spin flex-shrink-0`} />
+          <Loader2 size={12} className={`${accentColor} animate-spin flex-shrink-0`} style={accentStyle} />
         )}
       </button>
 
       {/* Preview (collapsed) - shows last 2-3 lines streaming in */}
       {!isExpanded && (content || isCompacting) && (
-        <div className={`ml-6 mt-1 p-2 bg-claude-surface/30 border-l-2 ${borderColor}`}>
+        <div className={`ml-6 mt-1 p-2 bg-claude-surface/30 border-l-2 ${borderColor}`} style={borderStyle}>
           <pre className="whitespace-pre-wrap text-xs text-claude-text-secondary/80 leading-relaxed overflow-hidden">
             {previewLines}
           </pre>
@@ -131,6 +138,7 @@ export default function ThinkingBlock({ content, isStreaming, isCompacting, comp
         <div
           ref={expandedRef}
           className={`ml-6 mt-1 p-2 bg-claude-surface/30 border-l-2 ${borderColor} max-h-64 overflow-y-auto scroll-smooth`}
+          style={borderStyle}
         >
           <pre className="whitespace-pre-wrap text-sm text-claude-text-secondary leading-relaxed overflow-x-auto">
             {isCompacting
