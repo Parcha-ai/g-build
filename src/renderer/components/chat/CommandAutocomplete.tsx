@@ -85,6 +85,7 @@ const CommandAutocomplete = forwardRef<CommandAutocompleteHandle, CommandAutocom
           e.preventDefault();
           setSelectedIndex(prev => (prev - 1 + filteredItems.length) % filteredItems.length);
           break;
+        case 'Tab':
         case 'Enter':
           e.preventDefault();
           e.stopImmediatePropagation();

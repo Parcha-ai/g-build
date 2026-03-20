@@ -823,17 +823,8 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     // Don't submit if any autocomplete is open — let the autocomplete component handle these keys
-    if ((showMentions || showCommands) && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter')) {
-      e.preventDefault();
+    if ((showMentions || showCommands) && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === 'Tab')) {
       return; // Let autocomplete components handle these via window listener
-    }
-
-    // Tab in autocomplete: select the highlighted item directly via ref
-    if (showCommands && e.key === 'Tab') {
-      e.preventDefault();
-      e.stopPropagation();
-      commandAutocompleteRef.current?.selectCurrent();
-      return;
     }
 
     // Handle history navigation
