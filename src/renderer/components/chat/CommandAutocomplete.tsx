@@ -72,7 +72,6 @@ export default function CommandAutocomplete({
           e.preventDefault();
           setSelectedIndex(prev => (prev - 1 + filteredItems.length) % filteredItems.length);
           break;
-        case 'Tab':
         case 'Enter':
           e.preventDefault();
           e.stopImmediatePropagation();
@@ -87,8 +86,20 @@ export default function CommandAutocomplete({
       }
     };
 
+    // Handle Tab selection via custom event from InputArea (Tab keydown is intercepted there
+    // before it can insert a tab character — window listeners fire too late)
+    const handleTabSelect = () => {
+      if (filteredItems.length > 0 && filteredItems[selectedIndex]) {
+        onSelect(filteredItems[selectedIndex]);
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('autocomplete-select', handleTabSelect);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('autocomplete-select', handleTabSelect);
+    };
   }, [filteredItems, selectedIndex, onSelect, onClose]);
 
   if (filteredItems.length === 0) {

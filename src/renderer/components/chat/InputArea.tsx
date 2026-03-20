@@ -822,9 +822,18 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     // Don't submit if any autocomplete is open — let the autocomplete component handle these keys
-    if ((showMentions || showCommands) && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === 'Tab')) {
-      e.preventDefault(); // Prevent Tab from moving focus away from the textarea
-      return; // Let autocomplete components handle these
+    if ((showMentions || showCommands) && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter')) {
+      e.preventDefault();
+      return; // Let autocomplete components handle these via window listener
+    }
+
+    // Tab in autocomplete: select the highlighted item directly (can't rely on window listener — too late to prevent tab insertion)
+    if (showCommands && e.key === 'Tab') {
+      e.preventDefault();
+      e.stopPropagation();
+      // Trigger selection via a custom event that CommandAutocomplete listens for
+      window.dispatchEvent(new CustomEvent('autocomplete-select'));
+      return;
     }
 
     // Handle history navigation
