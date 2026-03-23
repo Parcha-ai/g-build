@@ -822,15 +822,31 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
   }, [isSending, sessionId]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Don't submit if any autocomplete is open
-    if ((showMentions || showCommands) && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter')) {
-      return; // CommandAutocomplete's window listener handles these
+    // Command autocomplete keyboard control — all via ref, no window listeners
+    if (showCommands && commandAutocompleteRef.current) {
+      switch (e.key) {
+        case 'ArrowDown':
+          e.preventDefault();
+          commandAutocompleteRef.current.moveSelection('down');
+          return;
+        case 'ArrowUp':
+          e.preventDefault();
+          commandAutocompleteRef.current.moveSelection('up');
+          return;
+        case 'Tab':
+        case 'Enter':
+          e.preventDefault();
+          commandAutocompleteRef.current.selectCurrent();
+          return;
+        case 'Escape':
+          e.preventDefault();
+          commandAutocompleteRef.current.dismiss();
+          return;
+      }
     }
 
-    // Tab with autocomplete open: select highlighted item directly via ref (don't rely on window listener)
-    if (showCommands && e.key === 'Tab' && !e.shiftKey) {
-      e.preventDefault();
-      commandAutocompleteRef.current?.selectCurrent();
+    // Mention autocomplete — still uses its own handler for arrows/enter
+    if (showMentions && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter')) {
       return;
     }
 
