@@ -1575,7 +1575,8 @@ ${memoriesPrompt}
             ? `Context: ${args.context}\n\nTask: ${args.prompt}`
             : args.prompt;
 
-          const result = await codexService.runForTool(sessionId, fullPrompt, projectPath);
+          const cwd = getProjectPath() || process.cwd();
+          const result = await codexService.runForTool(sessionId, fullPrompt, cwd);
 
           let responseText = result.summary;
           if (result.toolCalls.length > 0) {
