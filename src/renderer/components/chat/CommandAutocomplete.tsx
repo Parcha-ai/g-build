@@ -1,9 +1,18 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useImperativeHandle, forwardRef, useEffect } from 'react';
 import type { Command, Skill, AgentDefinition } from '../../../shared/types';
 import { Terminal, Sparkles, Bot } from 'lucide-react';
 
+export interface CommandAutocompleteHandle {
+  /** Select the currently highlighted item */
+  selectCurrent: () => void;
+  /** Move selection up or down */
+  moveSelection: (direction: 'up' | 'down') => void;
+  /** Close the dropdown */
+  dismiss: () => void;
+}
+
 interface CommandAutocompleteProps {
-  query: string; // The text after `/` or `@agent-`
+  query: string;
   type: 'command' | 'skill' | 'agent';
   commands: Command[];
   skills: Skill[];
@@ -13,7 +22,7 @@ interface CommandAutocompleteProps {
   position: { top: number; left: number };
 }
 
-export default function CommandAutocomplete({
+const CommandAutocomplete = forwardRef<CommandAutocompleteHandle, CommandAutocompleteProps>(({
   query,
   type,
   commands,
@@ -22,15 +31,13 @@ export default function CommandAutocomplete({
   onSelect,
   onClose,
   position,
-}: CommandAutocompleteProps) {
+}, ref) => {
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  // Filter items based on query
   const filteredItems = React.useMemo(() => {
     const lowerQuery = query.toLowerCase();
 
     if (type === 'command') {
-      // Show both commands AND skills for slash notation (combined system)
       const matchedCommands = commands
         .filter(cmd => cmd.name.toLowerCase().includes(lowerQuery))
         .map(cmd => ({ ...cmd, itemType: 'command' as const }));
@@ -58,38 +65,23 @@ export default function CommandAutocomplete({
     setSelectedIndex(0);
   }, [filteredItems]);
 
-  // Handle keyboard navigation
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (filteredItems.length === 0) return;
-
-      switch (e.key) {
-        case 'ArrowDown':
-          e.preventDefault();
-          setSelectedIndex(prev => (prev + 1) % filteredItems.length);
-          break;
-        case 'ArrowUp':
-          e.preventDefault();
-          setSelectedIndex(prev => (prev - 1 + filteredItems.length) % filteredItems.length);
-          break;
-        case 'Tab':
-        case 'Enter':
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          if (filteredItems[selectedIndex]) {
-            onSelect(filteredItems[selectedIndex]);
-          }
-          break;
-        case 'Escape':
-          e.preventDefault();
-          onClose();
-          break;
+  // ALL keyboard control is via ref — no window listeners
+  useImperativeHandle(ref, () => ({
+    selectCurrent: () => {
+      if (filteredItems.length > 0 && filteredItems[selectedIndex]) {
+        onSelect(filteredItems[selectedIndex]);
       }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [filteredItems, selectedIndex, onSelect, onClose]);
+    },
+    moveSelection: (direction: 'up' | 'down') => {
+      setSelectedIndex(prev => {
+        if (direction === 'down') return (prev + 1) % filteredItems.length;
+        return (prev - 1 + filteredItems.length) % filteredItems.length;
+      });
+    },
+    dismiss: () => {
+      onClose();
+    },
+  }), [filteredItems, selectedIndex, onSelect, onClose]);
 
   if (filteredItems.length === 0) {
     return null;
@@ -107,7 +99,7 @@ export default function CommandAutocomplete({
     >
       {filteredItems.map((item, index) => {
         const isSelected = index === selectedIndex;
-        // Use itemType to determine icon for combined command/skill lists
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const itemType = (item as any).itemType || type;
         const Icon = itemType === 'command' ? Terminal : itemType === 'skill' ? Sparkles : Bot;
 
@@ -140,4 +132,6 @@ export default function CommandAutocomplete({
       })}
     </div>
   );
-}
+});
+
+export default CommandAutocomplete;

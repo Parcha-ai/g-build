@@ -255,6 +255,15 @@ export const IPC_CHANNELS = {
   GSTACK_GET_MODES: 'gstack:get-modes',
   GSTACK_GET_PROMPT: 'gstack:get-prompt',
 
+  // Codex channels (second opinion / direct invocation)
+  CODEX_RUN: 'codex:run',
+  CODEX_STREAM_CHUNK: 'codex:stream-chunk',
+  CODEX_TOOL_CALL: 'codex:tool-call',
+  CODEX_THINKING: 'codex:thinking',
+  CODEX_COMPLETE: 'codex:complete',
+  CODEX_ERROR: 'codex:error',
+  CODEX_CANCEL: 'codex:cancel',
+
   // QMD channels (semantic codebase search)
   QMD_GET_STATUS: 'qmd:get-status',
   QMD_ENSURE_INDEXED: 'qmd:ensure-indexed',

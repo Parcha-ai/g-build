@@ -1,7 +1,7 @@
 {
   "name": "g-build",
   "productName": "G-Build",
-  "version": "0.0.76",
+  "version": "0.0.78",
   "description": "AI-powered development environment with intelligent code search, multi-session support, and live browser preview",
   "main": ".webpack/main",
   "scripts": {
@@ -67,6 +67,7 @@
     "@browserbasehq/stagehand": "^3.0.7",
     "@elevenlabs/client": "^0.14.0-beta.0",
     "@monaco-editor/react": "^4.7.0",
+    "@openai/codex-sdk": "^0.116.0",
     "@radix-ui/react-context-menu": "^2.2.16",
     "@radix-ui/react-dialog": "^1.1.15",
     "@radix-ui/react-dropdown-menu": "^2.1.16",

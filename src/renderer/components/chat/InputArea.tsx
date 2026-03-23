@@ -4,7 +4,7 @@ import { useSessionStore, type PermissionMode, type ThinkingMode, type EffortLev
 import { useUIStore } from '../../stores/ui.store';
 import { useAudioStore } from '../../stores/audio.store';
 import MentionAutocomplete, { type Mention } from './MentionAutocomplete';
-import CommandAutocomplete from './CommandAutocomplete';
+import CommandAutocomplete, { type CommandAutocompleteHandle } from './CommandAutocomplete';
 import { MicrophoneButton, type VoiceModeHandle } from './MicrophoneButton';
 import { MessageQueuePanel } from './MessageQueuePanel';
 import { VoiceModeErrorBoundary } from './VoiceModeErrorBoundary';
@@ -210,6 +210,7 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const commandAutocompleteRef = useRef<CommandAutocompleteHandle>(null);
   const voiceModeRef = useRef<VoiceModeHandle>(null);
 
   // Helper to safely get selection position
@@ -552,7 +553,14 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
         itemType: 'gstack',
         gstackId: null,
       });
-      setCommands([...cmds, ...gstackCommands]);
+      // Add /codex command for second opinion
+      const codexCommand = {
+        name: 'codex',
+        description: 'Get a second opinion from OpenAI Codex',
+        scope: 'builtin',
+        itemType: 'codex',
+      };
+      setCommands([...cmds, ...gstackCommands, codexCommand]);
       setSkills(skls);
       setAgents(agts);
       console.log('[InputArea] Loaded extensions for session:', sessionId, '- Commands:', cmds.length, 'Skills:', skls.length, 'Agents:', agts.length, 'GStack:', gstackCommands.length);
@@ -686,7 +694,17 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
       const projectPath = currentSession?.worktreePath;
       const itemType = item.itemType || commandType;
 
-      if (itemType === 'gstack') {
+      if (itemType === 'codex') {
+        // Codex second opinion — extract the prompt from after /codex and start a run
+        const beforeCommand = message.slice(0, commandStartIndex);
+        const afterCommand = message.slice(commandStartIndex + 'codex'.length + 1).trim();
+        const codexPrompt = afterCommand || beforeCommand.trim();
+        if (codexPrompt) {
+          const { startCodexRun } = useSessionStore.getState();
+          startCodexRun(sessionId, codexPrompt);
+        }
+        setMessage('');
+      } else if (itemType === 'gstack') {
         // GStack mode activation/deactivation — set the mode and clear the slash command from input
         const gstackId = item.gstackId || null;
         setGStackMode(sessionId, gstackId as import('../../../shared/types').GStackMode | null);
@@ -763,8 +781,19 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
     if (!message.trim() && attachments.length === 0) return;
     if (disabled) return;
 
-    // Intercept /btw — ephemeral side question (not added to history)
+    // Intercept /codex — second opinion from OpenAI Codex
     const trimmed = message.trim();
+    if (/^\/codex\s+/i.test(trimmed)) {
+      const codexPrompt = trimmed.replace(/^\/codex\s+/i, '').trim();
+      if (codexPrompt) {
+        setMessage('');
+        const { startCodexRun } = useSessionStore.getState();
+        await startCodexRun(sessionId, codexPrompt);
+        return;
+      }
+    }
+
+    // Intercept /btw — ephemeral side question (not added to history)
     if (/^\/btw\s+/i.test(trimmed)) {
       const question = trimmed.replace(/^\/btw\s+/i, '').trim();
       if (question) {
@@ -821,10 +850,32 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
   }, [isSending, sessionId]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Don't submit if any autocomplete is open — let the autocomplete component handle these keys
-    if ((showMentions || showCommands) && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === 'Tab')) {
-      e.preventDefault(); // Prevent Tab from moving focus away from the textarea
-      return; // Let autocomplete components handle these
+    // Command autocomplete keyboard control — all via ref, no window listeners
+    if (showCommands && commandAutocompleteRef.current) {
+      switch (e.key) {
+        case 'ArrowDown':
+          e.preventDefault();
+          commandAutocompleteRef.current.moveSelection('down');
+          return;
+        case 'ArrowUp':
+          e.preventDefault();
+          commandAutocompleteRef.current.moveSelection('up');
+          return;
+        case 'Tab':
+        case 'Enter':
+          e.preventDefault();
+          commandAutocompleteRef.current.selectCurrent();
+          return;
+        case 'Escape':
+          e.preventDefault();
+          commandAutocompleteRef.current.dismiss();
+          return;
+      }
+    }
+
+    // Mention autocomplete — still uses its own handler for arrows/enter
+    if (showMentions && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter')) {
+      return;
     }
 
     // Handle history navigation
@@ -1152,6 +1203,7 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
       {/* Command/Skill/Agent Autocomplete */}
       {showCommands && (
         <CommandAutocomplete
+          ref={commandAutocompleteRef}
           query={commandQuery}
           type={commandType}
           commands={commands}
