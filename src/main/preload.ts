@@ -971,6 +971,39 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.PLUGIN_UPDATE_MARKETPLACE, name),
   },
 
+  // Codex (second opinion)
+  codex: {
+    run: (sessionId: string, prompt: string): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CODEX_RUN, sessionId, prompt),
+    cancel: (sessionId: string): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CODEX_CANCEL, sessionId),
+    onStreamChunk: (callback: (data: { sessionId: string; content: string }) => void) => {
+      const handler = (_: IpcRendererEvent, data: { sessionId: string; content: string }) => callback(data);
+      ipcRenderer.on(IPC_CHANNELS.CODEX_STREAM_CHUNK, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.CODEX_STREAM_CHUNK, handler);
+    },
+    onToolCall: (callback: (data: { sessionId: string; toolCall: any }) => void) => {
+      const handler = (_: IpcRendererEvent, data: { sessionId: string; toolCall: any }) => callback(data);
+      ipcRenderer.on(IPC_CHANNELS.CODEX_TOOL_CALL, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.CODEX_TOOL_CALL, handler);
+    },
+    onThinking: (callback: (data: { sessionId: string; content: string }) => void) => {
+      const handler = (_: IpcRendererEvent, data: { sessionId: string; content: string }) => callback(data);
+      ipcRenderer.on(IPC_CHANNELS.CODEX_THINKING, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.CODEX_THINKING, handler);
+    },
+    onComplete: (callback: (data: { sessionId: string }) => void) => {
+      const handler = (_: IpcRendererEvent, data: { sessionId: string }) => callback(data);
+      ipcRenderer.on(IPC_CHANNELS.CODEX_COMPLETE, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.CODEX_COMPLETE, handler);
+    },
+    onError: (callback: (data: { sessionId: string; error: string }) => void) => {
+      const handler = (_: IpcRendererEvent, data: { sessionId: string; error: string }) => callback(data);
+      ipcRenderer.on(IPC_CHANNELS.CODEX_ERROR, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.CODEX_ERROR, handler);
+    },
+  },
+
   // GStack workflow skills
   gstack: {
     getModes: (): Promise<Array<{ id: string; name: string; shortName: string; description: string; icon: string; color: string }>> =>

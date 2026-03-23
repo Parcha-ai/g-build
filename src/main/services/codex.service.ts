@@ -1,0 +1,310 @@
+import Store from 'electron-store';
+import { Codex } from '@openai/codex-sdk';
+import type { ThreadEvent, ThreadItem, Thread } from '@openai/codex-sdk';
+
+// Stream event types for Codex (parallel to Claude's StreamEvent but separate)
+export interface CodexStreamEvent {
+  type: 'text_start' | 'text_delta' | 'thinking_start' | 'thinking_delta' | 'tool_use' | 'tool_result' | 'complete' | 'error';
+  content?: string;
+  toolCall?: {
+    id: string;
+    name: string;
+    input: Record<string, unknown>;
+    status: 'running' | 'completed' | 'failed';
+    result?: string;
+  };
+  error?: string;
+}
+
+// Result returned when Claude invokes Codex as an MCP tool
+export interface CodexToolResult {
+  summary: string;
+  toolCalls: Array<{
+    type: string;
+    detail: string;
+  }>;
+  reasoning?: string;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const settingsStore = new Store({ name: 'claudette-settings' }) as any;
+
+class CodexServiceImpl {
+  private activeThreads: Map<string, { thread: Thread; abortController: AbortController }> = new Map();
+
+  getOpenAiApiKey(): string | undefined {
+    // User-provided key
+    const userKey = settingsStore.get('openAiApiKey') as string | undefined;
+    if (userKey) return userKey;
+    // Fallback to openaiApiKey (alternate key name)
+    return settingsStore.get('openaiApiKey') as string | undefined;
+  }
+
+  /**
+   * Translate a Codex ThreadEvent into our CodexStreamEvent format.
+   */
+  private translateEvent(event: ThreadEvent): CodexStreamEvent | null {
+    switch (event.type) {
+      case 'item.started': {
+        const item = event.item;
+        switch (item.type) {
+          case 'agent_message':
+            return { type: 'text_start' };
+          case 'reasoning':
+            return { type: 'thinking_start', content: item.text || '' };
+          case 'command_execution':
+            return {
+              type: 'tool_use',
+              toolCall: {
+                id: item.id,
+                name: 'Bash',
+                input: { command: item.command },
+                status: 'running',
+              },
+            };
+          case 'file_change':
+            return {
+              type: 'tool_use',
+              toolCall: {
+                id: item.id,
+                name: 'Edit',
+                input: { changes: item.changes },
+                status: 'running',
+              },
+            };
+          case 'mcp_tool_call':
+            return {
+              type: 'tool_use',
+              toolCall: {
+                id: item.id,
+                name: `MCP:${item.server}:${item.tool}`,
+                input: item.arguments as Record<string, unknown> || {},
+                status: 'running',
+              },
+            };
+          default:
+            return null;
+        }
+      }
+
+      case 'item.updated': {
+        const item = event.item;
+        if (item.type === 'agent_message') {
+          return { type: 'text_delta', content: item.text };
+        }
+        if (item.type === 'reasoning') {
+          return { type: 'thinking_delta', content: item.text };
+        }
+        if (item.type === 'command_execution') {
+          return {
+            type: 'tool_use',
+            toolCall: {
+              id: item.id,
+              name: 'Bash',
+              input: { command: item.command },
+              status: item.status === 'completed' ? 'completed' : 'running',
+              result: item.aggregated_output,
+            },
+          };
+        }
+        return null;
+      }
+
+      case 'item.completed': {
+        const item = event.item;
+        if (item.type === 'command_execution') {
+          return {
+            type: 'tool_result',
+            toolCall: {
+              id: item.id,
+              name: 'Bash',
+              input: { command: item.command },
+              status: item.status === 'completed' ? 'completed' : 'failed',
+              result: item.aggregated_output,
+            },
+          };
+        }
+        if (item.type === 'file_change') {
+          return {
+            type: 'tool_result',
+            toolCall: {
+              id: item.id,
+              name: 'Edit',
+              input: { changes: item.changes },
+              status: item.status === 'completed' ? 'completed' : 'failed',
+            },
+          };
+        }
+        if (item.type === 'mcp_tool_call') {
+          return {
+            type: 'tool_result',
+            toolCall: {
+              id: item.id,
+              name: `MCP:${item.server}:${item.tool}`,
+              input: item.arguments as Record<string, unknown> || {},
+              status: item.status === 'completed' ? 'completed' : 'failed',
+              result: item.result ? JSON.stringify(item.result) : item.error?.message,
+            },
+          };
+        }
+        return null;
+      }
+
+      case 'turn.completed':
+        return { type: 'complete' };
+
+      case 'turn.failed':
+        return { type: 'error', error: event.error?.message || 'Turn failed' };
+
+      case 'error':
+        return { type: 'error', error: event.message || 'Unknown error' };
+
+      default:
+        return null;
+    }
+  }
+
+  /**
+   * Summarise thread items into a structured result for the MCP tool response.
+   */
+  private summariseItems(items: ThreadItem[]): CodexToolResult {
+    let summary = '';
+    let reasoning = '';
+    const toolCalls: Array<{ type: string; detail: string }> = [];
+
+    for (const item of items) {
+      switch (item.type) {
+        case 'agent_message':
+          summary += item.text + '\n';
+          break;
+        case 'reasoning':
+          reasoning += item.text + '\n';
+          break;
+        case 'command_execution':
+          toolCalls.push({
+            type: 'bash',
+            detail: `$ ${item.command}\n${item.aggregated_output || ''}`.trim(),
+          });
+          break;
+        case 'file_change':
+          toolCalls.push({
+            type: 'file_change',
+            detail: item.changes.map(c => `${c.kind}: ${c.path}`).join('\n'),
+          });
+          break;
+        case 'mcp_tool_call':
+          toolCalls.push({
+            type: 'mcp',
+            detail: `${item.server}:${item.tool}`,
+          });
+          break;
+      }
+    }
+
+    return {
+      summary: summary.trim() || 'Codex completed without a text response.',
+      toolCalls,
+      reasoning: reasoning.trim() || undefined,
+    };
+  }
+
+  /**
+   * Run Codex for the MCP tool invocation (blocks until complete, returns structured result).
+   */
+  async runForTool(sessionId: string, prompt: string, workingDir: string): Promise<CodexToolResult> {
+    const apiKey = this.getOpenAiApiKey();
+    if (!apiKey) {
+      return {
+        summary: 'Error: No OpenAI API key configured. Please set your OpenAI API key in Settings.',
+        toolCalls: [],
+      };
+    }
+
+    const codex = new Codex({ apiKey });
+    const thread = codex.startThread({
+      workingDirectory: workingDir,
+      sandboxMode: 'workspace-write',
+      approvalPolicy: 'never',
+      skipGitRepoCheck: true,
+    });
+
+    const abortController = new AbortController();
+    this.activeThreads.set(`tool:${sessionId}`, { thread, abortController });
+
+    try {
+      const result = await thread.run(prompt, { signal: abortController.signal });
+      return this.summariseItems(result.items);
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') {
+        return { summary: 'Codex run was cancelled.', toolCalls: [] };
+      }
+      return {
+        summary: `Codex error: ${error instanceof Error ? error.message : String(error)}`,
+        toolCalls: [],
+      };
+    } finally {
+      this.activeThreads.delete(`tool:${sessionId}`);
+    }
+  }
+
+  /**
+   * Stream Codex events for direct /codex invocation.
+   */
+  async *streamDirect(sessionId: string, prompt: string, workingDir: string): AsyncGenerator<CodexStreamEvent> {
+    const apiKey = this.getOpenAiApiKey();
+    if (!apiKey) {
+      yield { type: 'error', error: 'No OpenAI API key configured. Please set your OpenAI API key in Settings.' };
+      return;
+    }
+
+    const codex = new Codex({ apiKey });
+    const thread = codex.startThread({
+      workingDirectory: workingDir,
+      sandboxMode: 'workspace-write',
+      approvalPolicy: 'never',
+      skipGitRepoCheck: true,
+    });
+
+    const abortController = new AbortController();
+    this.activeThreads.set(sessionId, { thread, abortController });
+
+    try {
+      const streamedTurn = await thread.runStreamed(prompt, { signal: abortController.signal });
+
+      for await (const event of streamedTurn.events) {
+        const translated = this.translateEvent(event);
+        if (translated) {
+          yield translated;
+        }
+      }
+
+      // Ensure we always yield a complete event
+      yield { type: 'complete' };
+    } catch (error) {
+      if ((error as Error).name === 'AbortError') {
+        yield { type: 'complete' };
+      } else {
+        yield { type: 'error', error: error instanceof Error ? error.message : String(error) };
+      }
+    } finally {
+      this.activeThreads.delete(sessionId);
+    }
+  }
+
+  /**
+   * Cancel an active Codex run for a session.
+   */
+  cancel(sessionId: string): void {
+    // Check both direct and tool-mode keys
+    for (const key of [sessionId, `tool:${sessionId}`]) {
+      const active = this.activeThreads.get(key);
+      if (active) {
+        console.log(`[Codex Service] Cancelling run for ${key}`);
+        active.abortController.abort();
+        this.activeThreads.delete(key);
+      }
+    }
+  }
+}
+
+export const codexService = new CodexServiceImpl();

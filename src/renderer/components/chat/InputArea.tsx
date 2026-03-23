@@ -553,7 +553,14 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
         itemType: 'gstack',
         gstackId: null,
       });
-      setCommands([...cmds, ...gstackCommands]);
+      // Add /codex command for second opinion
+      const codexCommand = {
+        name: 'codex',
+        description: 'Get a second opinion from OpenAI Codex',
+        scope: 'builtin',
+        itemType: 'codex',
+      };
+      setCommands([...cmds, ...gstackCommands, codexCommand]);
       setSkills(skls);
       setAgents(agts);
       console.log('[InputArea] Loaded extensions for session:', sessionId, '- Commands:', cmds.length, 'Skills:', skls.length, 'Agents:', agts.length, 'GStack:', gstackCommands.length);
@@ -687,7 +694,17 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
       const projectPath = currentSession?.worktreePath;
       const itemType = item.itemType || commandType;
 
-      if (itemType === 'gstack') {
+      if (itemType === 'codex') {
+        // Codex second opinion — extract the prompt from after /codex and start a run
+        const beforeCommand = message.slice(0, commandStartIndex);
+        const afterCommand = message.slice(commandStartIndex + 'codex'.length + 1).trim();
+        const codexPrompt = afterCommand || beforeCommand.trim();
+        if (codexPrompt) {
+          const { startCodexRun } = useSessionStore.getState();
+          startCodexRun(sessionId, codexPrompt);
+        }
+        setMessage('');
+      } else if (itemType === 'gstack') {
         // GStack mode activation/deactivation — set the mode and clear the slash command from input
         const gstackId = item.gstackId || null;
         setGStackMode(sessionId, gstackId as import('../../../shared/types').GStackMode | null);
@@ -764,8 +781,19 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
     if (!message.trim() && attachments.length === 0) return;
     if (disabled) return;
 
-    // Intercept /btw — ephemeral side question (not added to history)
+    // Intercept /codex — second opinion from OpenAI Codex
     const trimmed = message.trim();
+    if (/^\/codex\s+/i.test(trimmed)) {
+      const codexPrompt = trimmed.replace(/^\/codex\s+/i, '').trim();
+      if (codexPrompt) {
+        setMessage('');
+        const { startCodexRun } = useSessionStore.getState();
+        await startCodexRun(sessionId, codexPrompt);
+        return;
+      }
+    }
+
+    // Intercept /btw — ephemeral side question (not added to history)
     if (/^\/btw\s+/i.test(trimmed)) {
       const question = trimmed.replace(/^\/btw\s+/i, '').trim();
       if (question) {

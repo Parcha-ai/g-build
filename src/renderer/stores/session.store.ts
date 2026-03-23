@@ -113,6 +113,14 @@ interface SessionState {
   // GStack workflow mode per session
   gstackMode: Record<string, GStackMode | null>;
 
+  // Codex (second opinion) state
+  codexStreaming: Record<string, boolean>;
+  codexContent: Record<string, string>;
+  codexThinking: Record<string, string>;
+  codexToolCalls: Record<string, Array<{ id: string; name: string; input: Record<string, unknown>; status: string; result?: string }>>;
+  codexError: Record<string, string | null>;
+  codexPrompt: Record<string, string>;
+
   // Ephemeral /btw side question state
   btw: Record<string, { question: string; response: string; isStreaming: boolean } | null>;
   // Remote control session state
@@ -207,6 +215,12 @@ interface SessionState {
 
   // GStack workflow mode
   setGStackMode: (sessionId: string, mode: GStackMode | null) => void;
+  // Codex (second opinion)
+  startCodexRun: (sessionId: string, prompt: string) => Promise<void>;
+  cancelCodexRun: (sessionId: string) => void;
+  dismissCodex: (sessionId: string) => void;
+  subscribeToCodex: () => () => void;
+
   // Ephemeral /btw side question
   askBtw: (sessionId: string, question: string) => Promise<void>;
   dismissBtw: (sessionId: string) => void;
@@ -247,6 +261,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   securedKeys: {},
   agentColorMap: {},
   gstackMode: {},
+  codexStreaming: {},
+  codexContent: {},
+  codexThinking: {},
+  codexToolCalls: {},
+  codexError: {},
+  codexPrompt: {},
 
   // Ephemeral /btw and remote control state
   btw: {},
@@ -2178,6 +2198,96 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const nextIndex = (currentIndex + delta + siblings.length) % siblings.length;
 
     setActiveSession(siblings[nextIndex].id);
+  },
+
+  // --- /codex (second opinion) ---
+  startCodexRun: async (sessionId: string, prompt: string) => {
+    if (!hasElectronAPI) return;
+    set((state) => ({
+      codexStreaming: { ...state.codexStreaming, [sessionId]: true },
+      codexContent: { ...state.codexContent, [sessionId]: '' },
+      codexThinking: { ...state.codexThinking, [sessionId]: '' },
+      codexToolCalls: { ...state.codexToolCalls, [sessionId]: [] },
+      codexError: { ...state.codexError, [sessionId]: null },
+      codexPrompt: { ...state.codexPrompt, [sessionId]: prompt },
+    }));
+    await window.electronAPI.codex.run(sessionId, prompt);
+  },
+
+  cancelCodexRun: (sessionId: string) => {
+    if (!hasElectronAPI) return;
+    window.electronAPI.codex.cancel(sessionId);
+    set((state) => ({
+      codexStreaming: { ...state.codexStreaming, [sessionId]: false },
+    }));
+  },
+
+  dismissCodex: (sessionId: string) => {
+    set((state) => ({
+      codexStreaming: { ...state.codexStreaming, [sessionId]: false },
+      codexContent: { ...state.codexContent, [sessionId]: '' },
+      codexThinking: { ...state.codexThinking, [sessionId]: '' },
+      codexToolCalls: { ...state.codexToolCalls, [sessionId]: [] },
+      codexError: { ...state.codexError, [sessionId]: null },
+      codexPrompt: { ...state.codexPrompt, [sessionId]: '' },
+    }));
+  },
+
+  subscribeToCodex: () => {
+    if (!hasElectronAPI) return () => {};
+
+    const unsubChunk = window.electronAPI.codex.onStreamChunk(({ sessionId, content }) => {
+      set((state) => ({
+        codexContent: {
+          ...state.codexContent,
+          [sessionId]: (state.codexContent[sessionId] || '') + content,
+        },
+      }));
+    });
+
+    const unsubThinking = window.electronAPI.codex.onThinking(({ sessionId, content }) => {
+      set((state) => ({
+        codexThinking: {
+          ...state.codexThinking,
+          [sessionId]: (state.codexThinking[sessionId] || '') + content,
+        },
+      }));
+    });
+
+    const unsubToolCall = window.electronAPI.codex.onToolCall(({ sessionId, toolCall }) => {
+      set((state) => {
+        const existing = state.codexToolCalls[sessionId] || [];
+        // Update existing tool call or add new one
+        const idx = existing.findIndex(tc => tc.id === toolCall.id);
+        const updated = idx >= 0
+          ? existing.map((tc, i) => i === idx ? toolCall : tc)
+          : [...existing, toolCall];
+        return {
+          codexToolCalls: { ...state.codexToolCalls, [sessionId]: updated },
+        };
+      });
+    });
+
+    const unsubComplete = window.electronAPI.codex.onComplete(({ sessionId }) => {
+      set((state) => ({
+        codexStreaming: { ...state.codexStreaming, [sessionId]: false },
+      }));
+    });
+
+    const unsubError = window.electronAPI.codex.onError(({ sessionId, error }) => {
+      set((state) => ({
+        codexStreaming: { ...state.codexStreaming, [sessionId]: false },
+        codexError: { ...state.codexError, [sessionId]: error },
+      }));
+    });
+
+    return () => {
+      unsubChunk();
+      unsubThinking();
+      unsubToolCall();
+      unsubComplete();
+      unsubError();
+    };
   },
 
   // --- /btw (ephemeral side question) ---

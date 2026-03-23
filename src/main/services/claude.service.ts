@@ -19,6 +19,7 @@ import { sshService } from './ssh.service';
 import { memoryService, MemoryCategory } from './memory.service';
 import { qmdService } from './qmd.service';
 import { mcpService } from './mcp.service';
+import { codexService } from './codex.service';
 
 interface StreamEvent {
   type: 'text_delta' | 'thinking_delta' | 'tool_use' | 'tool_result' | 'message_complete' | 'error' | 'system' | 'permission_request' | 'compaction_status' | 'compaction_complete' | 'plan_content' | 'context_usage';
@@ -1560,6 +1561,52 @@ ${memoriesPrompt}
       }
     );
 
+    // Codex second opinion tool (OpenAI Codex SDK)
+    const codexSecondOpinionTool = tool(
+      'CodexSecondOpinion',
+      'Get a second opinion from OpenAI Codex on a specific coding task. Codex will analyze the codebase and provide its perspective. Use this when you want to validate your approach, get an alternative solution, or need a fresh perspective on a problem.',
+      {
+        prompt: z.string().describe('The task or question to ask Codex about'),
+        context: z.string().optional().describe('Additional context about what you are working on'),
+      },
+      async (args) => {
+        try {
+          const fullPrompt = args.context
+            ? `Context: ${args.context}\n\nTask: ${args.prompt}`
+            : args.prompt;
+
+          const result = await codexService.runForTool(sessionId, fullPrompt, projectPath);
+
+          let responseText = result.summary;
+          if (result.toolCalls.length > 0) {
+            responseText += '\n\n--- Actions taken ---\n';
+            for (const tc of result.toolCalls) {
+              responseText += `[${tc.type}] ${tc.detail}\n`;
+            }
+          }
+          if (result.reasoning) {
+            responseText += `\n\n--- Reasoning ---\n${result.reasoning}`;
+          }
+
+          return {
+            content: [{
+              type: 'text' as const,
+              text: responseText,
+            }],
+          };
+        } catch (error) {
+          console.error('[Claude Service] CodexSecondOpinion error:', error);
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Failed to get Codex second opinion: ${error instanceof Error ? error.message : String(error)}`,
+            }],
+            isError: true,
+          };
+        }
+      }
+    );
+
     const mcpServer = createSdkMcpServer({
       name: 'claudette-browser',
       version: '2.0.0', // Upgraded to Stagehand-powered automation
@@ -1591,6 +1638,9 @@ ${memoriesPrompt}
         memoryRecallTool,
         memoryForgetTool,
         memoryListTool,
+
+        // ============ CODEX SECOND OPINION ============
+        codexSecondOpinionTool,
 
         // ============ DISABLED FOR STAGEHAND TESTING ============
         // browserSnapshotTool,      // Mixed Stagehand/CDP

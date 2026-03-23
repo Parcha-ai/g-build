@@ -388,6 +388,7 @@ function ElectronApp() {
       const unsubscribeBgTasks = store.subscribeToBackgroundTasks();
       const unsubscribeBtw = store.subscribeToBtw();
       const unsubscribeRC = store.subscribeToRemoteControl();
+      const unsubscribeCodex = store.subscribeToCodex();
       return () => {
         unsubscribeSession();
         unsubscribeSetup();
@@ -397,6 +398,7 @@ function ElectronApp() {
         unsubscribeBgTasks();
         unsubscribeBtw();
         unsubscribeRC();
+        unsubscribeCodex();
       };
     }
   }, [user, isDevMode]);
