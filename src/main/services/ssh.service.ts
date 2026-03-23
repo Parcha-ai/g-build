@@ -696,9 +696,8 @@ export class SSHService {
 
     // Build environment exports - only include essential variables for Claude
     // We explicitly whitelist rather than blacklist to avoid sending local machine paths/configs
-    // NOTE: ANTHROPIC_API_KEY is NOT sent — the remote machine should use its own OAuth login.
-    // Sending the local API key would override the remote's auth and bill to the API account.
     const includeVars = [
+      'ANTHROPIC_API_KEY',
       'CLAUDE_CODE_USE_FOUNDRY',
       'ANTHROPIC_FOUNDRY_BASE_URL',
       'ANTHROPIC_FOUNDRY_API_KEY',
