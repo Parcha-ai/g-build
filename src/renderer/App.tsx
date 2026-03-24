@@ -1,4 +1,4 @@
-import React, { useEffect, useState, memo } from 'react';
+import React, { useEffect, useState, useMemo, memo } from 'react';
 import { useAuthStore } from './stores/auth.store';
 import { useSessionStore } from './stores/session.store';
 import { useUIStore } from './stores/ui.store';
@@ -565,15 +565,9 @@ function ElectronApp() {
 
 // Browser-only mode — rendered in the pop-out browser window
 function BrowserOnlyApp() {
-  const { sessions, activeSessionId } = useSessionStore();
-  const { sessionBrowsersEnabled } = useUIStore();
-  const { commandCenterFocusedSessionId } = useUIStore();
+  const { sessions, activeSessionId, commandCenterSessionIds } = useSessionStore();
+  const { commandCenterFocusedSessionId, setCommandCenterFocusedSession, enableSessionBrowser } = useUIStore();
 
-  // Determine which session's browser to show
-  const effectiveId = commandCenterFocusedSessionId || activeSessionId;
-  const session = effectiveId ? sessions.find(s => s.id === effectiveId) : sessions[0];
-
-  // Initialize auth + sessions
   const [ready, setReady] = useState(false);
   useEffect(() => {
     const init = async () => {
@@ -584,7 +578,28 @@ function BrowserOnlyApp() {
     init();
   }, []);
 
-  if (!ready || !session) {
+  // Get command center sessions for tabs
+  const ccSessions = useMemo(() => {
+    return commandCenterSessionIds
+      .map(id => sessions.find(s => s.id === id))
+      .filter((s): s is NonNullable<typeof s> => !!s);
+  }, [commandCenterSessionIds, sessions]);
+
+  // Auto-enable browsers for all command center sessions
+  useEffect(() => {
+    if (ready) {
+      for (const s of ccSessions) {
+        enableSessionBrowser(s.id);
+      }
+    }
+  }, [ready, ccSessions, enableSessionBrowser]);
+
+  // Active tab follows focused session
+  const activeSessionForBrowser = commandCenterFocusedSessionId
+    ? sessions.find(s => s.id === commandCenterFocusedSessionId)
+    : ccSessions[0] || sessions.find(s => s.id === activeSessionId) || sessions[0];
+
+  if (!ready || !activeSessionForBrowser) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-claude-bg">
         <p className="text-claude-text-secondary font-mono text-sm">Loading browser...</p>
@@ -592,22 +607,61 @@ function BrowserOnlyApp() {
     );
   }
 
-  // Lazy import to avoid circular deps
   const BrowserPreview = React.lazy(() => import('./components/preview/BrowserPreview'));
 
   return (
     <div className="h-screen w-screen flex flex-col bg-claude-bg">
+      {/* Title bar with session tabs */}
       <div
-        className="h-8 bg-claude-surface border-b border-claude-border flex items-center px-4"
+        className="h-8 bg-claude-surface border-b border-claude-border flex items-center"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
-        <span className="text-[10px] font-mono font-bold text-claude-text-secondary uppercase" style={{ letterSpacing: '0.1em' }}>
-          Browser — {session.forkName || session.name}
-        </span>
+        {ccSessions.length > 1 ? (
+          <div className="flex-1 flex items-center overflow-x-auto" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+            {ccSessions.map(s => {
+              const isActive = s.id === activeSessionForBrowser.id;
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => setCommandCenterFocusedSession(s.id)}
+                  className={`flex items-center gap-1.5 px-3 h-8 text-[10px] font-mono font-bold uppercase border-r border-claude-border transition-colors whitespace-nowrap ${
+                    isActive
+                      ? 'bg-claude-bg text-claude-text'
+                      : 'bg-claude-surface text-claude-text-secondary hover:bg-claude-bg/50'
+                  }`}
+                  style={{ letterSpacing: '0.05em' }}
+                >
+                  <div
+                    className={`w-1.5 h-1.5 flex-shrink-0 ${s.status === 'running' ? 'bg-green-500' : 'bg-gray-500'}`}
+                    style={{ borderRadius: 0 }}
+                  />
+                  <span className="truncate max-w-[140px]">{s.forkName || s.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <span className="text-[10px] font-mono font-bold text-claude-text-secondary uppercase px-4" style={{ letterSpacing: '0.1em' }}>
+            Browser — {activeSessionForBrowser.forkName || activeSessionForBrowser.name}
+          </span>
+        )}
       </div>
-      <div className="flex-1 overflow-hidden">
+      {/* Browser views — all mounted, only active visible */}
+      <div className="flex-1 overflow-hidden relative">
         <React.Suspense fallback={<div className="flex-1 flex items-center justify-center"><p className="text-claude-text-secondary">Loading...</p></div>}>
-          <BrowserPreview session={session} isVisible={true} />
+          {ccSessions.length > 1 ? (
+            ccSessions.map(s => (
+              <div
+                key={s.id}
+                className="absolute inset-0"
+                style={{ display: s.id === activeSessionForBrowser.id ? 'block' : 'none' }}
+              >
+                <BrowserPreview session={s} isVisible={s.id === activeSessionForBrowser.id} />
+              </div>
+            ))
+          ) : (
+            <BrowserPreview session={activeSessionForBrowser} isVisible={true} />
+          )}
         </React.Suspense>
       </div>
     </div>
