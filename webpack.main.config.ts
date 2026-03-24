@@ -22,6 +22,7 @@ export const mainConfig: Configuration = {
     'node-pty': 'commonjs node-pty',
     '@anthropic-ai/claude-agent-sdk': 'commonjs @anthropic-ai/claude-agent-sdk',
     '@anthropic-ai/sdk': 'commonjs @anthropic-ai/sdk',
-    '@openai/codex-sdk': 'commonjs @openai/codex-sdk',
+    // codex-sdk is ESM-only — loaded via dynamic import(), kept external for postPackage copy
+    '@openai/codex-sdk': '@openai/codex-sdk',
   },
 };

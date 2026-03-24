@@ -1,6 +1,10 @@
 import Store from 'electron-store';
-import { Codex } from '@openai/codex-sdk';
-import type { ThreadEvent, ThreadItem, Thread } from '@openai/codex-sdk';
+// @openai/codex-sdk is ESM-only — must use dynamic import() in CJS context
+// Type imports are fine (erased at compile time)
+type ThreadEvent = import('@openai/codex-sdk').ThreadEvent;
+type ThreadItem = import('@openai/codex-sdk').ThreadItem;
+type Thread = import('@openai/codex-sdk').Thread;
+type Codex = import('@openai/codex-sdk').Codex;
 
 // Stream event types for Codex (parallel to Claude's StreamEvent but separate)
 export interface CodexStreamEvent {
@@ -28,6 +32,12 @@ export interface CodexToolResult {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const settingsStore = new Store({ name: 'claudette-settings' }) as any;
+
+// Lazy-load the ESM-only Codex SDK
+async function createCodex(apiKey: string): Promise<InstanceType<typeof import('@openai/codex-sdk').Codex>> {
+  const { Codex } = await import('@openai/codex-sdk');
+  return new Codex({ apiKey });
+}
 
 class CodexServiceImpl {
   private activeThreads: Map<string, { thread: Thread; abortController: AbortController }> = new Map();
@@ -220,7 +230,7 @@ class CodexServiceImpl {
       };
     }
 
-    const codex = new Codex({ apiKey });
+    const codex = await createCodex(apiKey);
     const thread = codex.startThread({
       workingDirectory: workingDir,
       sandboxMode: 'workspace-write',
@@ -257,7 +267,7 @@ class CodexServiceImpl {
       return;
     }
 
-    const codex = new Codex({ apiKey });
+    const codex = await createCodex(apiKey);
     const thread = codex.startThread({
       workingDirectory: workingDir,
       sandboxMode: 'workspace-write',
