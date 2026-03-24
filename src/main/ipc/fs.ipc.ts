@@ -207,6 +207,15 @@ export function registerFsHandlers(ipcMain: IpcMain): void {
 
       // Local file read
       console.log('[FS] Reading local file:', filePath);
+      // Read images as base64, everything else as UTF-8
+      const isImage = /\.(png|jpe?g|gif|svg|webp|ico|bmp)$/i.test(filePath);
+      if (isImage) {
+        const buffer = await fs.readFile(filePath);
+        const base64 = buffer.toString('base64');
+        const ext = filePath.split('.').pop()?.toLowerCase() || 'png';
+        const mime = ext === 'svg' ? 'svg+xml' : ext === 'jpg' ? 'jpeg' : ext;
+        return { success: true, content: `data:image/${mime};base64,${base64}` };
+      }
       const content = await fs.readFile(filePath, 'utf-8');
       return { success: true, content };
     } catch (error) {

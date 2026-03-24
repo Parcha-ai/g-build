@@ -282,6 +282,16 @@ export default function EditorPanel({ onClose }: EditorPanelProps) {
             </div>
           </div>
         ) : activeTab ? (
+          // Show image preview for image files
+          /\.(png|jpe?g|gif|svg|webp|ico|bmp)$/i.test(activeTab.filePath) ? (
+            <div className="flex-1 overflow-auto flex items-center justify-center bg-claude-bg p-4">
+              <img
+                src={activeTab.content}
+                alt={activeTab.fileName}
+                className="max-w-full max-h-full object-contain"
+              />
+            </div>
+          ) :
           // Show markdown preview or Monaco editor based on mode
           activeTab.isPreviewMode && activeTab.language === 'markdown' ? (
             <div className="flex-1 overflow-auto p-6 bg-claude-bg">
