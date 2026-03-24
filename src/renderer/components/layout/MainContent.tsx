@@ -16,7 +16,7 @@ import EmptyState from './EmptyState';
 import { X, GripVertical, GripHorizontal, Smartphone, Monitor } from 'lucide-react';
 
 export default function MainContent() {
-  const { activeSessionId, sessions, setupProgress } = useSessionStore();
+  const { activeSessionId, sessions, setupProgress, commandCenterSessionIds } = useSessionStore();
   const {
     isTerminalPanelOpen,
     isBrowserPanelOpen,
@@ -41,6 +41,7 @@ export default function MainContent() {
     // Command Center
     isCommandCenterActive,
     commandCenterFocusedSessionId,
+    setCommandCenterFocusedSession,
   } = useUIStore();
   const { isEditorOpen, closeEditor } = useEditorStore();
   const [isTerminalResizing, setIsTerminalResizing] = useState(false);
@@ -122,15 +123,17 @@ export default function MainContent() {
     return unsubscribe;
   }, []);
 
-  // When Command Center is active and a cell is focused, auto-enable browser for it
+  // When Command Center is active and browser panel is open, auto-enable browsers for ALL command center sessions
   useEffect(() => {
-    if (isCommandCenterActive && commandCenterFocusedSessionId && isBrowserPanelOpen) {
-      const rootId = getRootSessionId(commandCenterFocusedSessionId);
-      if (!sessionBrowsersEnabled[rootId]) {
-        enableSessionBrowser(rootId);
+    if (isCommandCenterActive && isBrowserPanelOpen) {
+      for (const id of commandCenterSessionIds) {
+        const rootId = getRootSessionId(id);
+        if (!sessionBrowsersEnabled[rootId]) {
+          enableSessionBrowser(rootId);
+        }
       }
     }
-  }, [isCommandCenterActive, commandCenterFocusedSessionId, isBrowserPanelOpen, getRootSessionId, sessionBrowsersEnabled, enableSessionBrowser]);
+  }, [isCommandCenterActive, isBrowserPanelOpen, commandCenterSessionIds, getRootSessionId, sessionBrowsersEnabled, enableSessionBrowser]);
 
   // Auto-enable browser for active session's ROOT when browser panel is opened
   useEffect(() => {
@@ -377,23 +380,53 @@ export default function MainContent() {
                 {/* Browser panel - renders multiple BrowserPreview instances for multi-session support */}
                 {isBrowserPanelOpen && (
                   <div className={`flex flex-col overflow-hidden ${isGitPanelOpen || isEditorOpen ? 'flex-1' : 'h-full'}`}>
-                    <div className="h-10 flex items-center justify-between px-3 border-b border-claude-border bg-claude-surface">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium">Browser Preview</span>
-                        {viewportMode === 'mobile' && (
-                          <span className="text-xs text-purple-400 font-medium">
-                            375 × {mobileBrowserHeight}
-                          </span>
-                        )}
-                        {sessionsWithBrowsers.length > 1 && (
-                          <span className="text-xs text-claude-text-secondary">
-                            ({sessionsWithBrowsers.length} browsers)
-                          </span>
-                        )}
-                      </div>
+                    <div className="h-10 flex items-center justify-between border-b border-claude-border bg-claude-surface">
+                      {/* Command Center mode: session tabs */}
+                      {isCommandCenterActive && sessionsWithBrowsers.length > 1 ? (
+                        <div className="flex-1 flex items-center overflow-x-auto">
+                          {sessionsWithBrowsers.map(session => {
+                            const isFocused = commandCenterFocusedSessionId
+                              ? getRootSessionId(commandCenterFocusedSessionId) === session.id
+                              : false;
+                            return (
+                              <button
+                                key={session.id}
+                                onClick={() => setCommandCenterFocusedSession(session.id)}
+                                className={`flex items-center gap-1.5 px-3 py-2 text-xs font-mono border-r border-claude-border transition-colors whitespace-nowrap ${
+                                  isFocused
+                                    ? 'bg-claude-bg text-claude-text'
+                                    : 'bg-claude-surface text-claude-text-secondary hover:bg-claude-bg/50'
+                                }`}
+                              >
+                                <div
+                                  className={`w-1.5 h-1.5 flex-shrink-0 ${session.status === 'running' ? 'bg-green-500' : 'bg-gray-500'}`}
+                                  style={{ borderRadius: 0 }}
+                                />
+                                <span className="truncate max-w-[120px]">
+                                  {session.forkName || session.name}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 px-3">
+                          <span className="text-sm font-medium">Browser Preview</span>
+                          {viewportMode === 'mobile' && (
+                            <span className="text-xs text-purple-400 font-medium">
+                              375 × {mobileBrowserHeight}
+                            </span>
+                          )}
+                          {sessionsWithBrowsers.length > 1 && (
+                            <span className="text-xs text-claude-text-secondary">
+                              ({sessionsWithBrowsers.length} browsers)
+                            </span>
+                          )}
+                        </div>
+                      )}
                       <button
                         onClick={toggleBrowserPanel}
-                        className="p-1 rounded hover:bg-claude-bg text-claude-text-secondary hover:text-claude-text"
+                        className="p-1 mx-2 rounded hover:bg-claude-bg text-claude-text-secondary hover:text-claude-text flex-shrink-0"
                       >
                         <X size={14} />
                       </button>
