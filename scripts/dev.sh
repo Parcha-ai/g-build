@@ -27,5 +27,16 @@ lsof -ti:9000 | xargs kill -9 2>/dev/null || true
 export GREP_DEV_USER_DATA="/tmp/grep-build-dev"
 mkdir -p "$GREP_DEV_USER_DATA"
 
+# Copy settings from production so API keys etc. are available in dev
+DEV_SETTINGS="$GREP_DEV_USER_DATA/claudette-settings.json"
+for PROD_DIR in "$HOME/Library/Application Support/G-Build" "$HOME/Library/Application Support/Grep Build"; do
+  PROD_SETTINGS="$PROD_DIR/claudette-settings.json"
+  if [ -f "$PROD_SETTINGS" ]; then
+    cp "$PROD_SETTINGS" "$DEV_SETTINGS"
+    echo "Synced settings from $PROD_DIR"
+    break
+  fi
+done
+
 # Start the dev server with the instance name
 npm run start
