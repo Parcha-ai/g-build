@@ -83,6 +83,7 @@ interface SessionState {
   messages: Record<string, ChatMessage[]>;
   isLoadingMessages: Record<string, boolean>;
   isStreaming: Record<string, boolean>;
+  sessionActivity: Record<string, 'active' | 'waiting' | 'idle'>; // Activity state per session
   isProcessingQueue: Record<string, boolean>; // True during queue drain window to prevent race
   streamEvents: Record<string, StreamEvent[]>; // Chronological events
   currentStreamContent: Record<string, string>;
@@ -240,6 +241,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   messages: {},
   isLoadingMessages: {},
   isStreaming: {},
+  sessionActivity: {},
   isProcessingQueue: {},
   streamEvents: {}, // Chronological event stream
   currentStreamContent: {},
@@ -467,6 +469,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         messages: clean(state.messages),
         isLoadingMessages: clean(state.isLoadingMessages),
         isStreaming: clean(state.isStreaming),
+        sessionActivity: clean(state.sessionActivity),
         isProcessingQueue: clean(state.isProcessingQueue),
         streamEvents: clean(state.streamEvents),
         currentStreamContent: clean(state.currentStreamContent),
@@ -719,6 +722,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     set((state) => ({
       isStreaming: { ...state.isStreaming, [sessionId]: isStreaming },
+      sessionActivity: {
+        ...state.sessionActivity,
+        [sessionId]: isStreaming ? 'active' : 'waiting',
+      },
       streamEvents: isStreaming
         ? { ...state.streamEvents, [sessionId]: [] }
         : state.streamEvents,
@@ -1038,13 +1045,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const activeGStackMode = gstackMode[sessionId] || undefined; // Pass GStack mode directly
     console.log('[SessionStore] sendMessage - sessionId:', sessionId, 'permissionMode:', mode, 'gstackMode:', activeGStackMode, 'raw:', permissionMode[sessionId]);
 
-    // Update session's updatedAt timestamp for recent activity
+    // Update session's updatedAt timestamp for recent activity and mark as idle (user sent a message)
     set((state) => ({
       sessions: state.sessions.map(session =>
         session.id === sessionId
           ? { ...session, updatedAt: new Date() }
           : session
       ),
+      sessionActivity: { ...state.sessionActivity, [sessionId]: 'idle' },
     }));
 
     // Intercept and secure any API keys/tokens in the message
@@ -1294,6 +1302,29 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         currentThinkingContent: { ...state.currentThinkingContent, [sessionId]: '' },
         streamEvents: { ...state.streamEvents, [sessionId]: [] },
       }));
+
+      // Desktop notification for non-active sessions when a turn completes
+      if (finalMessage.role === 'assistant' && messageContent) {
+        const activeId = get().activeSessionId;
+        if (sessionId !== activeId) {
+          const session = get().sessions.find(s => s.id === sessionId);
+          const sessionName = session?.forkName || session?.name || 'Session';
+          const preview = messageContent.replace(/\s+/g, ' ').trim().slice(0, 80);
+          try {
+            const notification = new Notification(sessionName, {
+              body: preview || 'Turn complete',
+              silent: true,
+            });
+            notification.onclick = () => {
+              get().setActiveSession(sessionId);
+              window.focus();
+            };
+          } catch (e) {
+            // Notifications may not be available in all environments
+            console.warn('[SessionStore] Desktop notification failed:', e);
+          }
+        }
+      }
 
       // Auto-play TTS if audio mode is active and message has content
       if (messageContent && finalMessage.role === 'assistant') {

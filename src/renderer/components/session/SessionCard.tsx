@@ -42,6 +42,7 @@ interface SessionCardProps {
 
 export default function SessionCard({ session, isActive, onClick, isFork = false, onTeleportRequest, onDownload }: SessionCardProps) {
   const { sessions, startSession, stopSession, deleteSession, updateSession, addToCommandCenter, removeFromCommandCenter, commandCenterSessionIds } = useSessionStore();
+  const activity = useSessionStore((s) => s.sessionActivity[session.id]);
   // Check if this session (or its root) is in the command center
   const isInCommandCenter = (() => {
     let rootId = session.id;
@@ -282,6 +283,19 @@ export default function SessionCard({ session, isActive, onClick, isFork = false
               >
                 {session.forkName || session.name}
               </h4>
+              {/* Activity indicator: green pulse = active/streaming, amber = waiting for input */}
+              {activity === 'active' && (
+                <span
+                  className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"
+                  title="Streaming..."
+                />
+              )}
+              {activity === 'waiting' && (
+                <span
+                  className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-amber-400"
+                  title="Waiting for input"
+                />
+              )}
               <button
                 onClick={handleEditClick}
                 className="opacity-0 group-hover/name:opacity-100 p-0.5 hover:bg-claude-accent/20 transition-opacity flex-shrink-0"
