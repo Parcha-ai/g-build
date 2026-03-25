@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { X, Image, FileCode, Target, File, Folder, AtSign, Brain, Square, Code, Smartphone } from 'lucide-react';
+import { X, Image, FileCode, Target, File, Folder, AtSign, Brain, Square, Code, Smartphone, RefreshCw } from 'lucide-react';
 import { useSessionStore, type PermissionMode, type ThinkingMode, type EffortLevel, type ModelInfo, migrateThinkingMode } from '../../stores/session.store';
 import { useUIStore } from '../../stores/ui.store';
 import { useAudioStore } from '../../stores/audio.store';
@@ -1441,6 +1441,18 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
             title={inspectorActive ? 'Cancel inspector (click again)' : 'Inspect element'}
           >
             <Target size={14} />
+          </button>
+          <button
+            onClick={() => {
+              const { sendMessage } = useSessionStore.getState();
+              sendMessage(sessionId, 'continue');
+            }}
+            disabled={disabled || isSending}
+            className="p-1 transition-colors hover:bg-claude-bg disabled:opacity-40 disabled:cursor-not-allowed text-claude-text-secondary hover:text-claude-accent"
+            style={{ borderRadius: 0 }}
+            title="Ping for update (sends 'continue')"
+          >
+            <RefreshCw size={14} />
           </button>
           <button
             onClick={() => {
