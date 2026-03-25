@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import { useSessionStore } from '../../stores/session.store';
 
 interface ForkTabsProps {
@@ -8,27 +8,41 @@ interface ForkTabsProps {
 /**
  * ForkTabs - Horizontal tab bar showing conversation forks
  * Displays when a session has conversation forks (parent + children)
+ * Closing a tab hides it (doesn't delete the session)
  */
 export default function ForkTabs({ sessionId }: ForkTabsProps) {
   const getForkSiblings = useSessionStore(s => s.getForkSiblings);
   const setActiveSession = useSessionStore(s => s.setActiveSession);
-  const deleteSession = useSessionStore(s => s.deleteSession);
   const activeSessionId = useSessionStore(s => s.activeSessionId);
 
+  // Track closed/hidden tabs locally (persists within the component's lifecycle)
+  const [closedTabs, setClosedTabs] = useState<Set<string>>(new Set());
+
   const forkSiblings = getForkSiblings(sessionId);
+  const visibleForks = forkSiblings.filter(f => !closedTabs.has(f.id));
 
-  const handleClose = async (e: React.MouseEvent, forkId: string) => {
-    e.stopPropagation(); // Prevent tab switch
-    await deleteSession(forkId);
-  };
+  const handleClose = useCallback((e: React.MouseEvent, forkId: string) => {
+    e.stopPropagation();
+    setClosedTabs(prev => new Set(prev).add(forkId));
 
-  // Only show if there are multiple forks
-  if (forkSiblings.length <= 1) return null;
+    // If we closed the active tab, switch to the next visible one
+    if (forkId === activeSessionId) {
+      const remaining = forkSiblings.filter(f => f.id !== forkId && !closedTabs.has(f.id));
+      if (remaining.length > 0) {
+        // Prefer parent (root) session, then first sibling
+        const root = remaining.find(f => !f.parentSessionId);
+        setActiveSession(root?.id || remaining[0].id);
+      }
+    }
+  }, [activeSessionId, forkSiblings, closedTabs, setActiveSession]);
+
+  // Only show if there are multiple visible forks
+  if (visibleForks.length <= 1) return null;
 
   return (
     <div className="border-b border-claude-border bg-claude-bg/50 text-xs font-mono">
       <div className="flex items-center px-3 py-1 overflow-x-auto">
-        {forkSiblings.map((fork, index) => {
+        {visibleForks.map((fork, index) => {
           const isActive = fork.id === activeSessionId;
           const displayName = fork.aiGeneratedName || fork.name;
           const isRoot = !fork.parentSessionId;
