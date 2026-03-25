@@ -326,6 +326,11 @@ export class ClaudeService {
         name: 'Haiku 4.5',
         description: 'Fastest model - best for simple tasks'
       },
+      {
+        id: 'codex',
+        name: 'Codex',
+        description: 'OpenAI Codex - second opinion from a different AI'
+      },
     ];
   }
 
@@ -2503,6 +2508,16 @@ ${memoriesPrompt}
       if (!selectedModel) {
         selectedModel = 'claude-opus-4-5-20251101';
         console.log('[Claude Service] Using Anthropic default:', selectedModel);
+      }
+
+      // Route to Codex SDK when Codex model is selected
+      if (selectedModel === 'codex') {
+        console.log('[Claude Service] Routing to Codex SDK');
+        const projectPath = session.worktreePath || session.repoPath || process.cwd();
+        for await (const event of codexService.streamAsChat(sessionId, userMessage, projectPath)) {
+          yield event as StreamEvent;
+        }
+        return;
       }
 
       const isOpus = selectedModel.includes('opus');

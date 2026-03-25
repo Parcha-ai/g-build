@@ -695,15 +695,11 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
       const itemType = item.itemType || commandType;
 
       if (itemType === 'codex') {
-        // Codex second opinion — extract the prompt from after /codex and start a run
+        // Switch to Codex model — messages route through Codex SDK in the same chat
+        const { setSelectedModel } = useSessionStore.getState();
+        setSelectedModel(sessionId, 'codex');
         const beforeCommand = message.slice(0, commandStartIndex);
-        const afterCommand = message.slice(commandStartIndex + 'codex'.length + 1).trim();
-        const codexPrompt = afterCommand || beforeCommand.trim();
-        if (codexPrompt) {
-          const { startCodexRun } = useSessionStore.getState();
-          startCodexRun(sessionId, codexPrompt);
-        }
-        setMessage('');
+        setMessage(beforeCommand.trim());
       } else if (itemType === 'gstack') {
         // GStack mode activation/deactivation — set the mode and clear the slash command from input
         const gstackId = item.gstackId || null;
@@ -781,19 +777,8 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
     if (!message.trim() && attachments.length === 0) return;
     if (disabled) return;
 
-    // Intercept /codex — second opinion from OpenAI Codex
-    const trimmed = message.trim();
-    if (/^\/codex\s+/i.test(trimmed)) {
-      const codexPrompt = trimmed.replace(/^\/codex\s+/i, '').trim();
-      if (codexPrompt) {
-        setMessage('');
-        const { startCodexRun } = useSessionStore.getState();
-        await startCodexRun(sessionId, codexPrompt);
-        return;
-      }
-    }
-
     // Intercept /btw — ephemeral side question (not added to history)
+    const trimmed = message.trim();
     if (/^\/btw\s+/i.test(trimmed)) {
       const question = trimmed.replace(/^\/btw\s+/i, '').trim();
       if (question) {

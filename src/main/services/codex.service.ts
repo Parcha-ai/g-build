@@ -302,6 +302,59 @@ class CodexServiceImpl {
   }
 
   /**
+   * Stream Codex as Claude-compatible StreamEvents so it works in the existing chat pipeline.
+   * This is the main integration point — when user selects "Codex" as the model.
+   */
+  async *streamAsChat(sessionId: string, prompt: string, workingDir: string): AsyncGenerator<{
+    type: string;
+    content?: string;
+    toolCall?: { id: string; name: string; input: Record<string, unknown>; status: string; result?: string };
+    error?: string;
+    systemInfo?: { tools: string[]; model: string };
+  }> {
+    // Emit system info first (like Claude does)
+    yield {
+      type: 'system',
+      systemInfo: { tools: ['Bash', 'Edit', 'Read', 'Write', 'Glob', 'Grep'], model: 'codex' },
+    };
+
+    for await (const event of this.streamDirect(sessionId, prompt, workingDir)) {
+      switch (event.type) {
+        case 'text_start':
+          // Nothing to emit — text_delta will follow
+          break;
+        case 'text_delta':
+          if (event.content) {
+            yield { type: 'text_delta', content: event.content };
+          }
+          break;
+        case 'thinking_start':
+        case 'thinking_delta':
+          if (event.content) {
+            yield { type: 'thinking_delta', content: event.content };
+          }
+          break;
+        case 'tool_use':
+          if (event.toolCall) {
+            yield { type: 'tool_use', toolCall: event.toolCall };
+          }
+          break;
+        case 'tool_result':
+          if (event.toolCall) {
+            yield { type: 'tool_result', toolCall: event.toolCall };
+          }
+          break;
+        case 'complete':
+          yield { type: 'message_complete' };
+          break;
+        case 'error':
+          yield { type: 'error', error: event.error };
+          break;
+      }
+    }
+  }
+
+  /**
    * Cancel an active Codex run for a session.
    */
   cancel(sessionId: string): void {

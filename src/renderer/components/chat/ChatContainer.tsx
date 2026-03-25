@@ -10,7 +10,7 @@ import ThinkingBlock from './ThinkingBlock';
 import TasksBlock, { type Task } from './TasksBlock';
 import BackgroundTasksBlock from './BackgroundTasksBlock';
 import BtwOverlay from './BtwOverlay';
-import CodexOverlay from './CodexOverlay';
+// CodexOverlay removed — Codex runs as a model in the existing chat
 import RemoteControlPanel from './RemoteControlPanel';
 // CompactionBar removed - compaction status now shown in ThinkingBlock
 import { SoundVisualization } from './SoundVisualization';
@@ -47,12 +47,7 @@ export default function ChatContainer({ session }: ChatContainerProps) {
   const btwState = useSessionStore(useCallback((s) => s.btw[session.id] || null, [session.id]));
   const rcState = useSessionStore(useCallback((s) => s.remoteControl[session.id] || null, [session.id]));
   // Codex second opinion state
-  const codexIsStreaming = useSessionStore(useCallback((s) => s.codexStreaming[session.id] || false, [session.id]));
-  const codexContent = useSessionStore(useCallback((s) => s.codexContent[session.id] || '', [session.id]));
-  const codexThinking = useSessionStore(useCallback((s) => s.codexThinking[session.id] || '', [session.id]));
-  const codexToolCalls = useSessionStore(useCallback((s) => s.codexToolCalls[session.id] || EMPTY_TOOL_CALLS, [session.id]));
-  const codexError = useSessionStore(useCallback((s) => s.codexError[session.id] || null, [session.id]));
-  const codexPrompt = useSessionStore(useCallback((s) => s.codexPrompt[session.id] || '', [session.id]));
+  // Codex overlay state removed — Codex runs as a model in the existing chat
 
   // Action selectors — stable references, never cause re-renders
   const approvePermission = useSessionStore((s) => s.approvePermission);
@@ -62,8 +57,7 @@ export default function ChatContainer({ session }: ChatContainerProps) {
   const addBackgroundTask = useSessionStore((s) => s.addBackgroundTask);
   const removeBackgroundTask = useSessionStore((s) => s.removeBackgroundTask);
   const dismissBtw = useSessionStore((s) => s.dismissBtw);
-  const cancelCodexRun = useSessionStore((s) => s.cancelCodexRun);
-  const dismissCodex = useSessionStore((s) => s.dismissCodex);
+  // Codex overlay actions removed — Codex runs as a model in the existing chat
   // clearRemoteControl removed — stopRemoteControl handles both IPC kill + state clear
 
   const { audioModeActive, ttsStates } = useAudioStore();
@@ -678,19 +672,7 @@ export default function ChatContainer({ session }: ChatContainerProps) {
         />
       )}
 
-      {/* Codex second opinion overlay */}
-      {(codexIsStreaming || codexContent || codexError) && (
-        <CodexOverlay
-          prompt={codexPrompt}
-          content={codexContent}
-          thinking={codexThinking}
-          toolCalls={codexToolCalls as any}
-          error={codexError}
-          isStreaming={codexIsStreaming}
-          onCancel={() => cancelCodexRun(session.id)}
-          onDismiss={() => dismissCodex(session.id)}
-        />
-      )}
+      {/* Codex overlay removed — Codex now runs as a model in the existing chat */}
 
       {/* Ephemeral /btw overlay */}
       {btwState && (
