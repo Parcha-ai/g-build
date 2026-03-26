@@ -2135,13 +2135,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       console.log('[SessionStore] Created conversation fork:', forkedSession.id);
 
-      // Clear parent session's streaming state (it may have been streaming when we forked)
-      // This ensures the parent can reload its transcript when we switch back to it
-      set(state => ({
-        isStreaming: { ...state.isStreaming, [activeSessionId]: false },
-        currentStreamContent: { ...state.currentStreamContent, [activeSessionId]: '' },
-        currentThinkingContent: { ...state.currentThinkingContent, [activeSessionId]: '' },
-      }));
+      // DON'T clear parent session's streaming state — let it keep running
+      // The fork is a separate conversation that doesn't affect the parent
 
       // Add to session list
       set(state => ({
@@ -2157,14 +2152,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         rootId = session.parentSessionId;
         session = sessions.find(s => s.id === rootId);
       }
-
-      set(state => ({
-        visibleForkIds: {
-          ...state.visibleForkIds,
-          [rootId]: [...(state.visibleForkIds[rootId] || [rootId]), forkedSession.id]
-        },
-        activeForkGroup: rootId
-      }));
 
       // Switch to new fork
       await setActiveSession(forkedSession.id);
