@@ -264,7 +264,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!tab) return false;
 
     try {
-      const result = await window.electronAPI.fs.writeFile(tab.filePath, tab.content);
+      // Pass sessionId so SSH sessions write to the remote machine
+      const { useSessionStore } = await import('./session.store');
+      const activeSessionId = useSessionStore.getState().activeSessionId;
+      const result = await window.electronAPI.fs.writeFile(tab.filePath, tab.content, activeSessionId || undefined);
 
       if (!result.success) {
         set({ error: result.error || 'Failed to save file' });
