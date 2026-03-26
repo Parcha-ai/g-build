@@ -2575,8 +2575,18 @@ ${memoriesPrompt}
         });
       }
 
-      // Build the text message with DOM element context prepended
+      // Prepend GStack mode instructions to the user message for maximum effectiveness
+      // (system prompt append gets buried — direct user message is much stronger)
       let fullTextMessage = userMessage;
+      const activeGStackMode = gstackMode || session.gstackMode;
+      if (activeGStackMode) {
+        const { getGStackModePrompt } = require('./gstack.service');
+        const modePrompt = getGStackModePrompt(activeGStackMode);
+        if (modePrompt) {
+          fullTextMessage = `${modePrompt}\n\n---\n\nUser request: ${userMessage}`;
+          console.log('[Claude Service] GStack mode prepended to user message:', activeGStackMode);
+        }
+      }
       if (hasDomElements) {
         const domContext = domElementAttachments.map((el, i) => {
           return `<selected-element index="${i + 1}" selector="${el.name}">\n${el.content}\n</selected-element>`;

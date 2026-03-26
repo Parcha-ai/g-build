@@ -118,9 +118,10 @@ function GStackLauncher({ sessionId, onClose }: { sessionId: string; onClose: ()
   }, [onClose]);
 
   const GROUPS = [
-    { label: 'Strategy', ids: ['office-hours', 'plan-ceo', 'plan-eng', 'design'] },
-    { label: 'Development', ids: ['review', 'ship'] },
+    { label: 'Strategy', ids: ['office-hours', 'plan-ceo', 'plan-eng', 'design', 'autoplan'] },
+    { label: 'Development', ids: ['review', 'ship', 'document-release', 'investigate'] },
     { label: 'Testing', ids: ['qa', 'browse'] },
+    { label: 'Safety', ids: ['careful', 'freeze', 'guard', 'cso'] },
     { label: 'Analysis', ids: ['retro'] },
   ];
 
