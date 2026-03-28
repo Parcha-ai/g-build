@@ -234,6 +234,8 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
   const askBtw = useSessionStore((s) => s.askBtw);
   const remoteControl = useSessionStore(useCallback((s) => s.remoteControl[sessionId] || null, [sessionId]));
   const interruptAndSend = useSessionStore((s) => s.interruptAndSend);
+  const pendingPlanApproval = useSessionStore(useCallback((s) => s.pendingPlanApproval[sessionId] || null, [sessionId]));
+  const rejectPlan = useSessionStore((s) => s.rejectPlan);
   const cyclePermissionMode = useSessionStore((s) => s.cyclePermissionMode);
   const setGStackMode = useSessionStore((s) => s.setGStackMode);
   const cycleThinkingMode = useSessionStore((s) => s.cycleThinkingMode);
@@ -787,6 +789,14 @@ export default function InputArea({ sessionId, disabled, systemInfo, isStreaming
         await askBtw(sessionId, question);
         return;
       }
+    }
+
+    // If waiting for plan approval, treat input as plan feedback
+    if (pendingPlanApproval && trimmed) {
+      setMessage('');
+      setAttachments([]);
+      await rejectPlan(sessionId, trimmed);
+      return;
     }
 
     // Note: We don't block on isSending - the store handles queueing if already streaming

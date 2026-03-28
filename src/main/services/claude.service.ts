@@ -65,6 +65,7 @@ interface PendingPermission {
 interface PendingPlanApproval {
   resolve: (approved: boolean) => void;
   reject: (error: Error) => void;
+  sessionId: string;
 }
 
 export class ClaudeService {
@@ -82,7 +83,7 @@ export class ClaudeService {
   private pendingPermissions: Map<string, PendingPermission> = new Map();
   private pendingPlanApprovals: Map<string, PendingPlanApproval> = new Map();
   private sessionPlanFiles: Map<string, { content: string; filePath: string }> = new Map(); // Cache plan content per session
-  private lastPlanFeedback: string | undefined; // Stores feedback from last plan rejection
+  private lastPlanFeedback: Map<string, string> = new Map(); // Stores feedback from last plan rejection per session
   private mainWindow: BrowserWindow | null = null;
   private browserMcpServers: Map<string, any> = new Map();
 
@@ -2013,9 +2014,9 @@ ${memoriesPrompt}
   handlePlanApprovalResponse(response: PlanApprovalResponse): void {
     const pending = this.pendingPlanApprovals.get(response.requestId);
     if (pending) {
-      // Store feedback if provided for use in rejection message
+      // Store feedback if provided for use in rejection message (scoped per session)
       if (!response.approved && response.feedback) {
-        this.lastPlanFeedback = response.feedback;
+        this.lastPlanFeedback.set(pending.sessionId, response.feedback);
       }
       pending.resolve(response.approved);
       this.pendingPlanApprovals.delete(response.requestId);
@@ -2033,7 +2034,7 @@ ${memoriesPrompt}
 
     return new Promise((resolve, reject) => {
       // Store the promise resolve/reject functions
-      this.pendingPlanApprovals.set(requestId, { resolve, reject });
+      this.pendingPlanApprovals.set(requestId, { resolve, reject, sessionId });
 
       // Send plan approval request to renderer
       if (this.mainWindow) {
@@ -2578,18 +2579,8 @@ ${memoriesPrompt}
         });
       }
 
-      // Prepend GStack mode instructions to the user message for maximum effectiveness
-      // (system prompt append gets buried — direct user message is much stronger)
+      // GStack mode is injected via system prompt append only (buildSystemPromptAppend)
       let fullTextMessage = userMessage;
-      const activeGStackMode = gstackMode || session.gstackMode;
-      if (activeGStackMode) {
-        const { getGStackModePrompt } = require('./gstack.service');
-        const modePrompt = getGStackModePrompt(activeGStackMode);
-        if (modePrompt) {
-          fullTextMessage = `${modePrompt}\n\n---\n\nUser request: ${userMessage}`;
-          console.log('[Claude Service] GStack mode prepended to user message:', activeGStackMode);
-        }
-      }
       if (hasDomElements) {
         const domContext = domElementAttachments.map((el, i) => {
           return `<selected-element index="${i + 1}" selector="${el.name}">\n${el.content}\n</selected-element>`;
@@ -2839,76 +2830,63 @@ ${memoriesPrompt}
 
       // Ralph Loop: Add Stop hook for Grep It mode (bypassPermissions)
       // This intercepts session exit to continue iteration until task is complete
+      // Based on Anthropic's official Ralph Wiggum plugin pattern with safety improvements
       const audioSettings = this.store.get('audioSettings') as any;
       const ralphLoopEnabled = audioSettings?.ralphLoopEnabled ?? false;
-
-      if (permissionMode === 'bypassPermissions' && ralphLoopEnabled) {
-        hooks.Stop = [async (options: { fullContent: string; signal: AbortSignal }) => {
-          const completionMarker = '<promise>COMPLETE</promise>';
-          const hasCompletionMarker = options.fullContent.includes(completionMarker);
-
-          if (hasCompletionMarker) {
-            console.log('[Ralph Loop] Completion marker found, allowing exit');
-            return { decision: 'allow' as const };
-          }
-
-          console.log('[Ralph Loop] Task not complete, continuing iteration...');
-          return {
-            decision: 'block' as const,
-            prompt: message,  // Re-feed original prompt
-          };
-        }];
-      }
-
-      // Computer Use Stop hook for iteration control (similar to Ralph Loop)
       const computerUseEnabled = audioSettings?.computerUseEnabled ?? false;
+      const maxRalphIterations = audioSettings?.maxRalphIterations ?? 50;
       const maxComputerUseIterations = audioSettings?.maxComputerUseIterations ?? 20;
 
-      if (permissionMode === 'bypassPermissions' && computerUseEnabled) {
-        hooks.Stop = [async (options: { fullContent: string; signal: AbortSignal }) => {
+      if (permissionMode === 'bypassPermissions' && (ralphLoopEnabled || computerUseEnabled)) {
+        let iterationCount = 0;
+        const maxIterations = computerUseEnabled ? maxComputerUseIterations : maxRalphIterations;
+        const loopName = computerUseEnabled ? 'Computer Use' : 'Ralph Loop';
+
+        hooks.Stop = [async (options: { fullContent: string; signal: AbortSignal; stopHookActive?: boolean }) => {
           // Check for explicit completion markers
           const completionMarkers = [
             '<promise>COMPLETE</promise>',
             'Task completed successfully',
             'I have finished'
           ];
-
           const hasCompletion = completionMarkers.some(marker =>
             options.fullContent.toLowerCase().includes(marker.toLowerCase())
           );
 
           if (hasCompletion) {
-            console.log('[Computer Use] Task completion detected');
+            console.log(`[${loopName}] Completion marker found after ${iterationCount} iterations, allowing exit`);
             return { decision: 'allow' as const };
           }
 
-          // Check if Claude stopped using tools (likely stuck or done)
-          const recentToolUse = options.fullContent.includes('"type":"tool_use"');
-          if (!recentToolUse) {
-            console.log('[Computer Use] No recent tool use, allowing exit');
+          // If Claude stopped without using any tools, it's likely stuck or done
+          const hasToolUse = options.fullContent.includes('tool_use') || options.fullContent.includes('Tool');
+          if (!hasToolUse && iterationCount > 0) {
+            console.log(`[${loopName}] No tool use detected at iteration ${iterationCount}, allowing exit (likely stuck or complete)`);
             return { decision: 'allow' as const };
           }
 
-          // Initialize iteration counter if not present
-          if (!session.computerUseIterations) {
-            session.computerUseIterations = 0;
-          }
+          // Increment and check iteration limit
+          iterationCount++;
+          console.log(`[${loopName}] Iteration ${iterationCount}/${maxIterations}`);
 
-          // Increment iteration counter
-          session.computerUseIterations++;
-          console.log(`[Computer Use] Iteration ${session.computerUseIterations}/${maxComputerUseIterations}`);
-
-          // Check iteration limit
-          if (session.computerUseIterations >= maxComputerUseIterations) {
-            console.log('[Computer Use] Max iterations reached');
+          if (iterationCount >= maxIterations) {
+            console.log(`[${loopName}] Max iterations reached (${maxIterations}), allowing exit`);
             return { decision: 'allow' as const };
           }
 
-          // Continue iteration
-          console.log('[Computer Use] Continuing task iteration...');
+          // Build continuation prompt with progressive context
+          let continuationPrompt: string;
+          if (iterationCount <= 3) {
+            continuationPrompt = `Continue working on the task. Review your previous changes and assess progress. Output <promise>COMPLETE</promise> when the task is fully done.`;
+          } else if (iterationCount <= 10) {
+            continuationPrompt = `Continue working on the task (iteration ${iterationCount}/${maxIterations}). Check git status and your file changes to avoid redoing work. Output <promise>COMPLETE</promise> when done.`;
+          } else {
+            continuationPrompt = `You've been iterating for ${iterationCount} cycles (max ${maxIterations}). Critically assess whether you're making progress or stuck in a loop. If stuck, document what's blocking you and output <promise>COMPLETE</promise>. If making progress, continue.`;
+          }
+
           return {
             decision: 'block' as const,
-            prompt: message
+            prompt: continuationPrompt,
           };
         }];
       }
@@ -3212,12 +3190,13 @@ Begin by creating the task structure now.
                   this.sessionPlanFiles.delete(sessionId);
 
                   // Use custom feedback if provided, otherwise use default message
-                  const rejectionMessage = this.lastPlanFeedback
-                    ? `Plan was not approved. User feedback: ${this.lastPlanFeedback}`
+                  const planFeedback = this.lastPlanFeedback.get(sessionId);
+                  const rejectionMessage = planFeedback
+                    ? `Plan was not approved. User feedback: ${planFeedback}`
                     : 'Plan was not approved by the user. Please revise the plan based on user feedback.';
 
                   // Clear the feedback after using it
-                  this.lastPlanFeedback = undefined;
+                  this.lastPlanFeedback.delete(sessionId);
 
                   return {
                     behavior: 'deny' as const,

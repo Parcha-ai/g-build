@@ -326,6 +326,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     console.log(`[Perf] Session switch (UI update) took ${performance.now() - perfStart}ms`);
 
+    // Auto-open plan panel if switching to a session with pending plan approval
+    if (sessionId && get().pendingPlanApproval[sessionId]) {
+      import('./ui.store').then(({ useUIStore }) => {
+        useUIStore.getState().showPlanPanel();
+      });
+    }
+
     // Persist active session and update timestamp in backend (only in Electron)
     if (hasElectronAPI && sessionId) {
       // 2. Fire-and-forget IPC operations (non-blocking, parallel)
@@ -1434,15 +1441,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // Subscribe to plan approval requests (when ExitPlanMode is called)
     const unsubPlanApproval = window.electronAPI.claude.onPlanApprovalRequest((request) => {
       console.log('[Session Store] Plan approval request received for session:', request.sessionId, 'planContent length:', request.planContent?.length);
-      const { setPendingPlanApproval } = get();
+      const { setPendingPlanApproval, activeSessionId } = get();
       setPendingPlanApproval(request.sessionId, request);
       // Also update the plan content in UI store for display
       import('./ui.store').then(({ useUIStore }) => {
         console.log('[Session Store] Setting plan content from approval request');
         useUIStore.getState().setPlanContent(request.sessionId, request.planContent);
-        console.log('[Session Store] Plan content set in approval flow, opening panel');
-        // Open the plan panel automatically when approval is requested
-        useUIStore.getState().showPlanPanel();
+        // Only auto-open plan panel if this is the active session
+        if (request.sessionId === activeSessionId) {
+          console.log('[Session Store] Plan content set in approval flow, opening panel');
+          useUIStore.getState().showPlanPanel();
+        } else {
+          console.log('[Session Store] Plan approval for background session, not opening panel:', request.sessionId);
+        }
       });
     });
 
