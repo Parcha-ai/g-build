@@ -72,6 +72,8 @@ export class ClaudeService {
   private store: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private sessionStore: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private messageCacheStore: any;
   private activeQueries: Map<string, AbortController> = new Map();
   private activeQueryObjects: Map<string, Query> = new Map(); // Store Query objects for streamInput
   private sessionPermissionModes: Map<string, string> = new Map(); // Track current permission mode per session
@@ -95,6 +97,7 @@ export class ClaudeService {
   constructor() {
     this.store = new Store({ name: 'claudette-settings' });
     this.sessionStore = new Store({ name: getSessionStoreName() });
+    this.messageCacheStore = new Store({ name: 'claudette-message-cache' });
   }
 
   setMainWindow(window: BrowserWindow | null): void {
@@ -4615,9 +4618,6 @@ Begin by creating the task structure now.
     const sdkSessionId = hasStoredSdkSessionId ? storedSdkSessionId : sessionId;
 
     // For SSH sessions, fetch transcript from the remote machine
-    // Local cache key for resilience against SSH disconnects
-    const localCacheKey = `messageCache.${sessionId}`;
-
     if (session?.sshConfig) {
       // Brand-new session — start fresh, don't search for old transcripts
       if (isNewSession) {
@@ -4652,7 +4652,7 @@ Begin by creating the task structure now.
               const messages = this.parseTranscriptContent(content);
               const limited = limit > 0 ? messages.slice(-limit) : messages;
               console.log(`[Claude] Returning ${limited.length}/${messages.length} SSH messages (restored mapping)`);
-              this.sessionStore.set(localCacheKey, limited);
+              this.messageCacheStore.set(sessionId, limited);
               return limited;
             }
           }
@@ -4660,7 +4660,7 @@ Begin by creating the task structure now.
           return [];
         } catch (error) {
           console.error('[Claude] Error searching for orphaned transcripts:', error);
-          const cached = this.sessionStore.get(localCacheKey) as ChatMessage[] | undefined;
+          const cached = this.messageCacheStore.get(sessionId) as ChatMessage[] | undefined;
           if (cached?.length) {
             console.log(`[Claude] Orphan search failed — returning ${cached.length} locally cached messages`);
             return cached;
@@ -4684,7 +4684,7 @@ Begin by creating the task structure now.
           const limited = limit > 0 ? messages.slice(-limit) : messages;
           console.log(`[Claude] Returning ${limited.length}/${messages.length} SSH messages`);
           // Cache locally for resilience against SSH disconnects
-          this.sessionStore.set(localCacheKey, limited);
+          this.messageCacheStore.set(sessionId, limited);
           return limited;
         }
 
@@ -4712,7 +4712,7 @@ Begin by creating the task structure now.
               const messages = this.parseTranscriptContent(content);
               const limited = limit > 0 ? messages.slice(-limit) : messages;
               console.log(`[Claude] Returning ${limited.length}/${messages.length} SSH messages`);
-              this.sessionStore.set(localCacheKey, limited);
+              this.messageCacheStore.set(sessionId, limited);
               return limited;
             }
           } else {
@@ -4722,7 +4722,7 @@ Begin by creating the task structure now.
 
         console.log('[Claude] No matching remote transcript found');
         // Return local cache if available
-        const cached = this.sessionStore.get(localCacheKey) as ChatMessage[] | undefined;
+        const cached = this.messageCacheStore.get(sessionId) as ChatMessage[] | undefined;
         if (cached?.length) {
           console.log(`[Claude] Returning ${cached.length} locally cached messages (no remote match)`);
           return cached;
@@ -4731,7 +4731,7 @@ Begin by creating the task structure now.
       } catch (error) {
         console.error('[Claude] Error fetching remote transcript:', error);
         // SSH is down — return locally cached messages so the UI doesn't lose history
-        const cached = this.sessionStore.get(localCacheKey) as ChatMessage[] | undefined;
+        const cached = this.messageCacheStore.get(sessionId) as ChatMessage[] | undefined;
         if (cached?.length) {
           console.log(`[Claude] SSH fetch failed — returning ${cached.length} locally cached messages`);
           return cached;
